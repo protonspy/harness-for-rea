@@ -12,6 +12,10 @@
   _Depends 1.1, 2.1_
 - [x] 2.3 (Unit) Redact secret shapes from the delegation result returned to the model — R2.6
   _Depends 2.1_
+- [x] 2.4 (Unit) Run the agent's file and command tools in a read-only task container through a DeepAgents sandbox backend, removed when the task ends — R2.2
+  _Depends 2.2_
+- [x] 2.5 (Unit) Ask the agent for a truthful brief per delegation in the tool schema and system prompt — R2.7
+  _Depends 2.1_
 
 ## 3 · Lifecycle
 

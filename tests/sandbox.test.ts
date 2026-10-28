@@ -227,6 +227,7 @@ describe("Docker checks (R2.4–R2.6)", () => {
 
 describe("context isolation (R3.1, R3.2, R3.4)", () => {
   const pkg = ContextPackageSchema.parse({
+    brief: "The user owns this parser and is debugging it.",
     objective: "Find why the parser drops the last token",
     mode: "read",
     files: ["src/parser.ts", "src/lexer.ts"],
@@ -248,7 +249,7 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
   })
 
   it("omits empty sections", () => {
-    const p = renderPrompt(ContextPackageSchema.parse({ objective: "x", files: ["a"] }))
+    const p = renderPrompt(ContextPackageSchema.parse({ brief: "b", objective: "x", files: ["a"] }))
     expect(p).not.toContain("## Questions")
   })
 
@@ -260,8 +261,8 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
   })
 
   it("has no field for the user's request or the orchestrator's conversation", () => {
-    expect(ContextPackageSchema.safeParse({ objective: "x", files: ["a"], request: "the user's whole request" }).success).toBe(false)
-    expect(ContextPackageSchema.safeParse({ objective: "x", files: ["a"], messages: [] }).success).toBe(false)
+    expect(ContextPackageSchema.safeParse({ brief: "b", objective: "x", files: ["a"], request: "the user's whole request" }).success).toBe(false)
+    expect(ContextPackageSchema.safeParse({ brief: "b", objective: "x", files: ["a"], messages: [] }).success).toBe(false)
   })
 
   it("carries no host path, host environment variable or other task's data in a rendered run", () => {

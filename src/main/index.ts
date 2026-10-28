@@ -9,7 +9,8 @@ import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
 import { TaskRunner } from "./orchestrator/runner"
-import { authArgs, dockerExec, ensureNetwork } from "./sandbox/docker"
+import { authArgs, dockerExec, ensureNetwork, preflight } from "./sandbox/docker"
+import { dockerExecBuffer, TaskBox, WORKSPACE } from "./sandbox/taskbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
@@ -42,7 +43,17 @@ app.whenReady().then(async () => {
   const log = new EventLog(dataDir, push)
   log.recover()
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
-  const runner = new TaskRunner({ ...deps, apiKey: readKey })
+  const runner = new TaskRunner({
+    ...deps,
+    apiKey: readKey,
+    // The orchestrator's tools run in the task's own container (adr:0007-run-the-orchestrators-tools-in-a-task-container).
+    workspace: async (task) => {
+      const blocked = await preflight(dockerExec)
+      if (blocked) throw new Error(blocked)
+      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, getSettings())
+      return { backend: box, root: WORKSPACE, dispose: () => box.dispose() }
+    },
+  })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
   const login = new LoginService(
     spawnStart("docker", (sub) => {

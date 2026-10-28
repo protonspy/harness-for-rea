@@ -3,7 +3,7 @@ import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messa
 import { Command, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph"
 import type { PatchView, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
-import { buildAgent } from "./agent"
+import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
 import { APPLY_PATCH } from "./tools"
@@ -14,14 +14,25 @@ import { APPLY_PATCH } from "./tools"
   cancel it, or retry it from its original request. Todo list changes become steps.
 */
 
+/** Where the orchestrator's tools run for one task, and how to take it down. */
+export interface TaskWorkspace {
+  backend: AgentBackend
+  /** the source folder's path as the agent sees it */
+  root: string
+  dispose(): Promise<void>
+}
+
 export interface RunnerDeps extends DelegationDeps {
   apiKey(): string | null
+  /** the task's sandbox for the orchestrator's tools (adr:0007-run-the-orchestrators-tools-in-a-task-container) */
+  workspace(task: TaskRow): Promise<TaskWorkspace>
   checkpointer?: BaseCheckpointSaver
 }
 
 interface Live {
   abort: AbortController
-  agent: ReturnType<typeof buildAgent>
+  /** the agent, once the task's workspace is up */
+  ready: Promise<{ agent: ReturnType<typeof buildAgent>; ws: TaskWorkspace }>
   /** patch ids the paused run waits on, in the order of its action requests, with each decision once made */
   pending: { patchId: string; decision: "approve" | "reject" | null }[]
   run: Promise<void>
@@ -78,11 +89,16 @@ export class TaskRunner {
         log.addUsage(task.id, { tokensIn: u.tokensIn, tokensOut: u.tokensOut, costUsd: u.costUsd })
       },
     })
-    const agent = buildAgent({
-      model,
-      ctx: { deps: this.deps, taskId: task.id, sourceRoot: task.sourceRoot, signal: abort.signal },
-      checkpointer: this.checkpointer,
-    })
+    const ready = this.deps.workspace(task).then((ws) => ({
+      ws,
+      agent: buildAgent({
+        model,
+        ctx: { deps: this.deps, taskId: task.id, sourceRoot: task.sourceRoot, root: ws.root, signal: abort.signal },
+        checkpointer: this.checkpointer,
+        backend: ws.backend,
+      }),
+    }))
+    ready.catch(() => undefined)
     const names = new Map<string, string>()
     const callbacks = [
       {
@@ -124,7 +140,7 @@ export class TaskRunner {
         },
       },
     ]
-    const live: Live = { abort, agent, pending: [], run: Promise.resolve(), callbacks, todoSteps: new Map() }
+    const live: Live = { abort, ready, pending: [], run: Promise.resolve(), callbacks, todoSteps: new Map() }
     this.live.set(task.id, live)
     log.updateTask(task.id, { state: "running" })
     log.append({
@@ -157,8 +173,9 @@ export class TaskRunner {
     if (!live) return
     const { log } = this.deps
     try {
+      const { agent } = await live.ready
       const config = { configurable: { thread_id: taskId } }
-      const stream = await live.agent.stream(input as never, {
+      const stream = await agent.stream(input as never, {
         ...config,
         signal: live.abort.signal,
         callbacks: callbacks as never,
@@ -201,13 +218,13 @@ export class TaskRunner {
         return
       }
       const messages =
-        ((await (live.agent as unknown as { getState(c: unknown): Promise<{ values: unknown }> }).getState(config)).values as { messages?: BaseMessage[] })
+        ((await (agent as unknown as { getState(c: unknown): Promise<{ values: unknown }> }).getState(config)).values as { messages?: BaseMessage[] })
           .messages ?? []
       const last = [...messages].reverse().find((m) => AIMessage.isInstance(m) && !(m as AIMessage).tool_calls?.length)
       const answer = last ? text(last).trim() : ""
       log.updateTask(taskId, { state: "done", result: answer })
       log.append({ taskId, agent: "orchestrator", kind: "task.done", state: "done", summary: "Task finished", payload: { output: answer } })
-      this.live.delete(taskId)
+      this.end(taskId)
     } catch (e) {
       const cancelled = live.abort.signal.aborted
       const err = cancelled ? new Error("Cancelled.") : friendlyError(e)
@@ -221,7 +238,7 @@ export class TaskRunner {
         payload: { error: err.message },
       })
       this.settleSteps(taskId, cancelled ? "cancelled" : "failed")
-      this.live.delete(taskId)
+      this.end(taskId)
     }
   }
 
@@ -280,7 +297,7 @@ export class TaskRunner {
       this.deps.log.updateTask(taskId, { state: "cancelled", error: "Cancelled." })
       this.deps.log.append({ taskId, agent: "orchestrator", kind: "task.cancelled", state: "cancelled", summary: "Cancelled.", payload: {} })
       this.settleSteps(taskId, "cancelled")
-      this.live.delete(taskId)
+      this.end(taskId)
     }
     return this.deps.log.getTask(taskId)
   }
@@ -313,8 +330,18 @@ export class TaskRunner {
     }
   }
 
-  /** Abort every run, e.g. when the app quits. */
+  /** Forget a task's run and take its workspace down. */
+  private end(taskId: string) {
+    const live = this.live.get(taskId)
+    this.live.delete(taskId)
+    live?.ready.then(({ ws }) => ws.dispose()).catch(() => undefined)
+  }
+
+  /** Abort every run and take every workspace down, e.g. when the app quits. */
   stopAll() {
-    for (const l of this.live.values()) l.abort.abort()
+    for (const [id, l] of [...this.live]) {
+      l.abort.abort()
+      this.end(id)
+    }
   }
 }

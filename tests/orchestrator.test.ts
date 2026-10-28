@@ -11,6 +11,7 @@ import { claudeArgs } from "../src/main/sandbox/docker"
 import { friendlyError } from "../src/main/orchestrator/errors"
 import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { FilesystemBackend } from "deepagents"
 
 /*
   specs/orchestrator: whole tasks against a scripted OpenRouter and the fake Claude Code CLI standing
@@ -94,7 +95,14 @@ function launcher(): Launcher {
 }
 
 function runner(key: string | null = "sk-or-v1-testkey000000") {
-  return new TaskRunner({ log, dataDir: data, launcher: launcher(), settings: () => settings, apiKey: () => key })
+  return new TaskRunner({
+    log,
+    dataDir: data,
+    launcher: launcher(),
+    settings: () => settings,
+    apiKey: () => key,
+    workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+  })
 }
 
 const REQUEST = "The parser in src/a.ts drops the last token; find out why and fix it. Codeword: PINEAPPLE-42."
@@ -132,6 +140,7 @@ const todos = {
 const delegateModify = {
   name: "delegate_to_specialist",
   args: {
+    brief: "The user maintains a small CLI parser in their own repository; a bug report says the last argument is lost.",
     objective: "Find why parse drops the last token and fix it",
     mode: "modify",
     files: ["/src/a.ts"],
@@ -245,11 +254,11 @@ describe("end to end (specs/orchestrator 3.2)", () => {
       (body) => {
         expect(lastTool(body)).toContain("Docker is unavailable")
         refusal = null
-        return { tool_calls: [{ name: "delegate_to_specialist", args: { objective: "x", files: ["../outside.txt"] } }] }
+        return { tool_calls: [{ name: "delegate_to_specialist", args: { brief: "b", objective: "x", files: ["../outside.txt"] } }] }
       },
       (body) => {
         expect(lastTool(body)).toMatch(/ERROR: \.\.\/outside\.txt cannot be delegated/)
-        return { tool_calls: [{ name: "delegate_to_specialist", args: { objective: "x", files: [] } }] }
+        return { tool_calls: [{ name: "delegate_to_specialist", args: { brief: "b", objective: "x", files: [] } }] }
       },
       (body) => {
         expect(lastTool(body).toLowerCase()).toContain("error")
@@ -337,6 +346,30 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     expect(existsSync(join(data, "pwned.txt"))).toBe(false)
     expect(readFileSync(join(root, "src", "b.ts"), "utf8")).toBe("export const b = 2\n")
     for (const out of results) expect(out).not.toContain("TOP-SECRET-VALUE")
+  })
+
+  it("hands the orchestrator's brief to the specialist first, with host paths scrubbed", async () => {
+    script = [
+      () => ({
+        tool_calls: [
+          {
+            name: "delegate_to_specialist",
+            args: { ...delegateModify.args, mode: "read", brief: `The user owns the parser at ${root}\\src\\a.ts and is debugging it.` },
+          },
+        ],
+      }),
+      { content: "ok" },
+    ]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const turn = readFileSync(fakeLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((l) => l.turn)
+    expect(turn.prompt.startsWith("## Brief\nThe user owns the parser at /work/src/a.ts and is debugging it.")).toBe(true)
+    expect(turn.prompt.toLowerCase()).not.toContain(root.toLowerCase())
   })
 
   it("redacts secret shapes from the report before it reaches OpenRouter", async () => {

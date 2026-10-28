@@ -34,6 +34,7 @@ export function DelegationCard({ step, events, patches }: { step: StepRow; event
           {pkg && (
             <section className="flex flex-col gap-2">
               <h4 className="text-xs font-semibold tracking-wide text-muted uppercase">Context package</h4>
+              {pkg.brief && <Prose text={pkg.brief} className="rounded-md border border-line bg-bg p-3 text-muted" />}
               <Prose text={pkg.objective} />
               <List title="Questions" items={pkg.questions} />
               <List title="Constraints" items={pkg.constraints} />

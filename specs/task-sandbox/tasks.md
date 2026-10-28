@@ -26,6 +26,8 @@
   _Depends 2.3, 3.1_
 - [x] 3.3 (Unit) Start Claude Code restricted to `/work`, with permission prompts denied and file tools denied under the home directory — R3.5
   _Depends 2.3_
+- [x] 3.4 (Unit) Render the orchestrator's brief first in the prompt and scrub host and `/workspace` paths from every text field of the package — R3.1, R3.2
+  _Depends 3.1_
 
 ## 4 · Changes and audit
 

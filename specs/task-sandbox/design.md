@@ -51,10 +51,12 @@ CLI version and checks the Linux binary's SHA-256 against the gpg-verified relea
 manifest, the procedure `study-lab/scripts/pin-claude-code.mjs` already runs. Login
 uses the same image with `claude auth login --claudeai` and the same config volume.
 
-The prompt is rendered from a typed context package; there is no free-text field
-for the purpose of the overall task, so R3.1 and R3.2 hold by construction. Paths in
-the package are relative to the source root and become `/work/<path>` in the
-container, so no host path reaches the prompt.
+The prompt is rendered from a typed context package. Its `brief` is free text the
+orchestrator writes (adr:0007-run-the-orchestrators-tools-in-a-task-container), so R3.2
+holds by scrubbing: every string field has the source folder's host path, in either
+separator and any case, and the orchestrator's `/workspace` prefix replaced with
+`/work`. Paths in the package are relative to the source root and become
+`/work/<path>` in the container.
 
 ## Alternatives considered
 

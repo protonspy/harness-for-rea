@@ -18,6 +18,8 @@ export interface ToolContext {
   deps: DelegationDeps
   taskId: string
   sourceRoot: string
+  /** the source folder's path as the agent sees it: `/workspace` in the task's sandbox, `/` in tests */
+  root: string
   signal: AbortSignal
 }
 
@@ -25,9 +27,11 @@ function redactedJson(v: unknown): string {
   return JSON.stringify(redactValue(v))
 }
 
-/** The agent sees the source tree at `/`; the package wants paths relative to the source folder. */
-function relative(p: string): string {
-  return p.replace(/\\/g, "/").replace(/^\/+/, "")
+/** The agent sees the source tree under its root; the package wants paths relative to the source folder. */
+export function relativeTo(root: string, p: string): string {
+  const s = p.replace(/\\/g, "/")
+  const r = root.replace(/\/+$/, "")
+  return (r && (s === r || s.startsWith(`${r}/`)) ? s.slice(r.length) : s).replace(/^\/+/, "")
 }
 
 export function delegateTool(ctx: ToolContext) {
@@ -35,8 +39,8 @@ export function delegateTool(ctx: ToolContext) {
     async (input) => {
       const pkg = ContextPackageSchema.parse({
         ...input,
-        files: input.files.map(relative),
-        excerpts: input.excerpts?.map((e) => ({ ...e, path: relative(e.path) })),
+        files: input.files.map((f) => relativeTo(ctx.root, f)),
+        excerpts: input.excerpts?.map((e) => ({ ...e, path: relativeTo(ctx.root, e.path) })),
       })
       try {
         const r = await delegate(ctx.deps, { taskId: ctx.taskId, sourceRoot: ctx.sourceRoot, pkg, signal: ctx.signal })

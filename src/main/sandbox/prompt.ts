@@ -33,8 +33,45 @@ function section(title: string, lines: string[]): string[] {
   return lines.length ? ["", `## ${title}`, ...lines] : []
 }
 
+function replaceInsensitive(text: string, needle: string, by: string): string {
+  const lower = text.toLowerCase()
+  const n = needle.toLowerCase()
+  let out = ""
+  let from = 0
+  for (let i = lower.indexOf(n); i >= 0; i = lower.indexOf(n, from)) {
+    out += text.slice(from, i) + by
+    from = i + n.length
+  }
+  return out + text.slice(from)
+}
+
+/** Every host form of the source folder's path, and the orchestrator's /workspace, as /work (R3.2). */
+export function scrubPaths(pkg: ContextPackage, sourceRoot: string): ContextPackage {
+  const root = sourceRoot.replace(/[\\/]+$/, "")
+  const forms = [...new Set([root.replace(/\\/g, "/"), root.replace(/\//g, "\\")])].filter((f) => f.length > 1)
+  const fix = (s: string) => {
+    let out = s
+    for (const form of forms) out = replaceInsensitive(out, form, WORK)
+    // the orchestrator's view of the same folder, and backslashes left after a host path
+    return out.replace(/(^|[^\w/])\/workspace(?=\/|\b)/g, `$1${WORK}`).replace(/\/work\\\S*/g, (m) => m.replace(/\\/g, "/"))
+  }
+  return {
+    ...pkg,
+    brief: fix(pkg.brief),
+    objective: fix(pkg.objective),
+    excerpts: pkg.excerpts.map((e) => ({ ...e, note: fix(e.note) })),
+    environment: pkg.environment.map(fix),
+    questions: pkg.questions.map(fix),
+    constraints: pkg.constraints.map(fix),
+    reportFormat: fix(pkg.reportFormat),
+  }
+}
+
 export function renderPrompt(pkg: ContextPackage): string {
   return [
+    "## Brief",
+    pkg.brief,
+    "",
     "## Objective",
     pkg.objective,
     ...section(

@@ -33,8 +33,8 @@ only through an approved patch.
 
 ## R3 · Context isolation
 
-- **R3.1** The sandbox shall build the specialist's prompt only from the context package fields: objective, files, excerpts, environment facts, questions, constraints and report format.
-- **R3.2** The sandbox shall not pass to the container the user's original request, the orchestrator's conversation, other tasks' data, host paths or host environment variables.
+- **R3.1** The sandbox shall build the specialist's prompt only from the context package fields — the orchestrator's brief first, then objective, files, excerpts, environment facts, questions, constraints and report format.
+- **R3.2** The sandbox shall not pass to the container the orchestrator's conversation, other tasks' data, host paths or host environment variables, and shall replace host and `/workspace` paths in the package's text with `/work`.
 - **R3.3** The sandbox shall start Claude Code with `--setting-sources ""`, `--strict-mcp-config` and a configuration directory on the sandbox's own volume, so no host settings, memory or instructions load.
 - **R3.4** The sandbox shall state in the specialist's system prompt that the artifacts in `/work` are owned by the user or authorized for analysis.
 - **R3.5** The sandbox shall start Claude Code restricted to its working directory, with no command-running tool, every permission prompt denied, and file tools denied under the home directory that holds the login volume.

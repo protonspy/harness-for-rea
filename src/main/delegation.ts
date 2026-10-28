@@ -4,7 +4,7 @@ import type { EventLog } from "./events/log"
 import { claudeArgs, dockerExec, dockerRunArgs, killContainer, preflight, type Exec, type Limits, type Mode } from "./sandbox/docker"
 import { applyPatch, discardPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
-import { renderPrompt, renderSystemPrompt } from "./sandbox/prompt"
+import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
 import { discardWorkspace, prepareWorkspace, writeSystemPrompt, type Workspace } from "./sandbox/workspace"
 import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
 
@@ -94,7 +94,8 @@ export async function delegate(
   })
 
   try {
-    writeSystemPrompt(ws, renderSystemPrompt(o.pkg))
+    const pkg = scrubPaths(o.pkg, o.sourceRoot)
+    writeSystemPrompt(ws, renderSystemPrompt(pkg))
     const session = new SpecialistSession(deps.launcher.launch(ws, o.pkg.mode, settings), {
       timeoutMs: settings.timeoutMinutes * 60_000,
       signal: o.signal,
@@ -104,7 +105,7 @@ export async function delegate(
     })
     let result
     try {
-      result = await session.send(renderPrompt(o.pkg))
+      result = await session.send(renderPrompt(pkg))
     } finally {
       await session.close()
       // A failed turn can still have spent tokens; its result carries them.

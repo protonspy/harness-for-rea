@@ -54,6 +54,16 @@ and delegate, inspect the evidence, and approve or reject any proposed change.
 - [x] 1.2 (Unit) Record the adopted stack in `docs/stack.md` and the canonical terms (orchestrator, specialist, delegation, context package, sandbox, evidence) in `docs/glossary.md`
 - [x] 1.3 (Unit) Fill `.claude/rules/project.md` and record build, format, lint and test with `scc check set`
   _Depends 1.1, 1.2_
+- [x] 2.1 (Unit) Record the orchestrator task container and the orchestrator-written
+      brief as ADR 0007 and as deltas to specs/orchestrator and specs/task-sandbox
+  _Reason The user asked mid-run for every agent tool to run in a sandbox and for the orchestrator to write the specialist's prompt_
+- [x] 2.2 (Unit) Run the orchestrator's file and command tools in a per-task container
+      with the source folder bind-mounted read-only, through a DeepAgents sandbox
+      backend
+  _Reason Same request: DeepAgents sees the whole workspace through a local bind, inside a sandbox_
+- [x] 2.3 (Unit) Add the orchestrator-written brief to the context package, scrubbed of
+      host paths, and render it first in the specialist's prompt
+  _Reason Same request: the orchestrator writes the prompt and narrative handed to Claude Code with the prepared workspace_
 
 ## Done when
 

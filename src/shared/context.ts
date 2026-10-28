@@ -15,6 +15,14 @@ const relPath = z.string().trim().min(1).max(500)
 
 export const ContextPackageSchema = z
   .object({
+    brief: z
+      .string()
+      .trim()
+      .min(1)
+      .max(8000)
+      .describe(
+        "Your prompt to the specialist, read first: the background it needs and the real purpose of this step as the user's request states it — what the system is, who owns it, why it is analysed. Never invent ownership, authorization or purpose.",
+      ),
     objective: z.string().trim().min(1).max(4000).describe("What this one step must find out or change, stated on its own."),
     mode: z
       .enum(["read", "modify"])
