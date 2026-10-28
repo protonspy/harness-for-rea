@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/harness-for-rea
-delivery: in-progress
+delivery: in-review
+pr: 1
 ---
 
 # Task sandbox — requirements
