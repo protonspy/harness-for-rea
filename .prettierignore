@@ -1,0 +1,13 @@
+node_modules
+out
+dist
+coverage
+package-lock.json
+docs
+specs
+plans
+.claude
+.devcontainer
+.codegraph
+CLAUDE.md
+*.md

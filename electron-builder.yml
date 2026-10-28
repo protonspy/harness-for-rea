@@ -1,0 +1,16 @@
+appId: com.protonspy.harness-for-rea
+productName: Harness for REA
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: sandbox
+    to: sandbox
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
