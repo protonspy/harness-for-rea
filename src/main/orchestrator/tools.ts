@@ -2,6 +2,7 @@ import { tool } from "@langchain/core/tools"
 import { z } from "zod"
 import { ContextPackageSchema } from "@shared/context"
 import { approvePatch, delegate, DelegationRefused, type DelegationDeps } from "../delegation"
+import { redactValue } from "../events/redact"
 import { SpecialistError } from "../specialist/executor"
 
 /*
@@ -20,6 +21,10 @@ export interface ToolContext {
   signal: AbortSignal
 }
 
+function redactedJson(v: unknown): string {
+  return JSON.stringify(redactValue(v))
+}
+
 /** The agent sees the source tree at `/`; the package wants paths relative to the source folder. */
 function relative(p: string): string {
   return p.replace(/\\/g, "/").replace(/^\/+/, "")
@@ -35,7 +40,8 @@ export function delegateTool(ctx: ToolContext) {
       })
       try {
         const r = await delegate(ctx.deps, { taskId: ctx.taskId, sourceRoot: ctx.sourceRoot, pkg, signal: ctx.signal })
-        return JSON.stringify({
+        // The report goes to OpenRouter: no secret shape leaves the machine in it.
+        return redactedJson({
           report: r.report,
           evidence: r.evidence,
           patch: r.patch

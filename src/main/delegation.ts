@@ -107,8 +107,10 @@ export async function delegate(
       result = await session.send(renderPrompt(o.pkg))
     } finally {
       await session.close()
+      // A failed turn can still have spent tokens; its result carries them.
+      const spent = session.reader.result
+      if (spent) log.addUsage(o.taskId, { tokensIn: spent.tokensIn + spent.cacheTokens, tokensOut: spent.tokensOut, specialistCostUsd: spent.costUsd ?? 0 })
     }
-    log.addUsage(o.taskId, { tokensIn: result.tokensIn + result.cacheTokens, tokensOut: result.tokensOut, specialistCostUsd: result.costUsd ?? 0 })
     const evidence = parseEvidence(
       result.text,
       ws.files.map((f) => f.path),

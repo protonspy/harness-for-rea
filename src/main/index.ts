@@ -4,7 +4,7 @@ import type { Handlers } from "@shared/api"
 import type { Push } from "@shared/types"
 import { clearKey, initKey, keyStatus, onKey, readKey, saveKey } from "./credentials"
 import { closeDb, openDb } from "./db"
-import { approvePatch, dockerLauncher } from "./delegation"
+import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
@@ -87,13 +87,9 @@ app.whenReady().then(async () => {
     decidePatch: (taskId, patchId, decision) => {
       const p = log.getPatch(patchId)
       if (p.taskId !== taskId) throw new Error("That patch belongs to another task.")
-      // A patch whose run is gone (the app restarted) can still be applied or rejected by hand.
-      try {
-        return runner.decide(taskId, patchId, decision)
-      } catch {
-        if (decision === "approve") return approvePatch(deps, patchId, log.getTask(taskId).sourceRoot)
-        throw new Error("That patch is not waiting for a decision.")
-      }
+      if (runner.isLive(taskId)) return runner.decide(taskId, patchId, decision)
+      // The run that proposed it is gone (the app restarted): the user can still decide by hand.
+      return decision === "approve" ? approvePatch(deps, patchId, log.getTask(taskId).sourceRoot) : rejectPatch(deps, patchId)
     },
   }
   const dispatch = makeDispatcher(handlers, page)

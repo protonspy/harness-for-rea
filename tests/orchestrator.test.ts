@@ -285,8 +285,11 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     const task = r.start({ request: REQUEST, sourceRoot: root })
     await r.settled(task.id)
     const [patch] = log.history(task.id).patches
+    expect(r.isLive(task.id)).toBe(true)
     expect(r.cancel(task.id).state).toBe("cancelled")
+    expect(r.isLive(task.id)).toBe(false)
     expect(log.getPatch(patch.id).state).toBe("rejected")
+    expect(log.steps(task.id).filter((s) => s.state === "running" || s.state === "pending")).toEqual([])
   })
 
   it("fails with an actionable message when OpenRouter refuses, and retries from the same request", async () => {
@@ -334,6 +337,29 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     expect(existsSync(join(data, "pwned.txt"))).toBe(false)
     expect(readFileSync(join(root, "src", "b.ts"), "utf8")).toBe("export const b = 2\n")
     for (const out of results) expect(out).not.toContain("TOP-SECRET-VALUE")
+  })
+
+  it("redacts secret shapes from the report before it reaches OpenRouter", async () => {
+    fakeMode = "leak"
+    script = [{ tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }, { content: "ok" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("done")
+    expect(JSON.stringify(requests)).not.toContain("LEAKEDTOKEN")
+    expect(JSON.stringify(requests)).toContain("[redacted]")
+  })
+
+  it("counts what a failed delegation spent", async () => {
+    fakeMode = "limit"
+    script = [{ tool_calls: [delegateModify] }, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const done = log.getTask(task.id)
+    expect(done.result).toMatch(/ERROR: .*limit is reached/)
+    expect(done.specialistCostUsd).toBeCloseTo(0.01, 5)
+    expect(log.steps(task.id).find((s) => s.kind === "delegation")?.state).toBe("failed")
   })
 
   it("refuses to start without a folder or a key", () => {

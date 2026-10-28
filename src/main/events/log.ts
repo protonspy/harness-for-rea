@@ -15,6 +15,8 @@ import { redact, redactValue } from "./redact"
 export const PAYLOAD_CAP = 64 * 1024
 const STRING_CAP = 4000
 const SUMMARY_CAP = 300
+/** Longest raw line kept, so redaction stays cheap on hostile output. */
+export const RAW_LINE_CAP = 256 * 1024
 
 type Row = Record<string, unknown>
 
@@ -225,7 +227,11 @@ export class EventLog {
   raw(taskId: string, agent: Agent, line: string, stepId?: string) {
     const dir = this.taskDir(taskId)
     mkdirSync(dir, { recursive: true })
-    appendFileSync(join(dir, "raw.jsonl"), `${JSON.stringify({ at: this.now(), agent, step: stepId ?? null, line: redact(line) })}\n`, "utf8")
+    appendFileSync(
+      join(dir, "raw.jsonl"),
+      `${JSON.stringify({ at: this.now(), agent, step: stepId ?? null, line: redact(line.length > RAW_LINE_CAP ? `${line.slice(0, RAW_LINE_CAP)}…` : line) })}\n`,
+      "utf8",
+    )
   }
 
   /* ---------- patches ---------- */

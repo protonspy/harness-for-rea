@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/harness-for-rea
+delivery: in-progress
 ---
 
 # Task sandbox — requirements
@@ -35,6 +37,7 @@ only through an approved patch.
 - **R3.2** The sandbox shall not pass to the container the user's original request, the orchestrator's conversation, other tasks' data, host paths or host environment variables.
 - **R3.3** The sandbox shall start Claude Code with `--setting-sources ""`, `--strict-mcp-config` and a configuration directory on the sandbox's own volume, so no host settings, memory or instructions load.
 - **R3.4** The sandbox shall state in the specialist's system prompt that the artifacts in `/work` are owned by the user or authorized for analysis.
+- **R3.5** The sandbox shall start Claude Code restricted to its working directory, with no command-running tool, every permission prompt denied, and file tools denied under the home directory that holds the login volume.
 
 ## R4 · Changes and audit
 
@@ -42,6 +45,7 @@ only through an approved patch.
 - **R4.2** The sandbox shall apply a patch to the original files only after patch approval.
 - **R4.3** If an original file's SHA-256 differs from the one recorded at copy time, then the sandbox shall refuse to apply the patch and report the conflicting files.
 - **R4.4** The sandbox shall record as events every file copied in, every file the specialist read or wrote, and every patch proposed, approved, rejected or applied.
+- **R4.5** If a file in the workspace is a link, has a name Windows treats specially, lies under `.git/`, or is a text original that came back with NUL bytes, then the sandbox shall leave it out of the patch and record it.
 
 ## Out of scope
 

@@ -29,6 +29,9 @@ export interface ProposedPatch {
   skipped: string[]
 }
 
+/** Largest total size of the files a patch is built from. */
+export const PATCH_CAP = 200 * 1024 * 1024
+
 export class PatchConflict extends Error {
   readonly conflicts: string[]
 
@@ -43,23 +46,39 @@ export function patchDir(dataDir: string, id: string): string {
   return join(dataDir, "patches", id)
 }
 
+/** Names Windows treats specially: a stream (`a:b`), a backslash, wildcards, a reserved device, a trailing dot or space. */
+const UNSAFE_NAME = /[:\\<>|?*\u0000-\u001f]|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$|[. ]$/i
+/** Where a written file could run later without anyone reading it. */
+const GUARDED = /^\.git(?:\/|$)/
+
 function walk(root: string, dir: string, files: string[], skipped: string[]) {
   for (const name of readdirSync(dir)) {
     const abs = join(dir, name)
     const rel = relative(root, abs).split("\\").join("/")
     const st = lstatSync(abs)
-    if (st.isSymbolicLink()) skipped.push(rel)
+    if (st.isSymbolicLink() || UNSAFE_NAME.test(name) || GUARDED.test(rel)) skipped.push(rel)
     else if (st.isDirectory()) walk(root, abs, files, skipped)
     else if (st.isFile()) files.push(rel)
     else skipped.push(rel)
   }
 }
 
-const isBinary = (b: Buffer) => b.subarray(0, 8000).includes(0)
+const isBinary = (b: Buffer) => b.includes(0)
+
+/** Control and bidirectional characters shown as escapes, so the diff reviewed is the content applied. */
+export function visible(text: string): string {
+  return text.replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,
+    (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`,
+  )
+}
 
 function textDiff(before: Buffer | null, after: Buffer | null, path: string, status: PatchFile["status"]): string {
-  if ((before && isBinary(before)) || (after && isBinary(after))) return `--- a/${path}\n+++ b/${path}\nBinary file ${status}`
-  return unifiedDiff(before?.toString("utf8") ?? "", after?.toString("utf8") ?? "", path, status)
+  if ((before && isBinary(before)) || (after && isBinary(after))) {
+    const size = after ? `${after.length} bytes, sha256 ${sha256(after)}` : "removed"
+    return `--- a/${path}\n+++ b/${path}\nBinary file ${status}: ${size}`
+  }
+  return visible(unifiedDiff(before?.toString("utf8") ?? "", after?.toString("utf8") ?? "", path, status))
 }
 
 /** The patch a completed modify-mode step proposes, or null when nothing changed. */
@@ -70,15 +89,24 @@ export function makePatch(dataDir: string, ws: Workspace): ProposedPatch | null 
   walk(ws.workspace, ws.workspace, present, skipped)
   const changes: PatchChange[] = []
   const contents = new Map<string, Buffer>()
+  let total = 0
   for (const rel of present.sort()) {
+    total += lstatSync(join(ws.workspace, rel)).size
+    if (total > PATCH_CAP) throw new Error(`The workspace grew past ${PATCH_CAP / 1024 / 1024} MB, so no patch was proposed.`)
     const data = readFileSync(join(ws.workspace, rel))
     const base = manifest[rel]
+    // A text original that came back with NUL bytes would hide its new content behind "binary".
+    if (base !== undefined && isBinary(data) && !isBinary(readFileSync(join(ws.snapshot, "files", rel)))) {
+      skipped.push(rel)
+      continue
+    }
     if (base === undefined) changes.push({ path: rel, status: "added", base: null })
     else if (sha256(data) !== base) changes.push({ path: rel, status: "modified", base })
     else continue
     contents.set(rel, data)
   }
-  for (const rel of Object.keys(manifest).sort()) if (!present.includes(rel)) changes.push({ path: rel, status: "deleted", base: manifest[rel] })
+  for (const rel of Object.keys(manifest).sort())
+    if (!present.includes(rel) && !skipped.includes(rel)) changes.push({ path: rel, status: "deleted", base: manifest[rel] })
   if (!changes.length) return null
 
   const id = randomUUID()

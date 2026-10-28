@@ -64,5 +64,5 @@ export function readKey(): string | null {
 
 export function keyStatus(): KeyStatus {
   const k = cached
-  return { set: !!k, hint: k ? `${k.slice(0, 6)}…${k.slice(-4)}` : "", encryption: safeStorage.isEncryptionAvailable() }
+  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: safeStorage.isEncryptionAvailable() }
 }

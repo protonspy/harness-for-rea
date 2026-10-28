@@ -118,7 +118,7 @@ describe("credentials (R3.1–R3.3)", () => {
     expect(keyStatus()).toEqual({ set: false, hint: "", encryption: true })
     const s = saveKey("sk-or-v1-abcdef1234567890")
     expect(s.set).toBe(true)
-    expect(s.hint).toBe("sk-or-…7890")
+    expect(s.hint).toBe("…7890")
     expect(JSON.stringify(s)).not.toContain("abcdef123456")
   })
 

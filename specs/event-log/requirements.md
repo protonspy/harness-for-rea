@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/harness-for-rea
+delivery: in-progress
 ---
 
 # Event log — requirements

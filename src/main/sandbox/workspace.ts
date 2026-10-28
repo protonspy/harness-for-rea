@@ -42,10 +42,14 @@ export function workspaceDirs(dataDir: string, id: string) {
 */
 export function prepareWorkspace(dataDir: string, sourceRoot: string, requested: string[]): Workspace {
   const resolved = new Map<string, string>()
+  // Windows paths are case-insensitive: `A.ts` and `a.ts` are one file and must be one copy.
+  const seen = new Set<string>()
   let total = 0
   for (const r of requested) {
     const { rel, abs } = resolveRequested(sourceRoot, r)
-    if (resolved.has(rel)) continue
+    const key = process.platform === "win32" ? rel.toLowerCase() : rel
+    if (seen.has(key)) continue
+    seen.add(key)
     total += statSync(abs).size
     if (total > WORKSPACE_CAP) throw new PathRejected(r, `the files exceed the ${WORKSPACE_CAP / 1024 / 1024} MB workspace limit`)
     resolved.set(rel, abs)

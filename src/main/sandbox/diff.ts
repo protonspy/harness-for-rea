@@ -6,6 +6,8 @@
 /** Above this many line pairs the diff shows the whole file replaced instead of an alignment. */
 export const ALIGN_CAP = 4_000_000
 const CONTEXT = 3
+/** Above this many lines on either side, the file is shown replaced rather than aligned. */
+export const LINE_LIMIT = 20_000
 
 type Op = { kind: " " | "-" | "+"; line: string; a: number; b: number }
 
@@ -20,7 +22,7 @@ function lines(text: string): string[] {
 export function diffLines(a: string[], b: string[]): Op[] {
   const n = a.length
   const m = b.length
-  if (n * m > ALIGN_CAP)
+  if (n === 0 || m === 0 || n > LINE_LIMIT || m > LINE_LIMIT || n * m > ALIGN_CAP)
     return [...a.map((line, i) => ({ kind: "-" as const, line, a: i, b: 0 })), ...b.map((line, j) => ({ kind: "+" as const, line, a: n, b: j }))]
   const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])

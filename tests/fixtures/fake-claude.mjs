@@ -64,7 +64,15 @@ for await (const line of createInterface({ input: process.stdin })) {
   log({ turn, prompt })
   if (mode === "hang") continue
   if (mode === "limit") {
-    out({ type: "result", subtype: "success", is_error: true, result: "You've hit your limit · resets 3pm", session_id: session, usage: {} })
+    out({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "You've hit your limit · resets 3pm",
+      session_id: session,
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 5, output_tokens: 1 },
+    })
     continue
   }
   const target = /\/work\/([^\s:]+)/.exec(prompt)?.[1]
@@ -124,7 +132,12 @@ for await (const line of createInterface({ input: process.stdin })) {
       })
     }
   }
-  const answer = [`Turn ${turn}: analysed ${target ?? "nothing"}.`, "", "Evidence", ...evidence].join("\n")
+  const answer = [
+    `Turn ${turn}: analysed ${target ?? "nothing"}.${mode === "leak" ? " Found sk-ant-oat01-LEAKEDTOKEN123456 in the config." : ""}`,
+    "",
+    "Evidence",
+    ...evidence,
+  ].join("\n")
   out({ type: "assistant", session_id: session, message: { content: [{ type: "text", text: answer }] } })
   out({
     type: "result",

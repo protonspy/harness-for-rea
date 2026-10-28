@@ -24,6 +24,8 @@
 - [x] 3.1 (Unit) Render the specialist's prompt and system prompt from the typed context package only, mapping paths to `/work/<path>` and stating that the artifacts are owned or authorized — R3.1, R3.2, R3.4
 - [x] 3.2 (Unit) Assert that a rendered run carries no host path, host environment variable, orchestrator message or other task's data — R3.2
   _Depends 2.3, 3.1_
+- [x] 3.3 (Unit) Start Claude Code restricted to `/work`, with permission prompts denied and file tools denied under the home directory — R3.5
+  _Depends 2.3_
 
 ## 4 · Changes and audit
 
@@ -33,3 +35,5 @@
   _Depends 4.1_
 - [x] 4.3 (Unit) Emit events for files copied, files read or written by the specialist, and each patch decision — R4.4
   _Depends 1.2, 4.2_
+- [x] 4.4 (Unit) Leave links, special names, `.git` paths and text files turned binary out of the patch, escape control and bidi characters in the diff, and cap patch and diff sizes — R4.5
+  _Depends 4.1_

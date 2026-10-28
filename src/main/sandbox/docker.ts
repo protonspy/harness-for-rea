@@ -90,14 +90,20 @@ function confined(name: string, limits: Limits): string[] {
   ]
 }
 
+/** A bind source goes into a comma-separated `--mount` value, so a comma or quote in it would add options. */
+export function mountSource(path: string): string {
+  if (/[,"]/.test(path)) throw new Error(`The app's data folder path contains a comma or quote, which Docker cannot mount safely: ${path}`)
+  return path
+}
+
 /** `docker` arguments for one delegation, up to the image (specs/task-sandbox R2.1–R2.3, R3.2, R3.3). */
 export function dockerRunArgs(spec: RunSpec): string[] {
   return [
     ...confined(containerName(spec.id), spec.limits),
     "--mount",
-    `type=bind,source=${spec.workspace},target=/work${spec.mode === "read" ? ",readonly" : ""}`,
+    `type=bind,source=${mountSource(spec.workspace)},target=/work${spec.mode === "read" ? ",readonly" : ""}`,
     "--mount",
-    `type=bind,source=${spec.runDir},target=/run/hfr,readonly`,
+    `type=bind,source=${mountSource(spec.runDir)},target=/run/hfr,readonly`,
     "-w",
     "/work",
     SPECIALIST_IMAGE,
@@ -116,6 +122,11 @@ export function claudeArgs(mode: Mode, model = "opus"): string[] {
     "--setting-sources",
     "",
     "--strict-mcp-config",
+    // File tools confined to the working directory, no command-running tool, nothing that would prompt.
+    "--restricted",
+    "--permission-prompts",
+    "none",
+    "--disable-slash-commands",
     "--input-format",
     "stream-json",
     "--output-format",
@@ -127,6 +138,9 @@ export function claudeArgs(mode: Mode, model = "opus"): string[] {
     tools,
     "--allowedTools",
     tools,
+    // The login volume under the home directory holds the plan's token: no file tool may reach it.
+    "--disallowedTools",
+    "Read(//home/agent/**),Edit(//home/agent/**)",
     "--system-prompt-file",
     "/run/hfr/system.md",
     "--no-session-persistence",
@@ -203,6 +217,12 @@ export async function ensureNetwork(exec: Exec): Promise<string | null> {
     "unless-stopped",
     "--cap-drop",
     "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--memory",
+    "256m",
+    "--pids-limit",
+    "128",
     "--read-only",
     "--tmpfs",
     "/tmp",

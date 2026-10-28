@@ -220,7 +220,7 @@ export class TaskRunner {
         summary: err.message,
         payload: { error: err.message },
       })
-      for (const s of log.steps(taskId)) if (s.state === "running" || s.state === "pending") log.updateStep(s.id, { state: cancelled ? "cancelled" : "failed" })
+      this.settleSteps(taskId, cancelled ? "cancelled" : "failed")
       this.live.delete(taskId)
     }
   }
@@ -279,9 +279,19 @@ export class TaskRunner {
       for (const p of live.pending) this.rejectQuietly(p.patchId, taskId)
       this.deps.log.updateTask(taskId, { state: "cancelled", error: "Cancelled." })
       this.deps.log.append({ taskId, agent: "orchestrator", kind: "task.cancelled", state: "cancelled", summary: "Cancelled.", payload: {} })
+      this.settleSteps(taskId, "cancelled")
       this.live.delete(taskId)
     }
     return this.deps.log.getTask(taskId)
+  }
+
+  /** Whether the task has a run in this process, running or paused for approval. */
+  isLive(taskId: string): boolean {
+    return this.live.has(taskId)
+  }
+
+  private settleSteps(taskId: string, state: "cancelled" | "failed") {
+    for (const s of this.deps.log.steps(taskId)) if (s.state === "running" || s.state === "pending") this.deps.log.updateStep(s.id, { state })
   }
 
   /** A new run from the same request and source folder (R3.5). */

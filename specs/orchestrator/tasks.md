@@ -10,6 +10,8 @@
 - [x] 2.1 (Unit) Define the context package schema and the `delegate_to_specialist` tool over the sandbox, returning report, evidence and patch, or the reason as a tool error — R2.3, R2.4, R2.5
 - [x] 2.2 (Unit) Assemble the agent: system prompt, read-only filesystem backend, `apply_patch` behind `interruptOn`, and `write_todos` recorded as steps — R2.1, R2.2, R3.1
   _Depends 1.1, 2.1_
+- [x] 2.3 (Unit) Redact secret shapes from the delegation result returned to the model — R2.6
+  _Depends 2.1_
 
 ## 3 · Lifecycle
 

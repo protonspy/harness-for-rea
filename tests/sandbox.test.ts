@@ -61,6 +61,11 @@ describe("workspace (R1.1, R1.2, R1.4)", () => {
     expect(readFileSync(join(ws.snapshot, "files", "src", "b.ts"), "utf8")).toBe("export const b = 2\n")
   })
 
+  it("copies a file named twice with different case once on Windows", () => {
+    const ws = prepareWorkspace(data, root, ["src/a.ts", "SRC/A.ts"])
+    expect(ws.files).toHaveLength(process.platform === "win32" ? 1 : 2)
+  })
+
   it("rejects the delegation on a path outside the root, creating nothing", () => {
     expect(() => prepareWorkspace(data, root, ["src/a.ts", "../x"])).toThrow(PathRejected)
     expect(existsSync(join(data, "workspace"))).toBe(false)
@@ -102,6 +107,11 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(args, "--name")).toEqual([containerName("1234")])
   })
 
+  it("refuses a mount source that could add mount options", () => {
+    expect(() => dockerRunArgs({ ...spec, workspace: "C:/Users/a,b/ws" })).toThrow(/comma or quote/)
+    expect(() => dockerRunArgs({ ...spec, runDir: 'C:/x"y' })).toThrow(/comma or quote/)
+  })
+
   it("mounts /work writable only in modify mode", () => {
     expect(dockerRunArgs({ ...spec, mode: "modify" })).toContain("type=bind,source=C:\\data\\workspace\\1234,target=/work")
   })
@@ -130,6 +140,8 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(read.slice(0, 2)).toEqual(["claude", "-p"])
     expect(after(read, "--setting-sources")).toEqual([""])
     expect(read).toContain("--strict-mcp-config")
+    expect(read).toContain("--restricted")
+    expect(after(read, "--permission-prompts")).toEqual(["none"])
     expect(after(read, "--tools")).toEqual(["Read,Grep,Glob"])
     expect(after(read, "--model")).toEqual(["opus"])
     expect(after(read, "--input-format")).toEqual(["stream-json"])

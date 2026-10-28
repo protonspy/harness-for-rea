@@ -42,6 +42,10 @@ export const ContextPackageSchema = z
 
 export type ContextPackage = z.output<typeof ContextPackageSchema>
 
+/** Evidence is read from at most this much of a report, and only from lines this long. */
+const REPORT_CAP = 256 * 1024
+const LINE_CAP = 2000
+
 export interface Evidence {
   path: string
   startLine: number
@@ -55,7 +59,10 @@ export interface Evidence {
 export function parseEvidence(report: string, files: string[]): Evidence[] {
   const known = new Set(files.map((f) => f.replace(/\\/g, "/")))
   const out: Evidence[] = []
-  for (const m of report.matchAll(/^\s*[-*]\s+`?([^\s`:]+(?:\/[^\s`:]+)*)`?:(\d+)(?:-(\d+))?`?\s+[—–-]+\s+(.+)$/gm)) {
+  for (const line of report.slice(0, REPORT_CAP).split("\n")) {
+    // One path token with no nested repetition, on a line of bounded length: matching stays linear.
+    const m = line.length <= LINE_CAP ? /^\s*[-*]\s+`?([^\s`:]+)`?:(\d+)(?:-(\d+))?`?\s+[—–-]+\s+(.+)$/.exec(line) : null
+    if (!m) continue
     const path = m[1].replace(/^\/work\//, "")
     const startLine = Number(m[2])
     const endLine = m[3] ? Number(m[3]) : startLine

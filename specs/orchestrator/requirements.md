@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/harness-for-rea
+delivery: in-progress
 ---
 
 # Orchestrator — requirements
@@ -27,6 +29,7 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **R2.3** The orchestrator shall expose the specialist as a `delegate_to_specialist` tool whose input is a context package validated against its schema.
 - **R2.4** When the agent delegates a step, the orchestrator shall run the delegation in the sandbox and return the specialist's report, its evidence and any proposed patch to the agent.
 - **R2.5** If a context package fails validation or the sandbox refuses the delegation, then the orchestrator shall return the reason to the agent as a tool error instead of failing the task.
+- **R2.6** The orchestrator shall redact secret shapes from the specialist's report before returning it to the model.
 
 ## R3 · Approval and lifecycle
 
