@@ -5,7 +5,17 @@ import { describe, expect, it } from "vitest"
 import { ContextPackageSchema } from "../src/shared/context"
 import { relativeTo } from "../src/main/orchestrator/tools"
 import { renderPrompt, scrubPaths } from "../src/main/sandbox/prompt"
-import { dockerExecBuffer, OUTPUT_CAP, TaskBox, taskBoxArgs, taskBoxName, WORKSPACE, type BufferResult, type ExecBuffer } from "../src/main/sandbox/taskbox"
+import {
+  BUFFER_CAP,
+  dockerExecBuffer,
+  OUTPUT_CAP,
+  TaskBox,
+  taskBoxArgs,
+  taskBoxName,
+  WORKSPACE,
+  type BufferResult,
+  type ExecBuffer,
+} from "../src/main/sandbox/taskbox"
 import { SPECIALIST_IMAGE } from "../src/main/sandbox/docker"
 
 /*
@@ -54,7 +64,7 @@ describe("TaskBox", () => {
     )
     const box = new TaskBox(f.exec, "t1")
     expect(await box.execute("ls /workspace")).toEqual({ output: "out\nerr\n", exitCode: 2, truncated: false })
-    expect(f.calls[0]).toEqual(["exec", "hfr-orch-t1", "sh", "-c", "ls /workspace"])
+    expect(f.calls[0]).toEqual(["exec", "hfr-orch-t1", "timeout", "-s", "KILL", "110", "sh", "-c", "ls /workspace"])
     const big = await box.execute("echo big")
     expect(big.truncated).toBe(true)
     expect(big.output).toHaveLength(OUTPUT_CAP)
@@ -76,6 +86,31 @@ describe("TaskBox", () => {
     const out = await new TaskBox(f.exec, "t1").downloadFiles(["/workspace/a", "/workspace/d", "/workspace/z"])
     expect(Buffer.from(out[0].content!).toString()).toBe("hi")
     expect(out.map((o) => o.error)).toEqual([null, "is_directory", "file_not_found"])
+  })
+
+  it("marks output that hit the buffer cap as truncated, and refuses such a download", async () => {
+    const f = fake(() => ({ stdout: Buffer.from("partial"), overflow: true }))
+    const box = new TaskBox(f.exec, "t1")
+    expect((await box.execute("yes")).truncated).toBe(true)
+    expect((await box.downloadFiles(["/dev/zero"]))[0]).toEqual({ path: "/dev/zero", content: null, error: "file_not_found" })
+  })
+
+  it("stops reading a command whose output passes the cap", async () => {
+    const r = await dockerExecBuffer.call(null, ["--version"])
+    expect(r.overflow).toBe(false)
+    expect(BUFFER_CAP).toBeGreaterThan(OUTPUT_CAP)
+  })
+
+  it("sweeps task containers left behind by a previous run", async () => {
+    const f = fake((a) => (a[0] === "ps" ? { stdout: Buffer.from("abc\ndef\n") } : {}))
+    expect(await TaskBox.sweep(f.exec)).toBe(2)
+    expect(f.calls).toEqual([
+      ["ps", "-aq", "--filter", "name=^hfr-orch-"],
+      ["rm", "-f", "abc", "def"],
+    ])
+    const none = fake(() => ({ stdout: Buffer.from("") }))
+    expect(await TaskBox.sweep(none.exec)).toBe(0)
+    expect(none.calls).toHaveLength(1)
   })
 
   it("starts the container or says why it could not, and removes it", async () => {
@@ -118,6 +153,11 @@ describe("the orchestrator's brief (task-sandbox R3.1, R3.2)", () => {
     expect(s.environment).toEqual(["Root /work/"])
     expect(s.excerpts[0].note).toBe("see /work/src")
     expect(JSON.stringify(s)).not.toMatch(/Users[\\/]+Me[\\/]+Repo[\\/"]/i)
+  })
+
+  it("replaces only whole paths, whatever comes before them", () => {
+    const s = scrubPaths(pkg({ brief: "İstanbul team: C:\\src\\a and C:\\src2\\b and c:\\SRC" }), "C:\\src")
+    expect(s.brief).toBe("İstanbul team: /work/a and C:\\src2\\b and /work")
   })
 
   it("leaves text without host paths alone", () => {

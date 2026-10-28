@@ -56,6 +56,7 @@ export class TaskRunner {
   private readonly deps: RunnerDeps
   private readonly checkpointer: BaseCheckpointSaver
   private readonly live = new Map<string, Live>()
+  private readonly disposals = new Set<Promise<void>>()
 
   constructor(deps: RunnerDeps) {
     this.deps = deps
@@ -330,18 +331,25 @@ export class TaskRunner {
     }
   }
 
-  /** Forget a task's run and take its workspace down. */
-  private end(taskId: string) {
+  /** Forget a task's run and take its workspace down, once it is up if it is still starting. */
+  private end(taskId: string): Promise<void> {
     const live = this.live.get(taskId)
     this.live.delete(taskId)
-    live?.ready.then(({ ws }) => ws.dispose()).catch(() => undefined)
+    const done = live ? live.ready.then(({ ws }) => ws.dispose()).catch(() => undefined) : Promise.resolve()
+    this.disposals.add(done)
+    void done.finally(() => this.disposals.delete(done))
+    return done
   }
 
-  /** Abort every run and take every workspace down, e.g. when the app quits. */
-  stopAll() {
+  /** Abort every run and resolve once every workspace is down, e.g. before the app quits. */
+  async stopAll(): Promise<void> {
+    const runs = [...this.live.values()].map((l) => l.run)
     for (const [id, l] of [...this.live]) {
       l.abort.abort()
-      this.end(id)
+      void this.end(id)
     }
+    // The aborted runs still record their outcome; the database must outlive them.
+    await Promise.allSettled(runs)
+    await Promise.all([...this.disposals])
   }
 }

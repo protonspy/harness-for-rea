@@ -101,9 +101,17 @@ function runner(key: string | null = "sk-or-v1-testkey000000") {
     launcher: launcher(),
     settings: () => settings,
     apiKey: () => key,
-    workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+    workspace: async () => {
+      await workspaceGate
+      if (workspaceFails) throw new Error(workspaceFails)
+      return { backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => void disposed++ }
+    },
   })
 }
+
+let disposed = 0
+let workspaceFails = ""
+let workspaceGate: Promise<void> = Promise.resolve()
 
 const REQUEST = "The parser in src/a.ts drops the last token; find out why and fix it. Codeword: PINEAPPLE-42."
 
@@ -122,6 +130,9 @@ beforeEach(() => {
   requests = []
   status = 200
   fakeMode = "answer"
+  disposed = 0
+  workspaceFails = ""
+  workspaceGate = Promise.resolve()
   refusal = null
 })
 afterEach(() => closeDb())
@@ -398,6 +409,70 @@ describe("end to end (specs/orchestrator 3.2)", () => {
   it("refuses to start without a folder or a key", () => {
     expect(() => runner().start({ request: "x", sourceRoot: join(root, "nope") })).toThrow(/not a folder/)
     expect(() => runner(null).start({ request: "x", sourceRoot: root })).toThrow(/API key/)
+  })
+})
+
+describe("the task's workspace is removed when the task ends (R2.2)", () => {
+  const settle = async (r: TaskRunner, id: string) => {
+    await r.settled(id)
+    await new Promise((res) => setTimeout(res, 10))
+  }
+
+  it("on done and on failure", async () => {
+    script = [{ content: "done" }]
+    const r = runner()
+    const done = r.start({ request: "x", sourceRoot: root })
+    await settle(r, done.id)
+    expect(disposed).toBe(1)
+    status = 402
+    const failed = r.start({ request: "y", sourceRoot: root })
+    await settle(r, failed.id)
+    expect(log.getTask(failed.id).state).toBe("failed")
+    expect(disposed).toBe(2)
+  })
+
+  it("on cancel while waiting, and not before: a paused task keeps it", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await settle(r, task.id)
+    expect(log.getTask(task.id).state).toBe("waiting")
+    expect(disposed).toBe(0)
+    r.cancel(task.id)
+    await settle(r, task.id)
+    expect(disposed).toBe(1)
+  })
+
+  it("on cancel while the workspace is still starting, once it is up", async () => {
+    let open: () => void = () => undefined
+    workspaceGate = new Promise((res) => (open = res))
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    r.cancel(task.id)
+    expect(disposed).toBe(0)
+    open()
+    await settle(r, task.id)
+    expect(log.getTask(task.id).state).toBe("cancelled")
+    expect(disposed).toBe(1)
+  })
+
+  it("fails the task with Docker's reason when the workspace cannot start", async () => {
+    workspaceFails = "Docker is unavailable (pipe not found)."
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    await settle(r, task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "failed", error: "Docker is unavailable (pipe not found)." })
+  })
+
+  it("on quit: stopAll resolves only after every workspace is down", async () => {
+    fakeMode = "hang"
+    script = [{ tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 100 && !kinds(task.id).includes("specialist.init"); i++) await new Promise((res) => setTimeout(res, 50))
+    await r.stopAll()
+    expect(disposed).toBe(1)
+    await r.settled(task.id)
   })
 })
 

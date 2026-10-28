@@ -42,6 +42,8 @@ app.whenReady().then(async () => {
 
   const log = new EventLog(dataDir, push)
   log.recover()
+  // Task containers a crash left running belong to tasks recover() just marked interrupted.
+  void TaskBox.sweep(dockerExecBuffer).catch(() => undefined)
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
   const runner = new TaskRunner({
     ...deps,
@@ -128,9 +130,16 @@ app.whenReady().then(async () => {
   if (DEV) await win.loadURL(DEV)
   else await win.loadFile(join(__dirname, "../renderer/index.html"))
 
-  app.on("before-quit", () => {
-    runner.stopAll()
-    closeDb()
+  let quitting = false
+  app.on("before-quit", (e) => {
+    if (quitting) return
+    // Hold the quit until every task container is removed, then quit for real.
+    e.preventDefault()
+    quitting = true
+    void runner.stopAll().finally(() => {
+      closeDb()
+      app.quit()
+    })
   })
 })
 

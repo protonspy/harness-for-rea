@@ -33,16 +33,10 @@ function section(title: string, lines: string[]): string[] {
   return lines.length ? ["", `## ${title}`, ...lines] : []
 }
 
+/** `needle` as a whole path, any case: `C:\src` does not match the front of `C:\src2`. */
 function replaceInsensitive(text: string, needle: string, by: string): string {
-  const lower = text.toLowerCase()
-  const n = needle.toLowerCase()
-  let out = ""
-  let from = 0
-  for (let i = lower.indexOf(n); i >= 0; i = lower.indexOf(n, from)) {
-    out += text.slice(from, i) + by
-    from = i + n.length
-  }
-  return out + text.slice(from)
+  const literal = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return text.replace(new RegExp(`${literal}(?![\\w.-])`, "gi"), by)
 }
 
 /** Every host form of the source folder's path, and the orchestrator's /workspace, as /work (R3.2). */
