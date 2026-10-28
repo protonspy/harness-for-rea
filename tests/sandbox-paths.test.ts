@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { beforeAll, describe, expect, it } from "vitest"
@@ -37,7 +37,7 @@ const rejected = (fn: () => unknown) => {
 
 describe("resolveRequested", () => {
   it("resolves a file inside the root to its normalized relative path", () => {
-    expect(resolveRequested(root, "src/a.ts")).toEqual({ rel: "src/a.ts", abs: join(root, "src", "a.ts") })
+    expect(resolveRequested(root, "src/a.ts")).toEqual({ rel: "src/a.ts", abs: realpathSync.native(join(root, "src", "a.ts")) })
     expect(resolveRequested(root, "src\\deep\\b.ts").rel).toBe("src/deep/b.ts")
     expect(resolveRequested(root, "./src/a.ts").rel).toBe("src/a.ts")
   })
