@@ -1,0 +1,141 @@
+import { randomUUID } from "node:crypto"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join, relative } from "node:path"
+import type { PatchFile } from "@shared/types"
+import { countChanges, unifiedDiff } from "./diff"
+import { resolveTarget } from "./paths"
+import { readManifest, sha256, type Workspace } from "./workspace"
+
+/*
+  A modify-mode delegation's changes (specs/task-sandbox R4): the difference between the workspace and
+  its snapshot, kept under patches/<id>/ with the new contents and each file's SHA-256 at copy time,
+  so the workspace can be discarded while the patch waits for approval. Applying it checks every
+  original against that SHA-256 first and changes nothing if any differs.
+*/
+
+export interface PatchChange {
+  path: string
+  status: PatchFile["status"]
+  /** the original's SHA-256 when it was copied in; null for a file the specialist added */
+  base: string | null
+}
+
+export interface ProposedPatch {
+  id: string
+  files: PatchFile[]
+  diff: string
+  changes: PatchChange[]
+  /** links or other non-files the specialist left in the workspace, not part of the patch */
+  skipped: string[]
+}
+
+export class PatchConflict extends Error {
+  readonly conflicts: string[]
+
+  constructor(conflicts: string[]) {
+    super(`The originals changed since they were copied, so the patch was not applied: ${conflicts.join(", ")}`)
+    this.name = "PatchConflict"
+    this.conflicts = conflicts
+  }
+}
+
+export function patchDir(dataDir: string, id: string): string {
+  return join(dataDir, "patches", id)
+}
+
+function walk(root: string, dir: string, files: string[], skipped: string[]) {
+  for (const name of readdirSync(dir)) {
+    const abs = join(dir, name)
+    const rel = relative(root, abs).split("\\").join("/")
+    const st = lstatSync(abs)
+    if (st.isSymbolicLink()) skipped.push(rel)
+    else if (st.isDirectory()) walk(root, abs, files, skipped)
+    else if (st.isFile()) files.push(rel)
+    else skipped.push(rel)
+  }
+}
+
+const isBinary = (b: Buffer) => b.subarray(0, 8000).includes(0)
+
+function textDiff(before: Buffer | null, after: Buffer | null, path: string, status: PatchFile["status"]): string {
+  if ((before && isBinary(before)) || (after && isBinary(after))) return `--- a/${path}\n+++ b/${path}\nBinary file ${status}`
+  return unifiedDiff(before?.toString("utf8") ?? "", after?.toString("utf8") ?? "", path, status)
+}
+
+/** The patch a completed modify-mode step proposes, or null when nothing changed. */
+export function makePatch(dataDir: string, ws: Workspace): ProposedPatch | null {
+  const manifest = readManifest(ws.snapshot)
+  const present: string[] = []
+  const skipped: string[] = []
+  walk(ws.workspace, ws.workspace, present, skipped)
+  const changes: PatchChange[] = []
+  const contents = new Map<string, Buffer>()
+  for (const rel of present.sort()) {
+    const data = readFileSync(join(ws.workspace, rel))
+    const base = manifest[rel]
+    if (base === undefined) changes.push({ path: rel, status: "added", base: null })
+    else if (sha256(data) !== base) changes.push({ path: rel, status: "modified", base })
+    else continue
+    contents.set(rel, data)
+  }
+  for (const rel of Object.keys(manifest).sort()) if (!present.includes(rel)) changes.push({ path: rel, status: "deleted", base: manifest[rel] })
+  if (!changes.length) return null
+
+  const id = randomUUID()
+  const dir = patchDir(dataDir, id)
+  const files: PatchFile[] = []
+  const diffs: string[] = []
+  for (const c of changes) {
+    const after = contents.get(c.path) ?? null
+    if (after) {
+      const target = join(dir, "files", c.path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, after)
+    }
+    const before = c.status === "added" ? null : readFileSync(join(ws.snapshot, "files", c.path))
+    const d = textDiff(before, after, c.path, c.status)
+    diffs.push(d)
+    files.push({ path: c.path, status: c.status, ...countChanges(d) })
+  }
+  writeFileSync(join(dir, "patch.json"), JSON.stringify({ changes }, null, 2))
+  return { id, files, diff: diffs.join("\n"), changes, skipped }
+}
+
+/** Originals whose content is not what was copied in (or, for an added file, that now exist). */
+export function conflictsOf(dataDir: string, id: string, sourceRoot: string): string[] {
+  const { changes } = JSON.parse(readFileSync(join(patchDir(dataDir, id), "patch.json"), "utf8")) as { changes: PatchChange[] }
+  const out: string[] = []
+  for (const c of changes) {
+    const { abs } = resolveTarget(sourceRoot, c.path)
+    const now = existsSync(abs) ? sha256(readFileSync(abs)) : null
+    if (now !== c.base) out.push(c.path)
+  }
+  return out
+}
+
+/**
+  Apply an approved patch to the originals (specs/task-sandbox R4.2, R4.3). Throws PatchConflict,
+  touching nothing, when any original differs from its SHA-256 at copy time.
+*/
+export function applyPatch(dataDir: string, id: string, sourceRoot: string): string[] {
+  const dir = patchDir(dataDir, id)
+  const { changes } = JSON.parse(readFileSync(join(dir, "patch.json"), "utf8")) as { changes: PatchChange[] }
+  const bad = conflictsOf(dataDir, id, sourceRoot)
+  if (bad.length) throw new PatchConflict(bad)
+  for (const c of changes) {
+    const { abs } = resolveTarget(sourceRoot, c.path)
+    if (c.status === "deleted") {
+      rmSync(abs, { force: true })
+      continue
+    }
+    mkdirSync(dirname(abs), { recursive: true })
+    const tmp = `${abs}.hfr-${id.slice(0, 8)}.tmp`
+    writeFileSync(tmp, readFileSync(join(dir, "files", c.path)))
+    renameSync(tmp, abs)
+  }
+  return changes.map((c) => c.path)
+}
+
+export function discardPatch(dataDir: string, id: string) {
+  rmSync(patchDir(dataDir, id), { recursive: true, force: true })
+}
