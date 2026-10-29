@@ -91,7 +91,7 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     "--network",
     "none",
     "--mount",
-    `type=bind,source=${mountSource(sourceRoot)},target=${WORKSPACE},readonly`,
+    `type=bind,source=${mountSource(sourceRoot)},target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`,
     "-w",
     WORKSPACE,
     "--entrypoint",

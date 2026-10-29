@@ -31,7 +31,8 @@ describe("task container arguments (R2.2)", () => {
   const after = (flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
   it("binds the whole source folder read-only at /workspace and nothing else", () => {
-    expect(after("--mount")).toEqual([`type=bind,source=C:\\Users\\me\\repo,target=${WORKSPACE},readonly`])
+    // Recursively read-only: a mount nested inside the source folder stays read-only too.
+    expect(after("--mount")).toEqual([`type=bind,source=C:\\Users\\me\\repo,target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`])
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
