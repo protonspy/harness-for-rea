@@ -21,7 +21,10 @@ const host = (p) => (p.startsWith("/run/hfr/") ? join(process.env.HFR_RUN ?? "."
 
 if (args[0] === "auth") {
   log({ auth: args.slice(1) })
-  if (args[1] === "status") out({ loggedIn: mode !== "logged-out", authMethod: "claude.ai", subscriptionType: "max", email: "user@example.com" })
+  if (args[1] === "status")
+    process.stdout
+      .write(`${JSON.stringify({ loggedIn: mode !== "logged-out", authMethod: "claude.ai", subscriptionType: "max", email: "user@example.com" }, null, 2)}
+`)
   if (args[1] === "login") {
     process.stdout.write(
       "Opening browser to sign in…\nBrowser didn't open? Visit: https://claude.com/cai/oauth/authorize?code=true&state=abc\nPaste code here if prompted > ",

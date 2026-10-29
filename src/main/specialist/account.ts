@@ -74,8 +74,14 @@ export function validCode(code: string): boolean {
   return /^[A-Za-z0-9#_\-.~]{8,512}$/.test(code.trim())
 }
 
+/** `claude auth status --json`, which the pinned CLI prints over several lines. */
 export function parseStatus(out: string): AccountState {
-  const d = JSON.parse(out) as { loggedIn?: unknown; authMethod?: unknown; subscriptionType?: unknown; email?: unknown }
+  const d = JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1)) as {
+    loggedIn?: unknown
+    authMethod?: unknown
+    subscriptionType?: unknown
+    email?: unknown
+  }
   return {
     loggedIn: d.loggedIn === true,
     method: typeof d.authMethod === "string" ? d.authMethod : "none",
@@ -84,13 +90,15 @@ export function parseStatus(out: string): AccountState {
   }
 }
 
-const INSTRUCTIONS = [/^Opening browser/i, /didn't open/i, /^Paste code here/i, /^https:\/\//]
+const INSTRUCTIONS = [/^Opening browser/i, /didn't open/i, /^https:\/\//]
+/** The prompt Claude Code prints without a newline, so its outcome follows on the same line. */
+const PROMPT = /^Paste code here if prompted\s*>\s*/i
 
 /** The last line Claude Code wrote that says what went wrong. */
 export function failureReason(text: string): string {
   const lines = cleanText(text)
     .split("\n")
-    .map((l) => l.trim())
+    .map((l) => l.trim().replace(PROMPT, ""))
     .filter((l) => l && !INSTRUCTIONS.some((r) => r.test(l)))
   return lines.pop() ?? "The sign-in did not finish."
 }
@@ -122,7 +130,7 @@ export class ClaudeAccount {
       const child = this.start(["status", "--json"])
       child.stdin?.end()
       const { out } = await collect(child)
-      return parseStatus(out.trim().split("\n").pop() ?? "")
+      return parseStatus(out)
     } catch {
       return { loggedIn: false, method: "none" }
     }
