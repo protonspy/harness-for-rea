@@ -2,7 +2,7 @@
 
 ## What changes
 
-Serves R1.1, R1.2, R1.3, R1.4, R2.1, R2.2, R2.3, R2.4, R2.5, R3.1, R3.2.
+Serves R1.1, R1.2, R1.3, R1.4, R1.5, R2.1, R2.2, R2.3, R2.4, R2.5, R3.1, R3.2.
 
 `src/main/specialist/` ports `study-lab/src/main/claude/{stream,service,account}.ts`
 with the size caps and subagent attribution of MagnoTech's `leitorDoStream.ts`.

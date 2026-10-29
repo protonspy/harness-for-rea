@@ -1,7 +1,7 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
 import { useEffect, useState } from "react"
 import { MODEL_PRESETS } from "@shared/defaults"
-import type { KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
+import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type KeyStatus, type LoginStatus, type SandboxStatus, type Settings } from "@shared/types"
 import { Badge, Button, Card, CardHeader, ErrorText, Field, Input, Mono } from "@/components/ui"
 
 /* Settings: the OpenRouter key, the model, the sandbox limits, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
@@ -90,6 +90,9 @@ export function SettingsView() {
                 </Button>
               ))}
             </div>
+          </Field>
+          <Field label="Reasoning effort" hint="Sent as OpenRouter's reasoning.effort; models without reasoning ignore it. Default sends nothing.">
+            <EffortSelect value={settings.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => save({ orchestratorEffort: v })} />
           </Field>
         </div>
       </Card>
@@ -182,6 +185,12 @@ export function SettingsView() {
           <p className="text-sm text-muted">
             The specialist signs in with your own Claude plan, inside the sandbox image. The app never reads the stored credential.
           </p>
+          <Field
+            label="Effort"
+            hint="Claude Code's --effort for every delegation. Higher effort thinks longer and uses more of your plan. Default passes nothing."
+          >
+            <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
+          </Field>
           {login?.email && <Mono className="text-muted">{login.email}</Mono>}
           {login?.inProgress ? (
             <div className="flex flex-col gap-3">
@@ -231,5 +240,21 @@ export function SettingsView() {
         </div>
       </Card>
     </div>
+  )
+}
+
+function EffortSelect<T extends string>({ value, options, onChange }: { value: T; options: readonly T[]; onChange(v: T): void }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      className="h-9 w-48 rounded-md border border-line bg-bg px-2 text-sm outline-none focus:border-accent"
+    >
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   )
 }

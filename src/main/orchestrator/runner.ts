@@ -79,6 +79,7 @@ export class TaskRunner {
     const model = makeModel({
       apiKey,
       model: task.model,
+      effort: this.deps.settings().orchestratorEffort,
       onUsage: (u) => {
         log.append({
           taskId: task.id,

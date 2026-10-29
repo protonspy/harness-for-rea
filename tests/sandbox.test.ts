@@ -148,6 +148,8 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(read, "--system-prompt-file")).toEqual(["/run/hfr/system.md"])
     expect(after(claudeArgs("modify"), "--tools")).toEqual(["Read,Grep,Glob,Edit,Write"])
     expect(claudeArgs("read").join(" ")).not.toMatch(/Bash|dangerously|add-dir/)
+    expect(claudeArgs("read")).not.toContain("--effort")
+    expect(after(claudeArgs("read", "opus", "max"), "--effort")).toEqual(["max"])
   })
 
   it("runs auth commands on the login volume without any workspace", () => {

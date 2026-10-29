@@ -1,5 +1,6 @@
 import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
+import type { OrchestratorEffort } from "@shared/types"
 
 /*
   The orchestrator's chat model (specs/orchestrator R1): any OpenRouter model the user picked, with
@@ -37,13 +38,15 @@ export function usageOf(output: LlmEndOutput, fallback: string): ModelUsage {
   }
 }
 
-export function makeModel(o: { apiKey: string; model: string; onUsage(u: ModelUsage): void }): ChatOpenRouter {
+export function makeModel(o: { apiKey: string; model: string; effort?: OrchestratorEffort; onUsage(u: ModelUsage): void }): ChatOpenRouter {
   return new ChatOpenRouter({
     model: o.model,
     apiKey: o.apiKey,
     models: fallbackModels(o.model),
     provider: { data_collection: "deny" },
     temperature: 0.2,
+    // OpenRouter's unified reasoning setting; models without reasoning ignore it.
+    ...(o.effort && o.effort !== "default" ? { modelKwargs: { reasoning: { effort: o.effort } } } : {}),
     siteUrl: "https://github.com/protonspy/harness-for-rea",
     siteName: "Harness for REA",
     callbacks: [
