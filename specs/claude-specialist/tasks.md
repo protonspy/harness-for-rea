@@ -8,6 +8,8 @@
   _Depends 1.1, 1.2_
 - [x] 1.4 (Unit) Stop the launch and its process tree on cancel or timeout and report the outcome — R1.3
   _Depends 1.3_
+- [x] 1.5 (Unit) Pass the chosen effort to Claude Code as `--effort` through the launcher — R1.5
+  _Depends 1.3_
 
 ## 2 · Login
 

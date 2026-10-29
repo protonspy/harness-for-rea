@@ -25,6 +25,7 @@ type Body = {
   model: string
   models?: string[]
   provider?: { data_collection?: string }
+  reasoning?: { effort?: string }
   messages: { role: string; content: unknown; tool_call_id?: string }[]
   tools?: { function: { name: string } }[]
 }
@@ -230,6 +231,7 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     // OpenRouter got the fallback and data collection denied
     expect(requests[0].models).toEqual(fallbackModels(settings.model))
     expect(requests[0].provider?.data_collection).toBe("deny")
+    expect(requests[0]).not.toHaveProperty("reasoning")
     expect(requests[0].tools?.map((t) => t.function.name)).toEqual(
       expect.arrayContaining(["write_todos", "delegate_to_specialist", "apply_patch", "read_file"]),
     )
@@ -522,5 +524,21 @@ describe("model and errors (R1.1–R1.4)", () => {
     expect(launch.command).toBe("docker")
     expect(launch.args[0]).toBe("run")
     expect(launch.args).toContain("claude")
+    const high = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {
+      memoryMb: 1,
+      cpus: 1,
+      pidsLimit: 32,
+      specialistEffort: "high",
+    })
+    expect(high.args.slice(high.args.indexOf("--effort"), high.args.indexOf("--effort") + 2)).toEqual(["--effort", "high"])
+  })
+
+  it("sends the chosen reasoning effort to OpenRouter (R1.5)", async () => {
+    settings = { ...settings, orchestratorEffort: "high" }
+    script = [{ content: "ok" }]
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    expect(requests[0].reasoning).toEqual({ effort: "high" })
   })
 })

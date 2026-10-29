@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
 
 /*
@@ -19,6 +20,8 @@ const SettingsPatch = z
     cpus: z.number().min(0.5).max(64),
     pidsLimit: z.number().int().min(32).max(32_768),
     discardOnCompletion: z.boolean(),
+    orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
+    specialistEffort: z.enum(SPECIALIST_EFFORTS),
   })
   .partial()
   .strict()

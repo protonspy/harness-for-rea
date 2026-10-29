@@ -110,7 +110,16 @@ export interface Settings {
   cpus: number
   pidsLimit: number
   discardOnCompletion: boolean
+  /** OpenRouter's `reasoning.effort` for the orchestrator; "default" sends none */
+  orchestratorEffort: OrchestratorEffort
+  /** Claude Code's `--effort` for the specialist; "default" passes none */
+  specialistEffort: SpecialistEffort
 }
+
+export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const
+export type OrchestratorEffort = (typeof ORCHESTRATOR_EFFORTS)[number]
+export const SPECIALIST_EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"] as const
+export type SpecialistEffort = (typeof SPECIALIST_EFFORTS)[number]
 
 export interface KeyStatus {
   set: boolean

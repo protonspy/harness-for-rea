@@ -24,6 +24,7 @@ adr:0006-run-the-specialist-inside-a-container-per-task.
 - **R1.2** The specialist executor shall send each user turn as a stream-json message on stdin and keep stdin open until the delegation ends, so a delegation can carry more than one turn.
 - **R1.3** When a delegation is cancelled or exceeds its timeout, the specialist executor shall stop the CLI and its container and report the delegation as cancelled or timed out.
 - **R1.4** If the CLI exits without a result, then the specialist executor shall report the failure with the last line of its error output, classified as auth, limit or failed.
+- **R1.5** Where the user chose an effort for the specialist, the specialist executor shall start Claude Code with `--effort` set to it.
 
 ## R2 · Stream
 

@@ -1,5 +1,5 @@
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
-import type { PatchView, Settings, StepRow } from "@shared/types"
+import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
 import { claudeArgs, dockerExec, dockerRunArgs, killContainer, preflight, type Exec, type Limits, type Mode } from "./sandbox/docker"
 import { applyPatch, discardPatch, makePatch, PatchConflict } from "./sandbox/patch"
@@ -19,7 +19,7 @@ import { SpecialistError, SpecialistSession, type Launch } from "./specialist/ex
 export interface Launcher {
   /** the reason to refuse, or null */
   preflight(): Promise<string | null>
-  launch(ws: Workspace, mode: Mode, limits: Limits): Launch
+  launch(ws: Workspace, mode: Mode, limits: Limits & { specialistEffort?: SpecialistEffort }): Launch
 }
 
 export function dockerLauncher(exec: Exec = dockerExec): Launcher {
@@ -27,7 +27,7 @@ export function dockerLauncher(exec: Exec = dockerExec): Launcher {
     preflight: () => preflight(exec),
     launch: (ws, mode, limits) => ({
       command: "docker",
-      args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, mode, limits }), ...claudeArgs(mode)],
+      args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, mode, limits }), ...claudeArgs(mode, "opus", limits.specialistEffort)],
       stop: () => killContainer(exec, ws.id),
     }),
   }

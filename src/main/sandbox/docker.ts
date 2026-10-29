@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { join } from "node:path"
+import type { SpecialistEffort } from "@shared/types"
 
 /*
   The container side of a delegation (adr:0006-run-the-specialist-inside-a-container-per-task): the
@@ -114,7 +115,7 @@ export const READ_TOOLS = ["Read", "Grep", "Glob"]
 export const WRITE_TOOLS = ["Edit", "Write"]
 
 /** The Claude Code command inside the container: no setting source, no MCP, file tools only. */
-export function claudeArgs(mode: Mode, model = "opus"): string[] {
+export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort = "default"): string[] {
   const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : [])].join(",")
   return [
     "claude",
@@ -134,6 +135,7 @@ export function claudeArgs(mode: Mode, model = "opus"): string[] {
     "--verbose",
     "--model",
     model,
+    ...(effort === "default" ? [] : ["--effort", effort]),
     "--tools",
     tools,
     "--allowedTools",

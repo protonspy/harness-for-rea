@@ -22,6 +22,7 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **R1.2** The orchestrator shall send every OpenRouter request with `provider.data_collection` set to `deny`.
 - **R1.3** When a model call completes, the orchestrator shall record its tokens, its cost from OpenRouter's usage and the model that answered as an event, and add them to the task's totals.
 - **R1.4** If OpenRouter rejects the key, reports no credits or rate-limits the request, then the orchestrator shall fail the task with a message the user can act on.
+- **R1.5** Where the user chose a reasoning effort for the orchestrator, the orchestrator shall send it as OpenRouter's `reasoning.effort` on every request.
 
 ## R2 · Decomposition and delegation
 

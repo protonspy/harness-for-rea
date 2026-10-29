@@ -82,6 +82,7 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "cancelTask", ["../../etc"])).rejects.toThrow(/invalid arguments for cancelTask/)
     await expect(dispatch(PAGE, "saveSettings", [{ model: "x; rm -rf /" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ extra: 1 }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveSettings", [{ specialistEffort: "ultra" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "startTask", [{ request: "", sourceRoot: "C:/x" }])).rejects.toThrow(/invalid arguments/)
     expect(ran).toEqual([])
   })

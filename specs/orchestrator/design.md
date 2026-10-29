@@ -2,7 +2,7 @@
 
 ## What changes
 
-Serves R1.1, R1.2, R1.3, R1.4, R2.1, R2.2, R2.3, R2.4, R2.5, R2.6, R2.7, R3.1, R3.2, R3.3, R3.4, R3.5.
+Serves R1.1, R1.2, R1.3, R1.4, R1.5, R2.1, R2.2, R2.3, R2.4, R2.5, R2.6, R2.7, R3.1, R3.2, R3.3, R3.4, R3.5.
 
 `src/main/orchestrator/` builds one DeepAgents agent per task, following
 `study-lab/src/main/harness/{model,agent}.ts` and

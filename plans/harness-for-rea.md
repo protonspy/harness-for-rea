@@ -64,6 +64,9 @@ and delegate, inspect the evidence, and approve or reject any proposed change.
 - [x] 2.3 (Unit) Add the orchestrator-written brief to the context package, scrubbed of
       host paths, and render it first in the specialist's prompt
   _Reason Same request: the orchestrator writes the prompt and narrative handed to Claude Code with the prepared workspace_
+- [x] 3.1 (Unit) Let the user choose the reasoning effort of the orchestrator and of the
+      specialist in Settings
+  _Reason The user asked mid-run to choose each model's effort_
 
 ## Done when
 
