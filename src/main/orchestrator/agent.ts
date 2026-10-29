@@ -1,5 +1,5 @@
 import type { BaseCheckpointSaver } from "@langchain/langgraph"
-import { createDeepAgent, type BaseSandbox, type FilesystemBackend } from "deepagents"
+import { createDeepAgent, isSandboxBackend, type BaseSandbox, type FilesystemBackend } from "deepagents"
 import { todoListMiddleware } from "langchain"
 import type { ChatOpenRouter } from "@langchain/openrouter"
 import { APPLY_PATCH, applyPatchTool, delegateTool, type ToolContext } from "./tools"
@@ -34,7 +34,9 @@ export function buildAgent(o: { model: ChatOpenRouter; ctx: ToolContext; checkpo
     tools: [delegateTool(o.ctx), applyPatchTool(o.ctx)],
     middleware: [todoListMiddleware()],
     backend: o.backend,
-    permissions: [{ operations: ["write"], paths: ["/**"], mode: "deny" }],
+    // A backend that runs commands takes no path rules (DeepAgents refuses them): there the read-only
+    // bind and the refused uploads are what keep the source unwritten.
+    ...(isSandboxBackend(o.backend) ? {} : { permissions: [{ operations: ["write"], paths: ["/**"], mode: "deny" }] }),
     interruptOn: { [APPLY_PATCH]: { allowedDecisions: ["approve", "reject"] } },
     checkpointer: o.checkpointer,
   })
