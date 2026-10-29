@@ -413,6 +413,14 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     expect(() => runner().start({ request: "x", sourceRoot: join(root, "nope") })).toThrow(/not a folder/)
     expect(() => runner(null).start({ request: "x", sourceRoot: root })).toThrow(/API key/)
   })
+
+  it("runs a long exploration of many tool calls to its answer", async () => {
+    script = [...Array.from({ length: 120 }, () => ({ tool_calls: [{ name: "read_file", args: { file_path: "/src/b.ts" } }] })), { content: "read it all" }]
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "done", result: "read it all" })
+  }, 60_000)
 })
 
 describe("the agent on the task container's backend (R2.2)", () => {

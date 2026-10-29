@@ -181,7 +181,6 @@ export class TaskRunner {
         ...config,
         signal: live.abort.signal,
         callbacks: callbacks as never,
-        recursionLimit: 200,
         streamMode: "updates",
       })
       const interrupts: Interrupt[] = []
