@@ -14,8 +14,8 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **Files and commands** — a `BaseSandbox` over `docker exec` into `hfr-orch-<task>`,
   the source folder bind-mounted read-only at `/workspace` with no network
   (adr:0007-run-the-orchestrators-tools-in-a-task-container). `ls`, `read_file`,
-  `glob`, `grep` and `execute` run there; uploads are refused and a `deny`
-  permission covers writes. Tests pass a `FilesystemBackend` in its place.
+  `glob`, `grep` and `execute` run there; uploads are refused, and DeepAgents takes no
+  path rules on a backend that runs commands. Tests pass a `FilesystemBackend`, with a write-deny rule, in its place.
 - **Brief** — the context package's `brief` is the orchestrator's own prompt for the
   step: background and real purpose, never an invented authorization.
 - **Delegation** — `delegate_to_specialist` takes a context package

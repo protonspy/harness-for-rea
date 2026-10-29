@@ -11,6 +11,7 @@ import { claudeArgs } from "../src/main/sandbox/docker"
 import { friendlyError } from "../src/main/orchestrator/errors"
 import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
 import { FilesystemBackend } from "deepagents"
 
 /*
@@ -411,6 +412,30 @@ describe("end to end (specs/orchestrator 3.2)", () => {
   it("refuses to start without a folder or a key", () => {
     expect(() => runner().start({ request: "x", sourceRoot: join(root, "nope") })).toThrow(/not a folder/)
     expect(() => runner(null).start({ request: "x", sourceRoot: root })).toThrow(/API key/)
+  })
+})
+
+describe("the agent on the task container's backend (R2.2)", () => {
+  it("builds and runs with a backend that executes commands, which takes no path rules", async () => {
+    const calls: string[][] = []
+    const exec = async (args: string[]) => {
+      calls.push(args)
+      return { code: 0, stdout: Buffer.from("README.md\n"), stderr: "" }
+    }
+    const r = new TaskRunner({
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async (task) => ({ backend: new TaskBox(exec, task.id), root: WORKSPACE, dispose: async () => undefined }),
+    })
+    script = [{ tool_calls: [{ name: "execute", args: { command: "ls /workspace" } }] }, (body) => ({ content: `saw ${lastTool(body)}` })]
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "done", error: "" })
+    expect(log.getTask(task.id).result).toContain("README.md")
+    expect(calls.some((c) => c[0] === "exec" && c.includes("ls /workspace"))).toBe(true)
   })
 })
 
