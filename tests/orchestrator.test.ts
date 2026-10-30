@@ -859,6 +859,29 @@ describe("approving tool calls (specs/chat R4)", () => {
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toContain("// fixed")
   })
 
+  it("runs every call without asking, apply_patch included, when the task was started so (R4.6)", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast, { content: "ok" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root, gated: ["delegate_to_specialist"], auto: true })
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+    expect(pendingCalls(task.id)).toEqual([])
+    expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toContain("// fixed")
+    expect(log.history(task.id).events.find((e) => e.kind === "task.started")!.payload).toMatchObject({ gated: [], auto: true })
+  })
+
+  it("keeps the choice to run every call without asking when the task is retried (R4.6)", async () => {
+    status = 402
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root, auto: true })
+    await r.settled(task.id)
+    status = 200
+    script = [{ content: "again" }]
+    const again = r.retry(task.id)
+    expect(log.history(again.id).events.find((e) => e.kind === "task.started")!.payload).toMatchObject({ gated: [], auto: true })
+    await r.settled(again.id)
+  })
+
   it("rejects a gated call that waits past the approval timeout, recording the timeout as its origin (R4.5)", async () => {
     settings = { ...settings, approvalTimeoutMinutes: 0.001 }
     script = [{ tool_calls: [delegateModify] }, applyFromLast, (body) => ({ content: `Timed out: ${lastTool(body)}` })]

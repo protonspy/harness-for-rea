@@ -51,6 +51,8 @@ export const API_SCHEMAS = {
         sourceRoot: z.string().trim().min(1).max(1000),
         /** the tools that pause for the user's decision; apply_patch is gated whatever this says */
         gated: z.array(z.enum(GATEABLE_TOOLS)).max(GATEABLE_TOOLS.length).default([ALWAYS_GATED]),
+        /** run every tool call without asking, apply_patch included (specs/chat R4.6) */
+        auto: z.boolean().default(false),
       })
       .strict(),
   ]),

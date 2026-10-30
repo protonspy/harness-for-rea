@@ -26,6 +26,7 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [gated, setGated] = useState<GateableTool[]>([ALWAYS_GATED])
+  const [auto, setAuto] = useState(false)
   const [key, setKey] = useState<KeyStatus | null>(null)
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
 
@@ -43,7 +44,7 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
     setBusy(true)
     setError("")
     try {
-      onStarted(await window.hfr.api.startTask({ request, sourceRoot: folder, gated }))
+      onStarted(await window.hfr.api.startTask({ request, sourceRoot: folder, gated, auto }))
     } catch (e) {
       setError((e as Error).message.replace(/^Error invoking remote method 'api': (Error: )?/, ""))
     } finally {
@@ -91,12 +92,16 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
           </div>
         </Field>
         <Field label="Ask me before" hint="The run pauses at each of these until you approve, edit or reject the call.">
+          <Label className="pt-1 font-normal">
+            <Checkbox checked={auto} onCheckedChange={(v) => setAuto(v === true)} />
+            Run every tool call without asking, including patches to my source files
+          </Label>
           <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
             {GATEABLE_TOOLS.map((t) => (
               <Label key={t} className="font-normal">
                 <Checkbox
-                  checked={t === ALWAYS_GATED || gated.includes(t)}
-                  disabled={t === ALWAYS_GATED}
+                  checked={!auto && (t === ALWAYS_GATED || gated.includes(t))}
+                  disabled={auto || t === ALWAYS_GATED}
                   onCheckedChange={(v) => setGated((g) => (v === true ? [...new Set([...g, t])] : g.filter((x) => x !== t)))}
                 />
                 {GATE_LABELS[t]}

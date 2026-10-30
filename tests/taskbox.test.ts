@@ -37,12 +37,13 @@ describe("task container arguments (R2.2)", () => {
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
-  it("has Docker's default network, no privileges, a read-only root and limits (specs/sandbox-images R4.1)", () => {
+  it("has Docker's default network, root with a writable root to install software, and limits (specs/sandbox-images R4.1, R2.8)", () => {
     expect(args).not.toContain("--network")
-    expect(after("--cap-drop")).toEqual(["ALL"])
+    expect(after("--user")).toEqual(["0:0"])
+    expect(args).not.toContain("--read-only")
+    expect(args).not.toContain("--privileged")
     expect(after("--security-opt")).toEqual(["no-new-privileges"])
-    expect(after("--user")).toEqual(["1000:1000"])
-    expect(args).toContain("--read-only")
+    expect(args.join(" ")).not.toMatch(/docker\.sock/)
     expect(after("--memory")).toEqual(["1024m"])
     expect(after("--name")).toEqual([taskBoxName("t1")])
     expect(args.slice(-2)).toEqual([SPECIALIST_IMAGE, "infinity"])

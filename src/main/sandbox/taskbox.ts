@@ -71,7 +71,11 @@ export function taskBoxName(taskId: string): string {
   return `hfr-orch-${taskId}`
 }
 
-/** `docker run` for a task's container: the source read-only at /workspace, full internet access, no privileges. */
+/**
+  `docker run` for a task's container: the source read-only at /workspace, full internet access, and root
+  with a writable root filesystem so the orchestrator can install what its code needs
+  (adr:0014-run-the-task-container-as-root); never privileged, never a host path but the source.
+*/
 export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits): string[] {
   return [
     "run",
@@ -82,12 +86,9 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     "--hostname",
     "workspace",
     "--user",
-    "1000:1000",
-    "--cap-drop",
-    "ALL",
+    "0:0",
     "--security-opt",
     "no-new-privileges",
-    "--read-only",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=256m",
     "--tmpfs",
