@@ -18,7 +18,7 @@ looks back at past tasks with what they cost.
 ## R1 · Settings
 
 - **R1.1** The desktop UI shall let the user set or clear the OpenRouter key, pick the orchestrator model with the preset offered, choose the reasoning effort of the orchestrator and of the specialist, set the delegation timeout and resource limits, and toggle discard on completion.
-- **R1.2** The desktop UI shall show whether Docker is running, whether the sandbox images are built, and whether the specialist is signed in, with actions to build the images and sign in.
+- **R1.2** The desktop UI shall show whether Docker is running, whether the sandbox images are ready or being prepared, and whether the specialist is signed in, with actions to prepare the images again and sign in.
 - **R1.3** While the specialist sign-in is in progress, the desktop UI shall show the Anthropic URL to open and a field for the code.
 
 ## R2 · Tasks

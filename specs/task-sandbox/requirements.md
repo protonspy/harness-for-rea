@@ -28,7 +28,7 @@ only through an approved patch.
 - **R2.1** The sandbox shall run the specialist in a new container whose only bind mounts are the workspace at `/work`, as the working directory, and the run's rendered system prompt, read-only, outside `/work`.
 - **R2.2** While the step is in read mode, the sandbox shall mount `/work` read-only.
 - **R2.3** The sandbox shall run the container as a non-root user with all capabilities dropped, `no-new-privileges`, a read-only root filesystem, and memory, CPU and process limits.
-- **R2.4** The sandbox shall route the container's network traffic through an egress proxy that allows only the domains Claude Code requires.
+- **R2.4** The sandbox shall give the container full internet access on Docker's default network, through no proxy (adr:0013-give-the-sandboxes-full-internet-access).
 - **R2.5** When a delegation is cancelled or exceeds its timeout, the sandbox shall kill its container and record the delegation as cancelled or timed out.
 - **R2.6** If Docker is unavailable or the sandbox image fails verification, then the sandbox shall refuse the delegation and report the reason, without running the specialist on the host.
 

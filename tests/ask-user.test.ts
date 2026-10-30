@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest"
   standing in for /run/hfr-ask.
 */
 
-const SERVER = join(import.meta.dirname, "..", "sandbox", "specialist", "ask-user.mjs")
+const SERVER = join(import.meta.dirname, "..", "sandbox", "specialist-base", "ask-user.mjs")
 
 let child: ChildProcessWithoutNullStreams | null = null
 afterEach(() => child?.kill())

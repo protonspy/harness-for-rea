@@ -164,11 +164,21 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,mcp__hfr__ask_user"])
   })
 
-  it("bakes the MCP server into the specialist image on a Node base", () => {
-    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist", "Dockerfile"), "utf8")
+  it("bakes the MCP server into the base image on a Node base, with no Claude Code (specs/sandbox-images R1.1)", () => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist-base", "Dockerfile"), "utf8")
     expect(dockerfile).toMatch(/^FROM node:24[^\s]*@sha256:[0-9a-f]{64}$/m)
     expect(dockerfile).toContain("COPY ask-user.mjs /opt/hfr/ask-user.mjs")
     expect(dockerfile).toContain("/run/hfr-ask")
+    expect(dockerfile).not.toMatch(/claude-code-releases|\/usr\/local\/bin\/claude/)
+  })
+
+  it("adds only the verified CLI to the pinned base, labelled with both pins (specs/sandbox-images R2.1, R2.2)", () => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist", "Dockerfile"), "utf8")
+    expect(dockerfile).toMatch(/^FROM \$\{BASE\}$/m)
+    expect(dockerfile).toContain('LABEL hfr.claude-code="$CLAUDE_CODE_VERSION" hfr.base="$BASE"')
+    expect(dockerfile).toContain("sha256sum -c -")
+    const final = dockerfile.slice(dockerfile.indexOf("FROM ${BASE}"))
+    expect(final.match(/^[A-Z]+ .*$/gm)?.filter((l) => !/^(FROM|ARG|LABEL) /.test(l))).toEqual(["COPY --from=verify /verify/claude /usr/local/bin/claude"])
   })
 
   it("runs auth commands on the login volume without any workspace", () => {

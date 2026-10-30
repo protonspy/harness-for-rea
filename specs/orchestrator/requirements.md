@@ -27,7 +27,7 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 ## R2 · Decomposition and delegation
 
 - **R2.1** When a task starts, the orchestrator shall decompose it with `write_todos` and record each todo list change as steps and an event.
-- **R2.2** The orchestrator shall run its file and command tools in a container for the task, with the source folder bind-mounted read-only at `/workspace`, no network, and the container removed when the task ends.
+- **R2.2** The orchestrator shall run its file and command tools in a container for the task, with the source folder bind-mounted read-only at `/workspace`, full internet access (adr:0013-give-the-sandboxes-full-internet-access), and the container removed when the task ends.
 - **R2.3** The orchestrator shall expose the specialist as a `delegate_to_specialist` tool whose input is a context package validated against its schema.
 - **R2.4** When the agent delegates a step, the orchestrator shall run the delegation in the sandbox and return the specialist's report, its evidence and any proposed patch to the agent.
 - **R2.5** If a context package fails validation or the sandbox refuses the delegation, then the orchestrator shall return the reason to the agent as a tool error instead of failing the task.
