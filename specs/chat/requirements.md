@@ -3,7 +3,7 @@ autonomy: auto
 ci: wait
 branch: feat/chat-hitl
 delivery: in-review
-pr: 2
+pr: 4
 ---
 
 # Chat — requirements
