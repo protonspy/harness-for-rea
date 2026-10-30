@@ -12,6 +12,8 @@
   _Depends 1.1_
 - [x] 2.2 (Unit) Write the shared API contract with a zod schema per method, the validating dispatcher, the preload bridge and the push channel — R2.1, R2.2, R2.3, R2.4
   _Depends 1.1_
+- [x] 2.3 (Unit) Run one instance, focusing it on a second launch — R1.4
+  _Reason A second launch swept a running task's container_
 
 ## 3 · Credentials
 

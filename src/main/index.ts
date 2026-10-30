@@ -34,7 +34,16 @@ function sandboxDir(): string {
   return app.isPackaged ? join(process.resourcesPath, "sandbox") : join(app.getAppPath(), "sandbox")
 }
 
+// One instance at a time: a second would sweep the first's task containers as orphans at start.
+const primary = app.requestSingleInstanceLock()
+if (!primary) app.quit()
+app.on("second-instance", () => {
+  if (win?.isMinimized()) win.restore()
+  win?.focus()
+})
+
 app.whenReady().then(async () => {
+  if (!primary) return
   const dataDir = app.getPath("userData")
   openDb(join(dataDir, "hfr.db"))
   onKey(registerSecret)

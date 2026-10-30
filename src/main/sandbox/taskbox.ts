@@ -117,26 +117,45 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
   ]
 }
 
+/** What the orchestrator reads once a container that went away was started again. */
+export const RESTARTED = "[The task's sandbox had stopped and was started again: /scratch and anything installed were reset.]"
+
 export class TaskBox extends BaseSandbox {
   readonly id: string
   private readonly exec: ExecBuffer
+  /** starts the container again when it went away, if it can; true once it runs */
+  private readonly revive: () => Promise<boolean>
+  private disposed = false
 
-  constructor(exec: ExecBuffer, taskId: string) {
+  constructor(exec: ExecBuffer, taskId: string, revive: () => Promise<boolean> = async () => false) {
     super()
     this.exec = exec
     this.id = taskBoxName(taskId)
+    this.revive = revive
   }
 
-  /** Start the task's container; throws with Docker's reason when it cannot. */
+  /** Start the task's container; throws with Docker's reason when it cannot. A container that goes away later is started again. */
   static async start(exec: ExecBuffer, taskId: string, sourceRoot: string, limits: Limits): Promise<TaskBox> {
-    const r = await exec(taskBoxArgs(taskId, sourceRoot, limits))
+    const run = () => exec(taskBoxArgs(taskId, sourceRoot, limits))
+    const r = await run()
     if (r.code !== 0) throw new Error(`The task's sandbox did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
-    return new TaskBox(exec, taskId)
+    return new TaskBox(exec, taskId, async () => (await run()).code === 0)
+  }
+
+  /**
+    One `docker exec` into the container. When the container is gone — removed by Docker, by a crash or by
+    another app's sweep — it is started again once and the call retried, so the task goes on with a fresh scratch.
+  */
+  private async inBox(args: string[], input?: Uint8Array): Promise<BufferResult & { restarted?: boolean }> {
+    const r = await this.exec(args, undefined, input)
+    if (this.disposed || r.code === 0 || !/No such container/.test(r.stderr)) return r
+    if (!(await this.revive())) return r
+    return { ...(await this.exec(args, undefined, input)), restarted: true }
   }
 
   async execute(command: string) {
-    const r = await this.exec(["exec", this.id, "timeout", "-s", "KILL", String(COMMAND_TIMEOUT_S), "sh", "-c", command])
-    let output = r.stdout.toString("utf8") + r.stderr
+    const r = await this.inBox(["exec", this.id, "timeout", "-s", "KILL", String(COMMAND_TIMEOUT_S), "sh", "-c", command])
+    let output = (r.restarted ? RESTARTED + " " : "") + r.stdout.toString("utf8") + r.stderr
     const truncated = r.overflow === true || output.length > OUTPUT_CAP
     if (truncated) output = output.slice(0, OUTPUT_CAP)
     return { output, exitCode: r.code, truncated }
@@ -147,9 +166,7 @@ export class TaskBox extends BaseSandbox {
     const out = []
     for (const [path, content] of files) {
       const inScratch = path.startsWith("/") && posix.normalize(path).startsWith(`${SCRATCH}/`) && posix.normalize(path) === path
-      const r = inScratch
-        ? await this.exec(["exec", "-i", this.id, "sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", path], undefined, content)
-        : null
+      const r = inScratch ? await this.inBox(["exec", "-i", this.id, "sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", path], content) : null
       out.push({ path, error: r?.code === 0 ? null : ("permission_denied" as const) })
     }
     return out
@@ -158,7 +175,7 @@ export class TaskBox extends BaseSandbox {
   async downloadFiles(paths: string[]) {
     const out = []
     for (const path of paths) {
-      const r = await this.exec(["exec", this.id, "cat", "--", path])
+      const r = await this.inBox(["exec", this.id, "cat", "--", path])
       out.push(
         r.code === 0 && !r.overflow
           ? { path, content: new Uint8Array(r.stdout), error: null }
@@ -178,6 +195,7 @@ export class TaskBox extends BaseSandbox {
 
   /** Remove the container; one already gone is not an error. */
   async dispose(): Promise<void> {
+    this.disposed = true
     await this.exec(["rm", "-f", this.id])
   }
 }

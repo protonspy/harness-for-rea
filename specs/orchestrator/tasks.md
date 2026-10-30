@@ -19,6 +19,8 @@
   _Depends 2.1_
 - [x] 2.6 (Unit) Run the task container as root with a writable root filesystem — R2.8
   _Reason The orchestrator's code could not apt-get the tools it needed_
+- [x] 2.7 (Unit) Start a task container that went away again — R2.9
+  _Reason A sweep removed a live task's container and every call failed after_
 
 ## 3 · Lifecycle
 
