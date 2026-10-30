@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/sandbox-image-pull
-delivery: in-progress
+delivery: in-review
+pr: 3
 ---
 
 # Sandbox images — requirements
