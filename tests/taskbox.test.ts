@@ -37,8 +37,8 @@ describe("task container arguments (R2.2)", () => {
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
-  it("has no network, no privileges, a read-only root and limits", () => {
-    expect(after("--network")).toEqual(["none"])
+  it("has Docker's default network, no privileges, a read-only root and limits (specs/sandbox-images R4.1)", () => {
+    expect(args).not.toContain("--network")
     expect(after("--cap-drop")).toEqual(["ALL"])
     expect(after("--security-opt")).toEqual(["no-new-privileges"])
     expect(after("--user")).toEqual(["1000:1000"])

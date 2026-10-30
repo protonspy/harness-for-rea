@@ -27,12 +27,10 @@ docker run --rm -i --name hfr-<uuid> --hostname sandbox
   --user agent --cap-drop ALL --security-opt no-new-privileges
   --read-only --tmpfs /tmp --tmpfs /home/agent
   --memory <m> --cpus <c> --pids-limit <p>
-  --network hfr-sandbox
   -v <userData>/workspace/<uuid>:/work[:ro]
   -v <userData>/runs/<uuid>:/run/hfr:ro
   -v hfr-claude-config:/home/agent/.claude-config
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude-config
-  -e HTTPS_PROXY=http://hfr-egress:3128
   -e DISABLE_AUTOUPDATER=1 -e DISABLE_TELEMETRY=1
   -w /work hfr-specialist:<pinned-version>
   claude -p --setting-sources "" --strict-mcp-config
@@ -44,11 +42,11 @@ docker run --rm -i --name hfr-<uuid> --hostname sandbox
 `runs/<uuid>/` holds the rendered system prompt, outside `/work` so it never shows
 up in the specialist's view of the files or in a patch.
 
-`hfr-sandbox` is an internal Docker network; its only route out is the `hfr-egress`
-proxy container, which allows the domains in Claude Code's network requirements and
-nothing else. The specialist image is built from `sandbox/Dockerfile`, which pins the
-CLI version and checks the Linux binary's SHA-256 against the gpg-verified release
-manifest, the procedure `study-lab/scripts/pin-claude-code.mjs` already runs. Login
+The container is on Docker's default network with full internet access
+(adr:0013-give-the-sandboxes-full-internet-access). The specialist image is built
+locally from the pinned base image of specs/sandbox-images, adding the CLI from
+`sandbox/specialist/Dockerfile`, which pins its version and checks the Linux binary's
+SHA-256 against the gpg-verified release manifest. Login
 uses the same image with `claude auth login --claudeai` and the same config volume.
 
 The prompt is rendered from a typed context package. Its `brief` is free text the
@@ -60,8 +58,7 @@ separator and any case, and the orchestrator's `/workspace` prefix replaced with
 
 ## Alternatives considered
 
-The reference `init-firewall.sh` was rejected for R2.4 because it needs `NET_ADMIN`
-and `NET_RAW` in the agent's own container, against R2.3. Diffing against the
+Diffing against the
 manifest alone was rejected for R4.1 because a patch needs the base content, hence
 the snapshot.
 
@@ -70,6 +67,5 @@ the snapshot.
 - Docker Desktop must be running; it was not when this was designed.
 - Copying through Docker Desktop's file sharing makes large workspaces slow; the
   context package's file list is the lever, not a cache.
-- The config volume holds the login token, readable by every specialist run.
-- Claude Code may need a domain the proxy does not allow after a pin upgrade; a
-  blocked request is logged as an event so the allowlist can follow the pin.
+- The config volume holds the login token, readable by every specialist run, and with
+  full internet access nothing stops a steered specialist from sending it out.

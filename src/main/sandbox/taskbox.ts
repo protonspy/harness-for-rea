@@ -5,7 +5,8 @@ import { mountSource, SPECIALIST_IMAGE, type Limits } from "./docker"
 
 /*
   The orchestrator's container for one task (adr:0007-run-the-orchestrators-tools-in-a-task-container):
-  the source folder bind-mounted read-only at /workspace, no network, confined like the specialist's.
+  the source folder bind-mounted read-only at /workspace, full internet access
+  (adr:0013-give-the-sandboxes-full-internet-access), confined like the specialist's.
   DeepAgents reaches it as a sandbox backend, so its file tools and `execute` all run there through
   `docker exec`, and no tool of the orchestrator writes the user's files. Its one writable place is
   /scratch, a tmpfs gone with the container, where it writes and runs its own code
@@ -70,7 +71,7 @@ export function taskBoxName(taskId: string): string {
   return `hfr-orch-${taskId}`
 }
 
-/** `docker run` for a task's container: the source read-only at /workspace, no network, no privileges. */
+/** `docker run` for a task's container: the source read-only at /workspace, full internet access, no privileges. */
 export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits): string[] {
   return [
     "run",
@@ -97,8 +98,6 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     String(limits.cpus),
     "--pids-limit",
     String(limits.pidsLimit),
-    "--network",
-    "none",
     "--mount",
     `type=bind,source=${mountSource(sourceRoot)},target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`,
     "-w",

@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: c2f102d9fb85da3ed2832770a4c5822e43e3c8cdfc2bbc6ea3bfe3fee840f172
+checksum: 84dade298ccc27d0d88e44cf8dac094cd0bbe07af9d1430c08525e8291f40c85
 ---
 
 # Specialist rea
@@ -53,7 +53,7 @@ tool it installs, reaching only the files it was given.
 
 ## Tasks
 
-- [ ] 1.1 (Unit) Record as ADRs the public base image pulled from GHCR, and both sandboxes — the specialist's and the task container — on Docker's own network with full internet access and the egress proxy removed, and update `docs/stack.md`, `docs/glossary.md` and the Boundaries in `.claude/rules/project.md` to match
+- [x] 1.1 (Unit) Record as ADRs the public base image pulled from GHCR, and both sandboxes — the specialist's and the task container — on Docker's own network with full internet access and the egress proxy removed, and update `docs/stack.md`, `docs/glossary.md` and the Boundaries in `.claude/rules/project.md` to match
 - [ ] 1.2 (Unit) Cite the REA ADR from `sandbox/base/Dockerfile`, in place of the colliding adr:0008-make-rea-native-to-the-sandboxes
   _Depends 1.1_
 

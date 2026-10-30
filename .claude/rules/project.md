@@ -35,9 +35,12 @@ npm run lint
 npm run format
 npm run format:check
 
-# Sandbox images by hand (the app builds them from Settings)
-docker build -t hfr-specialist:2.1.310 --build-arg CLAUDE_CODE_VERSION=2.1.310 sandbox/specialist
-docker build -t hfr-egress:1 sandbox/egress
+# The specialist image by hand (the app prepares it at start and from Settings); BASE is
+# specialistBase.ref in sandbox/images.json
+docker build -t hfr-specialist:2.1.310 --build-arg CLAUDE_CODE_VERSION=2.1.310 --build-arg BASE=<ref> sandbox/specialist
+
+# Re-pin the base image after the Images workflow published a changed sandbox/specialist-base
+npm run pin-images
 ```
 
 ## Conventions
@@ -60,6 +63,9 @@ docker build -t hfr-egress:1 sandbox/egress
   mount, an environment variable, a tool or a host fallback without an ADR.
 - `CLAUDE_CODE_VERSION` in `docker.ts` and the Dockerfile's pin move together; upgrading the
   pin is a tested change (adr:0002-run-the-specialist-through-the-pinned-claude-code-cli).
-- `sandbox/egress/allow` is the egress allowlist; widen it only for a domain Claude Code's
-  network requirements list.
+- `sandbox/specialist-base/` is published, so it never holds the Claude Code binary
+  (adr:0012-pull-the-specialists-base-image-from-ghcr); a change to it is published by CI and
+  re-pinned with `npm run pin-images`, or the pin test fails.
+- Both sandboxes have full internet access (adr:0013-give-the-sandboxes-full-internet-access):
+  their isolation is what is mounted, so nothing beyond a task's files is ever mounted.
 - `src/shared/api.ts` is the IPC contract; every method needs its zod schema.

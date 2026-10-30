@@ -43,8 +43,8 @@ themselves. -->
 - **@langchain/openrouter** and **@langchain/core** — `ChatOpenRouter`, the model DeepAgents runs on, so the orchestrator is not tied to one vendor.
 - **zod** — runtime validation of IPC arguments and tool schemas at the trust boundary.
 - **Claude Code CLI (pinned binary)** — the specialist, verified by the signed release manifest and SHA-256 at image build, not an npm dependency ([adr:0002-run-the-specialist-through-the-pinned-claude-code-cli]).
-- **Docker** with **node:24-bookworm-slim** (pinned by digest) — the specialist image, one container per delegation ([adr:0006-run-the-specialist-inside-a-container-per-task]); Node runs the ask-user MCP server ([adr:0008-ask-the-user-from-the-specialist-over-the-run-channel]) and the orchestrator's own scripts in `/scratch`. The verifying build stage stays on **debian:bookworm-slim**.
-- **tinyproxy** on **alpine** — the egress proxy, the only route out of the sandbox network, allowing Claude Code's hosts by name.
+- **Docker** with **node:24.22.2-bookworm-slim** (pinned by digest) — the specialist's base image, one container per delegation ([adr:0006-run-the-specialist-inside-a-container-per-task]); Node runs the ask-user MCP server ([adr:0008-ask-the-user-from-the-specialist-over-the-run-channel]) and the orchestrator's own scripts in `/scratch`. The verifying build stage stays on **debian:bookworm-slim**.
+- **GitHub Container Registry** — hosts the specialist's base image, everything but Claude Code, published by the Images workflow and pulled by digest ([adr:0012-pull-the-specialists-base-image-from-ghcr]).
 
 ## Development
 

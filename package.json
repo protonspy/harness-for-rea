@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:gate": "node scripts/test-gate.mjs",
+    "pin-images": "node scripts/pin-images.mjs",
     "lint": "oxlint --deny-warnings src tests scripts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

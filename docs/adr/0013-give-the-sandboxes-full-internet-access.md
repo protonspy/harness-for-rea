@@ -38,3 +38,5 @@ analysis.
   stops it.
 - Nothing beyond the files a task needs may ever be mounted into either sandbox.
 - A delegation no longer depends on a proxy container being up.
+- The ask channel of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel is
+  no longer the specialist's only way out; it stays the only way to the user.
