@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ALWAYS_GATED, AnswerSchema, DecisionSchema, GATEABLE_TOOLS } from "./chat"
+import { AnswerSchema, DecisionSchema } from "./chat"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
 
@@ -49,8 +49,6 @@ export const API_SCHEMAS = {
       .object({
         request: z.string().trim().min(1).max(20_000),
         sourceRoot: z.string().trim().min(1).max(1000),
-        /** the tools that pause for the user's decision; apply_patch is gated whatever this says */
-        gated: z.array(z.enum(GATEABLE_TOOLS)).max(GATEABLE_TOOLS.length).default([ALWAYS_GATED]),
       })
       .strict(),
   ]),

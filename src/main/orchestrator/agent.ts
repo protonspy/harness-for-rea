@@ -32,7 +32,7 @@ export function systemPrompt(root: string, scratch?: string): string {
     `2. The source tree is mounted read-only at \`${root}\`. Use ls and glob to choose the files a delegation needs, and read_file and grep to read the user's code you are going to write or integrate with — not to analyse the target.`,
     ...(scratch
       ? [
-          `   Write, read and run your own code in \`${scratch}\` with write_file, edit_file, read_file and execute: it is writable, has full internet access to fetch what your code needs, and is discarded with the task. Nothing you run can change the source. Do not use execute to disassemble, decompile or dissect the target — delegate that.`,
+          `   Write, read and run your own code in \`${scratch}\` with write_file, edit_file, read_file and execute: it is writable, has full internet access, and is discarded with the task. Your commands run as root, so install what your code needs with apt-get (run apt-get update first), pip or npm. Nothing you run can change the source. Do not use execute to disassemble, decompile or dissect the target — delegate that.`,
         ]
       : []),
     "3. For each analysis, call delegate_to_specialist with a context package. Write its brief yourself: the background the specialist needs and the real purpose of the step as the user's request states it — what the system is, who owns it, why this analysis is being done. Never invent ownership, authorization or purpose the request does not support. Then give the objective, the files it needs, the excerpts to look at first, environment facts, the questions to answer and the constraints. The specialist sees only those files and that package — never this conversation — so make the package complete on its own and keep it narrow.",
@@ -45,8 +45,12 @@ export function systemPrompt(root: string, scratch?: string): string {
   ].join("\n")
 }
 
-/** Each gated tool takes approve, edit or reject; a patch is approved or rejected as proposed, never edited. */
-export function interruptOn(gated: string[]): Record<string, { allowedDecisions: ("approve" | "edit" | "reject")[] }> {
+/**
+  Each gated tool takes approve, edit or reject; a patch is approved or rejected as proposed, never edited.
+  A task started to run every call without asking gates nothing, `apply_patch` included (specs/chat R4.6).
+*/
+export function interruptOn(gated: string[], auto = false): Record<string, { allowedDecisions: ("approve" | "edit" | "reject")[] }> {
+  if (auto) return {}
   return Object.fromEntries(
     [...new Set([APPLY_PATCH, ...gated])].map((name) => [
       name,
@@ -108,6 +112,8 @@ export function buildAgent(o: {
   inbox?: () => string[]
   /** the tools that pause for the user's decision before they run (specs/chat R4.1) */
   gated?: string[]
+  /** run every tool call without asking, `apply_patch` included (specs/chat R4.6) */
+  auto?: boolean
   /** where the orchestrator writes and runs its own code, when its backend has one (specs/chat R6.3) */
   scratch?: string
 }) {
@@ -120,7 +126,7 @@ export function buildAgent(o: {
     // A backend that runs commands takes no path rules (DeepAgents refuses them): there the read-only
     // bind and the refused uploads are what keep the source unwritten.
     ...(isSandboxBackend(o.backend) ? {} : { permissions: [{ operations: ["write"], paths: ["/**"], mode: "deny" }] }),
-    interruptOn: interruptOn(o.gated ?? [APPLY_PATCH]),
+    interruptOn: interruptOn(o.gated ?? [APPLY_PATCH], o.auto),
     checkpointer: o.checkpointer,
   })
 }

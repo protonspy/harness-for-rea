@@ -859,6 +859,42 @@ describe("approving tool calls (specs/chat R4)", () => {
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toContain("// fixed")
   })
 
+  it("runs every call without asking, apply_patch included, when the task was started so (R4.6)", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast, { content: "ok" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root, gated: ["delegate_to_specialist"], auto: true })
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+    expect(pendingCalls(task.id)).toEqual([])
+    expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toContain("// fixed")
+    expect(log.history(task.id).events.find((e) => e.kind === "task.started")!.payload).toMatchObject({ gated: [], auto: true })
+    // The audit never claims a user approved what nobody was asked about.
+    expect(log.history(task.id).events.find((e) => e.kind === "patch.approved")).toMatchObject({
+      summary: "Patch applied without asking",
+      payload: { origin: "auto" },
+    })
+  })
+
+  it("retries a task without asking for any call, unless it was started with gates (R4.1)", async () => {
+    status = 402
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root, auto: true })
+    await r.settled(task.id)
+    status = 200
+    script = [{ content: "again" }]
+    const again = r.retry(task.id)
+    expect(log.history(again.id).events.find((e) => e.kind === "task.started")!.payload).toMatchObject({ gated: [], auto: true })
+    await r.settled(again.id)
+    // A task recorded before the choice existed has no `auto`, and retries without asking too.
+    const old = log.createTask({ request: REQUEST, sourceRoot: root, model: "m" })
+    log.append({ taskId: old.id, agent: "orchestrator", kind: "task.started", summary: "Task started", payload: { gated: ["apply_patch", "execute"] } })
+    log.updateTask(old.id, { state: "failed" })
+    script = [{ content: "old" }]
+    const retried = r.retry(old.id)
+    expect(log.history(retried.id).events.find((e) => e.kind === "task.started")!.payload).toMatchObject({ gated: [], auto: true })
+    await r.settled(retried.id)
+  })
+
   it("rejects a gated call that waits past the approval timeout, recording the timeout as its origin (R4.5)", async () => {
     settings = { ...settings, approvalTimeoutMinutes: 0.001 }
     script = [{ tool_calls: [delegateModify] }, applyFromLast, (body) => ({ content: `Timed out: ${lastTool(body)}` })]

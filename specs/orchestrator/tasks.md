@@ -17,6 +17,8 @@
   _Depends 2.2_
 - [x] 2.5 (Unit) Ask the agent for a truthful brief per delegation in the tool schema and system prompt — R2.7
   _Depends 2.1_
+- [x] 2.6 (Unit) Run the task container as root with a writable root filesystem — R2.8
+  _Reason The orchestrator's code could not apt-get the tools it needed_
 
 ## 3 · Lifecycle
 

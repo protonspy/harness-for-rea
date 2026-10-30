@@ -33,6 +33,8 @@ export interface ToolContext {
   ask?(q: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }>
   /** the agent's writable scratch in its sandbox, when it has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
+  /** the task runs its calls without asking, so nobody approves a patch it applies (specs/chat R4.1) */
+  auto?: boolean
   /** reads files out of the scratch; one it cannot read comes back with no content */
   readScratch?(paths: string[]): Promise<{ path: string; content: Uint8Array | null }[]>
 }
@@ -109,7 +111,7 @@ export function applyPatchTool(ctx: ToolContext) {
         return `ERROR: there is no patch ${patchId}.`
       }
       if (p.taskId !== ctx.taskId) return `ERROR: patch ${patchId} does not belong to this task.`
-      const done = approvePatch(ctx.deps, patchId, ctx.sourceRoot)
+      const done = approvePatch(ctx.deps, patchId, ctx.sourceRoot, ctx.auto ? "auto" : "user")
       if (done.state === "conflict")
         return `ERROR: the patch was not applied because these files changed since they were copied: ${done.conflicts.join(", ")}. Re-delegate with the current files if the change is still needed.`
       return `Applied the approved patch to ${done.files.map((f) => f.path).join(", ")}.`

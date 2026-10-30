@@ -67,11 +67,18 @@ export const dockerExecBuffer: ExecBuffer = (args, timeoutMs = EXEC_TIMEOUT_MS, 
     })
   })
 
+/** The capabilities the task container keeps as root, enough to install packages (adr:0014-run-the-task-container-as-root). */
+export const INSTALL_CAPS = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"]
+
 export function taskBoxName(taskId: string): string {
   return `hfr-orch-${taskId}`
 }
 
-/** `docker run` for a task's container: the source read-only at /workspace, full internet access, no privileges. */
+/**
+  `docker run` for a task's container: the source read-only at /workspace, full internet access, and root
+  with a writable root filesystem so the orchestrator can install what its code needs
+  (adr:0014-run-the-task-container-as-root); never privileged, never a host path but the source.
+*/
 export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits): string[] {
   return [
     "run",
@@ -82,12 +89,13 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     "--hostname",
     "workspace",
     "--user",
-    "1000:1000",
+    "0:0",
+    // What apt, dpkg, pip and npm need as root, and nothing else: no NET_RAW, MKNOD or SYS_CHROOT.
     "--cap-drop",
     "ALL",
+    ...INSTALL_CAPS.flatMap((c) => ["--cap-add", c]),
     "--security-opt",
     "no-new-privileges",
-    "--read-only",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=256m",
     "--tmpfs",
