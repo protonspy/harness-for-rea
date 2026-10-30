@@ -97,7 +97,7 @@ The surface is built from shadcn/ui components on Radix, kept as source in
 
 - **The specialist asks over a local socket** rather than the run-channel file —
   rejected in adr:0008 for a second reason the file channel avoids: a socket is
-  another thing to confine in a container built to have no network.
+  another thing to confine in the container.
 - **A SQLite checkpointer** so a continued turn survives a restart — rejected as in
   specs/orchestrator: the sandbox's live state does not survive the restart either,
   and a stopped turn across a restart becomes a retry.

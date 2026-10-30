@@ -232,9 +232,18 @@ describe("Docker checks (R2.6, specs/sandbox-images R2.2, R3.1, R4.2)", () => {
   })
 
   it("removes the first round's proxy, network and image, ignoring what is absent", async () => {
-    const { exec, calls } = fakeDocker({ "network rm": { code: 1, stderr: "network hfr-sandbox not found" } })
+    const { exec, calls } = fakeDocker({
+      "inspect hfr-egress": { stdout: "hfr-egress:1\n" },
+      "network rm": { code: 1, stderr: "network hfr-sandbox not found" },
+    })
     await removeLegacy(exec)
-    expect(calls).toEqual(["rm -f hfr-egress", "network rm hfr-sandbox", "image rm hfr-egress:1"])
+    expect(calls.slice(1)).toEqual(["rm -f hfr-egress", "network rm hfr-sandbox", "image rm hfr-egress:1"])
+  })
+
+  it("leaves a container named like the proxy that runs another image", async () => {
+    const { exec, calls } = fakeDocker({ "inspect hfr-egress": { stdout: "nginx:latest\n" } })
+    await removeLegacy(exec)
+    expect(calls).not.toContain("rm -f hfr-egress")
   })
 
   it("kills a delegation's container by name", async () => {

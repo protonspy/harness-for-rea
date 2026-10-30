@@ -226,7 +226,9 @@ export async function dockerState(exec: Exec): Promise<DockerState> {
 
 /** Remove the egress proxy, its image and its network if an earlier version left them (specs/sandbox-images R4.2). */
 export async function removeLegacy(exec: Exec): Promise<void> {
-  await exec(["rm", "-f", LEGACY.proxy])
+  // Only the container the first round started from its own image; one the user named alike stays.
+  const proxy = await exec(["inspect", LEGACY.proxy, "--format", "{{.Config.Image}}"])
+  if (proxy.code === 0 && proxy.stdout.trim() === LEGACY.image) await exec(["rm", "-f", LEGACY.proxy])
   await exec(["network", "rm", LEGACY.network])
   await exec(["image", "rm", LEGACY.image])
 }
