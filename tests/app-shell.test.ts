@@ -91,17 +91,16 @@ describe("IPC (R2.1–R2.3)", () => {
     const t = "00000000-0000-4000-8000-000000000001"
     const c = "00000000-0000-4000-8000-000000000002"
     await dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x" }])
-    expect(ran.at(-1)).toEqual(["startTask", { request: "x", sourceRoot: "C:/x", gated: ["apply_patch"], auto: false }])
-    await dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", auto: true }])
-    expect(ran.at(-1)).toEqual(["startTask", { request: "x", sourceRoot: "C:/x", gated: ["apply_patch"], auto: true }])
+    expect(ran.at(-1)).toEqual(["startTask", { request: "x", sourceRoot: "C:/x" }])
     await dispatch(PAGE, "decideTool", [t, c, { type: "edit", args: { command: "ls" } }])
     await dispatch(PAGE, "decideTool", [t, c, { type: "reject", message: "no" }])
     await dispatch(PAGE, "answerQuestion", [t, c, true])
     await dispatch(PAGE, "sendMessage", [t, "  also check b.ts  "])
     expect(ran.at(-1)).toEqual(["sendMessage", t, "also check b.ts"])
     for (const m of ["stopTurn", "continueTurn", "closeTask"]) await dispatch(PAGE, m, [t])
-    await expect(dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", gated: ["rm_rf"] }])).rejects.toThrow(/invalid arguments/)
-    await expect(dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", auto: "yes" }])).rejects.toThrow(/invalid arguments/)
+    // The renderer cannot ask for gates: every task runs its calls without asking (specs/chat R4.1).
+    await expect(dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", gated: ["apply_patch"] }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", auto: false }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "decideTool", [t, c, { type: "maybe" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "decideTool", [t, c, { type: "approve", args: {} }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "answerQuestion", [t, c, { evil: 1 }])).rejects.toThrow(/invalid arguments/)

@@ -40,6 +40,8 @@ describe("task container arguments (R2.2)", () => {
   it("has Docker's default network, root with a writable root to install software, and limits (specs/sandbox-images R4.1, R2.8)", () => {
     expect(args).not.toContain("--network")
     expect(after("--user")).toEqual(["0:0"])
+    expect(after("--cap-drop")).toEqual(["ALL"])
+    expect(after("--cap-add")).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"])
     expect(args).not.toContain("--read-only")
     expect(args).not.toContain("--privileged")
     expect(after("--security-opt")).toEqual(["no-new-privileges"])

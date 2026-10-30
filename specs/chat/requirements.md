@@ -41,11 +41,10 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 
 ## R4 · Approving tool calls
 
-- **R4.1** (MODIFIED) The chat shall let the user choose, per task, which of the orchestrator's gated tools pause for a decision before they run, with `apply_patch` always gated unless the user chose to run every tool call without asking.
+- **R4.1** (MODIFIED) The chat shall start every task with no tool gated, running each of the orchestrator's tool calls, `apply_patch` included, without pausing for a decision; a task retried keeps running without asking unless it was started with gates.
 - **R4.2** When a gated tool is about to run, the chat shall interrupt the turn, record the call with its arguments, and wait for the user's decision.
 - **R4.3** The chat shall accept one of approve, edit or reject for a gated call: edit carries replacement arguments the agent runs instead, and reject carries a message returned to the agent in place of the result.
 - **R4.4** When the user decides every pending call, the chat shall resume the turn from the checkpointer with those decisions.
-- **R4.6** (ADDED) Where the user chose, when starting a task, to run every tool call without asking, the chat shall run each of the orchestrator's tool calls, `apply_patch` included, without pausing for a decision, and keep that choice when the task is retried.
 - **R4.5** If a gated call waits longer than the task's approval timeout, then the chat shall reject it and record the decision's origin as the timeout.
 
 ## R5 · Asking the user
@@ -72,7 +71,6 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 - **R7.2** While a turn is running or waiting, the desktop UI shall keep the message box enabled for a mid-turn message and show the turn's state.
 - **R7.3** When a tool call awaits a decision, the desktop UI shall show the call with its arguments and offer approve, edit and reject.
 - **R7.4** When the agent asks a question, the desktop UI shall show it with the input its kind calls for and a control to answer.
-- **R7.6** (ADDED) The desktop UI shall offer, when a task starts, the choice to run every tool call without asking, stating that it includes changes to the user's source.
 - **R7.5** When a turn is stopped, the desktop UI shall offer to continue it; when a turn ends awaiting the user, the desktop UI shall show that it is the user's turn.
 
 ## Out of scope

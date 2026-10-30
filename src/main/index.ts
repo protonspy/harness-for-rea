@@ -92,7 +92,8 @@ app.whenReady().then(async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory"] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
     },
-    startTask: (input) => runner.start(input),
+    // Every task runs its tool calls without asking, patches included (specs/chat R4.1).
+    startTask: (input) => runner.start({ ...input, auto: true }),
     listTasks: ({ limit }) => log.listTasks(limit),
     getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
     cancelTask: (id) => runner.cancel(id),

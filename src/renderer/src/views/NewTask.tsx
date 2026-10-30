@@ -1,32 +1,19 @@
 import { FolderOpen, Play } from "lucide-react"
 import { useEffect, useState } from "react"
-import { ALWAYS_GATED, GATEABLE_TOOLS, type GateableTool } from "@shared/chat"
 import type { KeyStatus, SandboxStatus, TaskRow } from "@shared/types"
 import { ErrorText, Field } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 
-/* Start a task: the request, the source folder it is about, and the tools you approve before they run (specs/desktop-ui R2.1, specs/chat R4.1). */
-
-const GATE_LABELS: Record<GateableTool, string> = {
-  apply_patch: "Apply a patch to your files — always asked",
-  delegate_to_specialist: "Delegate a step to the specialist",
-  execute: "Run a command in the task's sandbox",
-  write_file: "Write a file in the scratch area",
-  edit_file: "Edit a file in the scratch area",
-}
+/* Start a task: the request and the source folder it is about; every tool call runs without asking (specs/desktop-ui R2.1, specs/chat R4.1). */
 
 export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void; onSettings(): void }) {
   const [request, setRequest] = useState("")
   const [folder, setFolder] = useState("")
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
-  const [gated, setGated] = useState<GateableTool[]>([ALWAYS_GATED])
-  const [auto, setAuto] = useState(false)
   const [key, setKey] = useState<KeyStatus | null>(null)
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
 
@@ -44,7 +31,7 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
     setBusy(true)
     setError("")
     try {
-      onStarted(await window.hfr.api.startTask({ request, sourceRoot: folder, gated, auto }))
+      onStarted(await window.hfr.api.startTask({ request, sourceRoot: folder }))
     } catch (e) {
       setError((e as Error).message.replace(/^Error invoking remote method 'api': (Error: )?/, ""))
     } finally {
@@ -62,8 +49,8 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
         <h1 className="text-xl font-semibold tracking-tight">New task</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Describe the engineering task. The orchestrator plans it and delegates every analysis to Claude Opus in a sandbox that sees only the files each step
-          needs. You stay in the conversation: follow up while it works, answer its questions, and approve what you choose. Nothing in the folder changes
-          without your approval.
+          needs. You stay in the conversation: follow up while it works, stop it, and answer its questions. Every tool call runs without asking, including
+          patches to the folder.
         </p>
       </div>
       {missing.length > 0 && (
@@ -89,24 +76,6 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
             <Button onClick={pick} aria-label="Pick folder">
               <FolderOpen size={15} />
             </Button>
-          </div>
-        </Field>
-        <Field label="Ask me before" hint="The run pauses at each of these until you approve, edit or reject the call.">
-          <Label className="pt-1 font-normal">
-            <Checkbox checked={auto} onCheckedChange={(v) => setAuto(v === true)} />
-            Run every tool call without asking, including patches to my source files
-          </Label>
-          <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
-            {GATEABLE_TOOLS.map((t) => (
-              <Label key={t} className="font-normal">
-                <Checkbox
-                  checked={!auto && (t === ALWAYS_GATED || gated.includes(t))}
-                  disabled={auto || t === ALWAYS_GATED}
-                  onCheckedChange={(v) => setGated((g) => (v === true ? [...new Set([...g, t])] : g.filter((x) => x !== t)))}
-                />
-                {GATE_LABELS[t]}
-              </Label>
-            ))}
           </div>
         </Field>
         <ErrorText>{error}</ErrorText>

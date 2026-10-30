@@ -235,14 +235,17 @@ export async function delegate(
   }
 }
 
-/** Apply an approved patch, or record why it could not be (specs/task-sandbox R4.2–R4.4). */
-export function approvePatch(deps: DelegationDeps, patchId: string, sourceRoot: string): PatchView {
+/**
+  Apply an approved patch, or record why it could not be (specs/task-sandbox R4.2–R4.4). The origin says
+  who approved it: the user, or a task that runs its calls without asking (specs/chat R4.1).
+*/
+export function approvePatch(deps: DelegationDeps, patchId: string, sourceRoot: string, origin: "user" | "auto" = "user"): PatchView {
   const p = deps.log.getPatch(patchId)
   if (p.state !== "proposed" && p.state !== "approved") throw new Error(`The patch is already ${p.state}.`)
   const ev = (kind: string, summary: string, payload: Record<string, unknown>) =>
     deps.log.append({ taskId: p.taskId, stepId: p.stepId, agent: "sandbox", kind, summary, payload })
   deps.log.updatePatch(patchId, { state: "approved" })
-  ev("patch.approved", "Patch approved by the user", { patchId })
+  ev("patch.approved", origin === "auto" ? "Patch applied without asking" : "Patch approved by the user", { patchId, origin })
   try {
     const files = applyPatch(deps.dataDir, patchId, sourceRoot)
     ev("patch.applied", `Patch applied to ${files.length} file(s)`, { patchId, files: files.map((path) => ({ path, op: "apply" })) })

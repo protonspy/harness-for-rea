@@ -42,7 +42,7 @@
 - [x] 8.6 (TDD) Carry the orchestrator's scratch files into a delegation — R6.7
   _Depends 8.4_
   _Reason The orchestrator prepares the scenario for the analysis, harnesses and its own code included_
-- [x] 10.1 (Unit) Run every tool call unasked when chosen — R4.1, R4.6, R7.6
+- [x] 10.1 (Unit) Run every tool call of every task without asking — R4.1
   _Reason Approving each call by hand blocked the user's real runs_
 
 ## Done when

@@ -45,3 +45,5 @@ over this file answers with the example above as well as with the notes. -->
 - n-0005 2026-10-28 #gotcha @package.json — npm 11 skips electron's install script; run node node_modules/electron/install.js after npm install, CI sets ELECTRON_SKIP_BINARY_DOWNLOAD
 - n-0006 2026-10-28 #gotcha @src/main/sandbox/taskbox.ts — the orchestrator's execute runs in hfr-orch-<task> with --network none and the source read-only; build or test commands that write fail there by design
 - n-0007 2026-10-28 #gotcha @src/main/orchestrator/agent.ts — langchain HITL resumes a rejection with jumpTo model, past every beforeModel hook: queued user messages ride on the rejection message
+- n-0008 2026-10-30 #ceiling @src/main/index.ts — the runner still gates tools when started with gated and auto false; the app always starts auto, so decideTool and the approval card are unreachable from the UI until gating returns or is removed
+- n-0009 2026-10-30 #ceiling @src/main/sandbox/taskbox.ts — the task container's writable layer has no size cap, so a runaway install fills Docker's disk until the task ends; --storage-opt size= or tmpfs on the apt paths would bound it

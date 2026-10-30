@@ -33,7 +33,7 @@ rest is lifecycle and UI.
 
 ## Approval and questions (R4, R5)
 
-- **Gated tools** — `interruptOn` is built from the task's chosen tool set rather than
+- **Gated tools** — the desktop app starts every task with `auto`, so `interruptOn` is empty and no call pauses (R4.1); the runner still takes a gated set, built from the task's chosen tools rather than
   the fixed `apply_patch`, each with `allowedDecisions: ["approve", "edit", "reject"]`; `apply_patch` takes
   approve or reject only, since a patch is decided as the specialist proposed it.
   The pending-decision machinery in `runner.ts` already carries one decision per
