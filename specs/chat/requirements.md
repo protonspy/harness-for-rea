@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/chat-hitl
-delivery: in-progress
+delivery: in-review
+pr: 2
 ---
 
 # Chat — requirements
