@@ -1,0 +1,45 @@
+name: Images
+
+# Publishes the specialist's base image to GHCR, tagged by the hash of its build context
+# (specs/sandbox-images R1.1, R1.2, adr:0012-pull-the-specialists-base-image-from-ghcr). A tag that
+# already exists is never rebuilt, so a pin made from it keeps resolving to the same digest.
+
+on:
+  push:
+    paths:
+      - sandbox/specialist-base/**
+      - scripts/context-hash.mjs
+      - .github/workflows/images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  base:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Publish unless the tag exists
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          ref="ghcr.io/$owner/hfr-specialist-base:$(node scripts/context-hash.mjs sandbox/specialist-base)"
+          echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          if docker buildx imagetools inspect "$ref" > /dev/null 2>&1; then
+            echo "$ref is already published"
+          else
+            docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+              --label "org.opencontainers.image.source=$SOURCE" --tag "$ref" --push sandbox/specialist-base
+          fi
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | node -e 'let s="";process.stdin.on("data",(c)=>(s+=c)).on("end",()=>console.log(JSON.parse(s).digest))')"
+          echo "### $ref" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${ref%:*}@$digest\`" >> "$GITHUB_STEP_SUMMARY"

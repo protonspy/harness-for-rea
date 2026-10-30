@@ -1,0 +1,6 @@
+{
+  "specialistBase": {
+    "ref": "ghcr.io/protonspy/hfr-specialist-base@sha256:ee12b78827aba7fe4d8e8a1a77d0d1b574f1682c4252fe244b2d5559fb5d295c",
+    "context": "0b6f467a31ed6a24c8e23dd28c8e1389c80df781237140468e45e0fb0d739153"
+  }
+}

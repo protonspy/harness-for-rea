@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto"
 import type { LoginStatus, SandboxStatus } from "@shared/types"
-import { buildImages, CLAUDE_CODE_VERSION, dockerState, type Exec } from "./sandbox/docker"
+import { CLAUDE_CODE_VERSION, dockerState, prepareImages, type Exec } from "./sandbox/docker"
 import { ClaudeAccount, failureReason, loginUrl, type AccountState, type LoginInProgress, type StartAuth } from "./specialist/account"
 
 /*
-  What Settings shows and drives: Docker, the sandbox images and their build, and the specialist's
+  What Settings shows and drives: Docker, the sandbox image and its preparation, and the specialist's
   Claude login (specs/desktop-ui R1.2, R1.3). Each change is pushed through `onChange`.
 */
 
@@ -12,6 +12,8 @@ export class SandboxService {
   private readonly exec: Exec
   private readonly sandboxDir: string
   private readonly onChange: (s: SandboxStatus) => void
+  /** The automatic preparation runs once per app session; after that only the user starts one (specs/sandbox-images R3.3). */
+  private prepared = false
   private current: SandboxStatus = { docker: false, dockerError: "", images: false, building: false, buildLog: "", claudeVersion: CLAUDE_CODE_VERSION }
 
   constructor(exec: Exec, sandboxDir: string, onChange: (s: SandboxStatus) => void = () => undefined) {
@@ -26,17 +28,24 @@ export class SandboxService {
     return this.current
   }
 
+  /** The current state; the first one that finds Docker running without a ready image starts preparing it (specs/sandbox-images R3.1, R3.2). */
   async status(): Promise<SandboxStatus> {
     if (this.current.building) return this.current
-    return this.set(await dockerState(this.exec))
+    const s = this.set(await dockerState(this.exec))
+    if (s.docker && !s.images && !this.prepared) return this.build().status
+    return s
   }
 
-  /** Start building the images; resolves with the status at the start, then pushes the outcome. */
+  /** Start preparing the image; resolves with the status at the start, then pushes the outcome. */
   build(): { status: SandboxStatus; done: Promise<SandboxStatus> } {
     if (this.current.building) return { status: this.current, done: Promise.resolve(this.current) }
-    const status = this.set({ building: true, buildLog: "Building the sandbox images. The first build downloads and verifies Claude Code, about 300 MB.\n" })
-    const done = buildImages(this.exec, this.sandboxDir).then(async (r) => {
-      this.set({ building: false, buildLog: `${this.current.buildLog}${r.log}${r.ok ? "Done.\n" : "The build failed.\n"}`.slice(-20_000) })
+    this.prepared = true
+    const status = this.set({
+      building: true,
+      buildLog: "Preparing the sandbox image: pulling the base, then adding Claude Code, downloaded and verified.\n",
+    })
+    const done = prepareImages(this.exec, this.sandboxDir).then(async (r) => {
+      this.set({ building: false, buildLog: `${this.current.buildLog}${r.log}${r.ok ? "Done.\n" : "Preparing the image failed.\n"}`.slice(-20_000) })
       return this.status()
     })
     return { status, done }

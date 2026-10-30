@@ -35,6 +35,6 @@ no workspace mount.
 
 The loopback hook server and per-run MCP server of
 adr:0002-run-the-specialist-through-the-pinned-claude-code-cli are dropped: under
-adr:0006-run-the-specialist-inside-a-container-per-task the container's only route
-out is the egress proxy, and `--tools` already limits the specialist to file tools
+adr:0006-run-the-specialist-inside-a-container-per-task the container sees no host
+path, and `--tools` already limits the specialist to file tools
 over `/work`. Reopening a path to the host would undo the boundary.

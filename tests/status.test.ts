@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { LoginStatus, SandboxStatus } from "../src/shared/types"
 import { closeDb, openDb } from "../src/main/db"
 import { getSettings, saveSettings } from "../src/main/settings"
-import { CLAUDE_CODE_VERSION, SPECIALIST_IMAGE, type Exec } from "../src/main/sandbox/docker"
+import { BASE_IMAGE, CLAUDE_CODE_VERSION, SPECIALIST_IMAGE, type Exec } from "../src/main/sandbox/docker"
 import { LoginService, SandboxService } from "../src/main/status"
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 
@@ -23,26 +23,58 @@ describe("settings (R1.1)", () => {
   })
 })
 
-describe("SandboxService (R1.2)", () => {
-  const exec =
-    (ok: boolean): Exec =>
-    async (args) => {
-      if (args[0] === "build") return { code: ok ? 0 : 1, stdout: "step\n", stderr: ok ? "" : "failed to verify\n" }
-      if (args[0] === "version") return { code: 0, stdout: "29\n", stderr: "" }
-      if (args.join(" ").startsWith(`image inspect ${SPECIALIST_IMAGE}`)) return { code: 0, stdout: CLAUDE_CODE_VERSION, stderr: "" }
-      if (args[0] === "inspect") return { code: 0, stdout: "true", stderr: "" }
+describe("SandboxService (R1.2, specs/sandbox-images R3)", () => {
+  /** A Docker whose image is ready or not, whose build succeeds or not, and whose version answers or not. */
+  const docker = (o: { ready: boolean; build?: boolean; running?: boolean }) => {
+    const calls: string[] = []
+    const state = { ready: o.ready, running: o.running ?? true }
+    const exec: Exec = async (args) => {
+      calls.push(args.join(" "))
+      if (args[0] === "version") return state.running ? { code: 0, stdout: "29\n", stderr: "" } : { code: 1, stdout: "", stderr: "not running\n" }
+      if (args[0] === "build") {
+        if (o.build === false) return { code: 1, stdout: "step\n", stderr: "failed to verify\n" }
+        state.ready = true
+        return { code: 0, stdout: "step\n", stderr: "" }
+      }
+      if (args.join(" ").startsWith(`image inspect ${SPECIALIST_IMAGE}`))
+        return state.ready ? { code: 0, stdout: `${CLAUDE_CODE_VERSION} ${BASE_IMAGE}`, stderr: "" } : { code: 1, stdout: "", stderr: "No such image" }
       return { code: 0, stdout: "", stderr: "" }
     }
+    return { exec, calls, state }
+  }
+  const builds = (calls: string[]) => calls.filter((c) => c.startsWith("build")).length
 
-  it("reports Docker and images, and pushes each change", async () => {
+  it("reports Docker and a ready image, and pushes each change, preparing nothing", async () => {
     const seen: SandboxStatus[] = []
-    const s = new SandboxService(exec(true), "/sandbox", (x) => seen.push(x))
+    const d = docker({ ready: true })
+    const s = new SandboxService(d.exec, "/sandbox", (x) => seen.push(x))
     expect(await s.status()).toMatchObject({ docker: true, images: true, building: false, claudeVersion: CLAUDE_CODE_VERSION })
     expect(seen).toHaveLength(1)
+    expect(builds(d.calls)).toBe(0)
   })
 
-  it("builds once at a time and records the log", async () => {
-    const s = new SandboxService(exec(true), "/sandbox")
+  it("prepares a missing image on its own the first time it finds Docker running", async () => {
+    const d = docker({ ready: false })
+    const s = new SandboxService(d.exec, "/sandbox")
+    expect(await s.status()).toMatchObject({ building: true })
+    expect(d.calls).toContain(`pull ${BASE_IMAGE}`)
+    const done = await s.build().done
+    expect(done).toMatchObject({ building: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await s.status()).toMatchObject({ images: true, building: false })
+    expect(builds(d.calls)).toBe(1)
+  })
+
+  it("waits for Docker when it is not running at start", async () => {
+    const d = docker({ ready: false, running: false })
+    const s = new SandboxService(d.exec, "/sandbox")
+    expect(await s.status()).toMatchObject({ docker: false, building: false })
+    d.state.running = true
+    expect(await s.status()).toMatchObject({ building: true })
+  })
+
+  it("prepares once at a time and records the log", async () => {
+    const s = new SandboxService(docker({ ready: true }).exec, "/sandbox")
     const b = s.build()
     expect(b.status.building).toBe(true)
     expect(s.build().status.building).toBe(true)
@@ -52,10 +84,16 @@ describe("SandboxService (R1.2)", () => {
     expect(done.buildLog).toContain("Done.")
   })
 
-  it("keeps the failure in the log", async () => {
-    const done = await new SandboxService(exec(false), "/sandbox").build().done
+  it("keeps a failure in the log and does not prepare again until asked", async () => {
+    const d = docker({ ready: false, build: false })
+    const s = new SandboxService(d.exec, "/sandbox")
+    const done = await s.build().done
     expect(done.buildLog).toContain("failed to verify")
-    expect(done.buildLog).toContain("The build failed.")
+    expect(done.buildLog).toContain("Preparing the image failed.")
+    expect(await s.status()).toMatchObject({ images: false, building: false })
+    expect(builds(d.calls)).toBe(1)
+    await s.build().done
+    expect(builds(d.calls)).toBe(2)
   })
 })
 

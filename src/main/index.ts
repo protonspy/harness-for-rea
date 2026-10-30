@@ -9,7 +9,7 @@ import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
 import { TaskRunner } from "./orchestrator/runner"
-import { authArgs, dockerExec, ensureNetwork, preflight } from "./sandbox/docker"
+import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
@@ -57,6 +57,10 @@ app.whenReady().then(async () => {
     },
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
+  // The first round's proxy goes, then the image is prepared if it is missing or stale (specs/sandbox-images R3.1, R4.2).
+  void removeLegacy(dockerExec)
+    .catch(() => undefined)
+    .then(() => sandbox.status())
   const login = new LoginService(
     spawnStart("docker", (sub) => {
       const id = authId()
@@ -74,11 +78,7 @@ app.whenReady().then(async () => {
     sandboxStatus: () => sandbox.status(),
     buildSandbox: () => sandbox.build().status,
     loginStatus: async () => ((await sandbox.status()).images ? login.refresh() : login.current()),
-    startLogin: async () => {
-      const blocked = await ensureNetwork(dockerExec)
-      if (blocked) throw new Error(blocked)
-      return login.start().status
-    },
+    startLogin: () => login.start().status,
     sendLoginCode: (code) => login.sendCode(code),
     cancelLogin: () => login.cancel(),
     openLoginUrl: async () => {

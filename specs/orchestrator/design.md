@@ -12,8 +12,8 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
   `provider: { data_collection: "deny" }`. A callback on `handleLLMEnd` reads
   `llmOutput.tokenUsage` (OpenRouter's `usage`, including `cost`) into an event.
 - **Files and commands** — a `BaseSandbox` over `docker exec` into `hfr-orch-<task>`,
-  the source folder bind-mounted read-only at `/workspace` with no network
-  (adr:0007-run-the-orchestrators-tools-in-a-task-container). `ls`, `read_file`,
+  the source folder bind-mounted read-only at `/workspace` with full internet access
+  (adr:0007-run-the-orchestrators-tools-in-a-task-container, adr:0013-give-the-sandboxes-full-internet-access). `ls`, `read_file`,
   `glob`, `grep` and `execute` run there; uploads are refused, and DeepAgents takes no
   path rules on a backend that runs commands. Tests pass a `FilesystemBackend`, with a write-deny rule, in its place.
 - **Brief** — the context package's `brief` is the orchestrator's own prompt for the

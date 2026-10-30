@@ -35,4 +35,5 @@ themselves. -->
 - **task** — one request from the user about one source folder, run by the orchestrator from start to its consolidated answer. Avoid: job
 - **step** — one unit of a task: a todo the orchestrator wrote, or a delegation
 - **workspace** — `workspace/<uuid>/` under the app's data folder, the copies a delegation's sandbox mounts at `/work`, with its snapshot and run directory beside it
-- **egress proxy** — the `hfr-egress` container, the sandbox network's only route out, allowing Claude Code's required hosts and nothing else
+- **base image** — `hfr-specialist-base` on GHCR: the specialist image without Claude Code, pinned by digest in `sandbox/images.json`
+- **specialist image** — `hfr-specialist:<version>`, built locally from the base image plus the verified Claude Code CLI

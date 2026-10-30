@@ -114,7 +114,7 @@ export function SettingsView() {
               <div className="flex items-center gap-2">
                 <Badge variant={sandbox.docker ? "ok" : "bad"}>{sandbox.docker ? "docker running" : "docker unavailable"}</Badge>
                 <Badge variant={sandbox.images ? "ok" : "warn"}>
-                  {sandbox.building ? "building" : sandbox.images ? `images ready · claude ${sandbox.claudeVersion}` : "images missing"}
+                  {sandbox.building ? "preparing" : sandbox.images ? `image ready · claude ${sandbox.claudeVersion}` : "image missing or out of date"}
                 </Badge>
                 <Button size="sm" variant="ghost" onClick={() => run(async () => setSandbox(await api.sandboxStatus()))} aria-label="Refresh">
                   <RefreshCw size={13} />
@@ -129,10 +129,11 @@ export function SettingsView() {
           )}
           <div className="flex items-center gap-3">
             <Button className="shrink-0" disabled={!sandbox?.docker || sandbox.building} onClick={() => run(async () => setSandbox(await api.buildSandbox()))}>
-              <Hammer size={14} /> {sandbox?.images ? "Rebuild images" : "Build images"}
+              <Hammer size={14} /> {sandbox?.images ? "Prepare again" : "Prepare image"}
             </Button>
             <span className="text-xs text-muted-foreground">
-              Downloads Claude Code {sandbox?.claudeVersion}, checks its signed manifest and SHA-256, and builds the egress proxy.
+              Pulls the pinned base image, then downloads Claude Code {sandbox?.claudeVersion}, checks its signed manifest and SHA-256, and adds it. Runs on its
+              own at start.
             </span>
           </div>
           {sandbox?.buildLog && (

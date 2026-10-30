@@ -6,18 +6,17 @@ import { ContextPackageSchema } from "../src/shared/context"
 import { diffLines, unifiedDiff, ALIGN_CAP } from "../src/main/sandbox/diff"
 import {
   authArgs,
-  buildImages,
+  BASE_IMAGE,
   CLAUDE_CODE_VERSION,
   claudeArgs,
   containerEnv,
   containerName,
   dockerRunArgs,
   dockerState,
-  ensureNetwork,
   killContainer,
-  NETWORK,
   preflight,
-  PROXY,
+  prepareImages,
+  removeLegacy,
   SPECIALIST_IMAGE,
   type Exec,
   type ExecResult,
@@ -127,13 +126,17 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(args, "--memory")).toEqual(["2048m"])
     expect(after(args, "--cpus")).toEqual(["2"])
     expect(after(args, "--pids-limit")).toEqual(["256"])
-    expect(after(args, "--network")).toEqual([NETWORK])
+  })
+
+  it("leaves the container on Docker's default network, through no proxy (specs/sandbox-images R4.1)", () => {
+    const args = dockerRunArgs(spec)
+    expect(args).not.toContain("--network")
+    expect(args.join(" ")).not.toMatch(/PROXY/)
   })
 
   it("passes only the allowlisted environment, nothing of the host's", () => {
     const env = after(dockerRunArgs(spec), "-e")
     expect(env.map((e) => e.split("=")[0]).sort()).toEqual(Object.keys(containerEnv()).sort())
-    expect(env).toContain(`HTTPS_PROXY=http://${PROXY}:3128`)
     for (const e of env) expect(e).not.toMatch(/ANTHROPIC|OPENROUTER|USERPROFILE|PATH=|C:\\/i)
   })
 
@@ -164,11 +167,21 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,mcp__hfr__ask_user"])
   })
 
-  it("bakes the MCP server into the specialist image on a Node base", () => {
-    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist", "Dockerfile"), "utf8")
+  it("bakes the MCP server into the base image on a Node base, with no Claude Code (specs/sandbox-images R1.1)", () => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist-base", "Dockerfile"), "utf8")
     expect(dockerfile).toMatch(/^FROM node:24[^\s]*@sha256:[0-9a-f]{64}$/m)
     expect(dockerfile).toContain("COPY ask-user.mjs /opt/hfr/ask-user.mjs")
     expect(dockerfile).toContain("/run/hfr-ask")
+    expect(dockerfile).not.toMatch(/claude-code-releases|\/usr\/local\/bin\/claude/)
+  })
+
+  it("adds only the verified CLI to the pinned base, labelled with both pins (specs/sandbox-images R2.1, R2.2)", () => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist", "Dockerfile"), "utf8")
+    expect(dockerfile).toMatch(/^FROM \$\{BASE\}$/m)
+    expect(dockerfile).toContain('LABEL hfr.claude-code="$CLAUDE_CODE_VERSION" hfr.base="$BASE"')
+    expect(dockerfile).toContain("sha256sum -c -")
+    const final = dockerfile.slice(dockerfile.indexOf("FROM ${BASE}"))
+    expect(final.match(/^[A-Z]+ .*$/gm)?.filter((l) => !/^(FROM|ARG|LABEL) /.test(l))).toEqual(["COPY --from=verify /verify/claude /usr/local/bin/claude"])
   })
 
   it("runs auth commands on the login volume without any workspace", () => {
@@ -190,12 +203,9 @@ function fakeDocker(answers: Record<string, Partial<ExecResult>>): { exec: Exec;
   return { exec, calls }
 }
 
-describe("Docker checks (R2.4–R2.6)", () => {
-  const healthy = {
-    "version ": { stdout: "29.6.1\n" },
-    [`image inspect ${SPECIALIST_IMAGE}`]: { stdout: `${CLAUDE_CODE_VERSION}\n` },
-    "inspect hfr-egress": { stdout: "true\n" },
-  }
+describe("Docker checks (R2.6, specs/sandbox-images R2.2, R3.1, R4.2)", () => {
+  const ready = `${CLAUDE_CODE_VERSION} ${BASE_IMAGE}\n`
+  const healthy = { "version ": { stdout: "29.6.1\n" }, [`image inspect ${SPECIALIST_IMAGE}`]: { stdout: ready } }
 
   it("refuses when Docker is unavailable, saying why", async () => {
     const { exec } = fakeDocker({ "version ": { code: 1, stderr: "error during connect: pipe not found\n" } })
@@ -203,29 +213,37 @@ describe("Docker checks (R2.4–R2.6)", () => {
     expect(await preflight(exec)).toMatch(/Docker is unavailable \(error during connect: pipe not found\)/)
   })
 
-  it("refuses when the image is missing or built for another Claude Code version", async () => {
-    expect(await preflight(fakeDocker({ ...healthy, [`image inspect ${SPECIALIST_IMAGE}`]: { code: 1 } }).exec)).toMatch(/not built/)
-    expect(await preflight(fakeDocker({ ...healthy, [`image inspect ${SPECIALIST_IMAGE}`]: { stdout: "2.0.0" } }).exec)).toMatch(/not built/)
+  it("refuses an image that is missing, built for another Claude Code, or on another base", async () => {
+    const inspect = `image inspect ${SPECIALIST_IMAGE}`
+    for (const answer of [
+      { code: 1 },
+      { stdout: `2.0.0 ${BASE_IMAGE}` },
+      { stdout: `${CLAUDE_CODE_VERSION} ghcr.io/x/hfr-specialist-base@sha256:${"0".repeat(64)}` },
+    ])
+      expect(await preflight(fakeDocker({ ...healthy, [inspect]: answer }).exec)).toMatch(/missing or out of date/)
+    // The first round's image carries the version label and no base label: stale.
+    expect(await preflight(fakeDocker({ ...healthy, [inspect]: { stdout: `${CLAUDE_CODE_VERSION} <no value>` } }).exec)).toMatch(/out of date/)
   })
 
-  it("passes when Docker, images, network and proxy are up", async () => {
-    expect(await preflight(fakeDocker(healthy).exec)).toBeNull()
+  it("passes when Docker runs and the image carries both pins, starting nothing", async () => {
+    const { exec, calls } = fakeDocker(healthy)
+    expect(await preflight(exec)).toBeNull()
+    expect(calls.every((c) => c.startsWith("version") || c.startsWith("image inspect"))).toBe(true)
   })
 
-  it("creates the internal network and starts the proxy when missing", async () => {
-    const { exec, calls } = fakeDocker({ "network inspect": { code: 1 }, "inspect hfr-egress": { code: 1 } })
-    expect(await ensureNetwork(exec)).toBeNull()
-    expect(calls).toContain(`network create --internal ${NETWORK}`)
-    expect(calls.some((c) => c.startsWith(`run -d --name ${PROXY}`))).toBe(true)
-    expect(calls).toContain(`network connect ${NETWORK} ${PROXY}`)
+  it("removes the first round's proxy, network and image, ignoring what is absent", async () => {
+    const { exec, calls } = fakeDocker({
+      "inspect hfr-egress": { stdout: "hfr-egress:1\n" },
+      "network rm": { code: 1, stderr: "network hfr-sandbox not found" },
+    })
+    await removeLegacy(exec)
+    expect(calls.slice(1)).toEqual(["rm -f hfr-egress", "network rm hfr-sandbox", "image rm hfr-egress:1"])
   })
 
-  it("restarts a stopped proxy and reports a failure to", async () => {
-    const stopped = fakeDocker({ "inspect hfr-egress": { stdout: "false" } })
-    expect(await ensureNetwork(stopped.exec)).toBeNull()
-    expect(stopped.calls).toContain(`start ${PROXY}`)
-    expect(await ensureNetwork(fakeDocker({ "inspect hfr-egress": { stdout: "false" }, "start ": { code: 1, stderr: "boom" } }).exec)).toMatch(/boom/)
-    expect(await ensureNetwork(fakeDocker({ "network inspect": { code: 1 }, "network create": { code: 1, stderr: "denied" } }).exec)).toMatch(/denied/)
+  it("leaves a container named like the proxy that runs another image", async () => {
+    const { exec, calls } = fakeDocker({ "inspect hfr-egress": { stdout: "nginx:latest\n" } })
+    await removeLegacy(exec)
+    expect(calls).not.toContain("rm -f hfr-egress")
   })
 
   it("kills a delegation's container by name", async () => {
@@ -234,15 +252,18 @@ describe("Docker checks (R2.4–R2.6)", () => {
     expect(calls).toEqual(["kill hfr-abc"])
   })
 
-  it("builds both images, stopping at the first failure", async () => {
+  it("pulls the pinned base, then builds the CLI on it, stopping at the first failure", async () => {
     const ok = fakeDocker(healthy)
-    expect((await buildImages(ok.exec, "/s")).ok).toBe(true)
-    expect(ok.calls[0]).toContain(`--build-arg CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}`)
+    expect((await prepareImages(ok.exec, "/s")).ok).toBe(true)
+    expect(ok.calls[0]).toBe(`pull ${BASE_IMAGE}`)
+    expect(ok.calls[1]).toContain(`--build-arg BASE=${BASE_IMAGE} --build-arg CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}`)
+    const denied = fakeDocker({ pull: { code: 1, stderr: "denied" } })
+    expect((await prepareImages(denied.exec, "/s")).ok).toBe(false)
+    expect(denied.calls).toHaveLength(1)
     const bad = fakeDocker({ "build -t hfr-specialist": { code: 1, stderr: "sha256sum: WARNING: 1 computed checksum did NOT match" } })
-    const r = await buildImages(bad.exec, "/s")
+    const r = await prepareImages(bad.exec, "/s")
     expect(r.ok).toBe(false)
     expect(r.log).toContain("did NOT match")
-    expect(bad.calls).toHaveLength(1)
   })
 })
 
