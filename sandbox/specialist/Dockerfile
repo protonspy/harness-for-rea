@@ -1,6 +1,7 @@
 # The specialist image: the pinned Claude Code CLI for Linux, verified at build time against the
 # release manifest, whose gpg signature is checked against Anthropic's release key
-# (adr:0006-run-the-specialist-inside-a-container-per-task, specs/task-sandbox R2.6).
+# (adr:0006-run-the-specialist-inside-a-container-per-task, specs/task-sandbox R2.6), on a Node base
+# that runs the ask-user MCP server (adr:0008-ask-the-user-from-the-specialist-over-the-run-channel).
 
 FROM debian:bookworm-slim AS verify
 ARG CLAUDE_CODE_VERSION
@@ -30,18 +31,21 @@ RUN test -n "$CLAUDE_CODE_VERSION" \
  && echo "$checksum  claude" | sha256sum -c - \
  && chmod 0755 claude
 
-FROM debian:bookworm-slim
+FROM node:24.22.2-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 ARG CLAUDE_CODE_VERSION
 LABEL hfr.claude-code="$CLAUDE_CODE_VERSION"
 
+# The base's `node` user holds uid 1000, which every container the app starts runs as `agent`.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates ripgrep \
  && rm -rf /var/lib/apt/lists/* \
+ && userdel --remove node \
  && useradd --uid 1000 --create-home --shell /usr/sbin/nologin agent \
- && mkdir -p /home/agent/.claude-config /work /run/hfr \
+ && mkdir -p /home/agent/.claude-config /work /run/hfr /run/hfr-ask /opt/hfr \
  && chown agent:agent /home/agent/.claude-config
 
 COPY --from=verify /verify/claude /usr/local/bin/claude
+COPY ask-user.mjs /opt/hfr/ask-user.mjs
 
 USER agent
 WORKDIR /work

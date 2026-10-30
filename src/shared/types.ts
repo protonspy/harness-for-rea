@@ -1,6 +1,7 @@
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
-export const TASK_STATES = ["pending", "running", "waiting", "done", "failed", "cancelled", "interrupted"] as const
+/** `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn (specs/chat R1.4, R3.1). */
+export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted"] as const
 export type TaskState = (typeof TASK_STATES)[number]
 
 export type Agent = "orchestrator" | "specialist" | "sandbox" | "app"
@@ -22,7 +23,7 @@ export interface TaskRow {
   specialistCostUsd: number
 }
 
-export type StepKind = "todo" | "delegation"
+export type StepKind = "todo" | "delegation" | "patch"
 
 export interface StepRow {
   id: string
@@ -101,6 +102,8 @@ export interface TaskHistory {
   patches: PatchView[]
   /** more events exist after the last one returned */
   hasMore: boolean
+  /** where the conversation stands, from the live run's checkpoint; absent when the task has no run in this process */
+  turn?: TaskState
 }
 
 export interface Settings {
@@ -114,6 +117,10 @@ export interface Settings {
   orchestratorEffort: OrchestratorEffort
   /** Claude Code's `--effort` for the specialist; "default" passes none */
   specialistEffort: SpecialistEffort
+  /** how long a gated tool call waits for a decision before it is rejected (specs/chat R4.5) */
+  approvalTimeoutMinutes: number
+  /** how long a question waits for an answer before its default is used (specs/chat R5.4) */
+  questionTimeoutMinutes: number
 }
 
 export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const

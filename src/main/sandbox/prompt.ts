@@ -23,6 +23,7 @@ export function renderSystemPrompt(pkg: ContextPackage): string {
     "You see only the files copied into /work for this step. Work from them; when something you need is missing, say so in the report rather than guessing.",
     edit,
     "Back every claim with evidence: a path relative to /work and a line range you actually read.",
+    "When a fact only the user knows would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",
     "",
     "Report format:",
     pkg.reportFormat,

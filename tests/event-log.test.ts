@@ -187,4 +187,15 @@ describe("recovery (R3.1)", () => {
     expect(log.history(run.id).events.at(-1)).toMatchObject({ kind: "task.interrupted", state: "interrupted" })
     expect(log.recover()).toBe(0)
   })
+
+  it("interrupts a stopped turn and closes a conversation that waited for the user (specs/chat R1.5)", () => {
+    const stopped = log.createTask({ request: "s", sourceRoot: "s", model: "m" })
+    log.updateTask(stopped.id, { state: "stopped" })
+    const idle = log.createTask({ request: "i", sourceRoot: "s", model: "m" })
+    log.updateTask(idle.id, { state: "awaiting-user", result: "the answer" })
+    expect(log.recover()).toBe(1)
+    expect(log.getTask(stopped.id).state).toBe("interrupted")
+    expect(log.getTask(idle.id)).toMatchObject({ state: "done", result: "the answer" })
+    expect(log.history(idle.id).events.at(-1)).toMatchObject({ kind: "task.done", state: "done" })
+  })
 })

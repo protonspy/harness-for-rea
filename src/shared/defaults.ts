@@ -14,4 +14,6 @@ export const DEFAULT_SETTINGS: Settings = {
   discardOnCompletion: true,
   orchestratorEffort: "default",
   specialistEffort: "default",
+  approvalTimeoutMinutes: 30,
+  questionTimeoutMinutes: 10,
 }

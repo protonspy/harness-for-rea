@@ -12,6 +12,7 @@ import {
   TaskBox,
   taskBoxArgs,
   taskBoxName,
+  SCRATCH,
   WORKSPACE,
   type BufferResult,
   type ExecBuffer,
@@ -51,6 +52,13 @@ describe("task container arguments (R2.2)", () => {
   it("refuses a source path that would add mount options", () => {
     expect(() => taskBoxArgs("t", "C:/a,b", limits)).toThrow(/comma or quote/)
   })
+
+  it("gives the orchestrator a writable, executable /scratch apart from the read-only source (specs/chat R6.3)", () => {
+    expect(after("--tmpfs")).toEqual(["/tmp:rw,nosuid,nodev,size=256m", `${SCRATCH}:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700`])
+    expect(SCRATCH).toBe("/scratch")
+    expect(after("--mount")).toHaveLength(1)
+    expect(after("--mount")[0]).toContain(",readonly")
+  })
 })
 
 function fake(answers: (args: string[]) => Partial<BufferResult>): { exec: ExecBuffer; calls: string[][] } {
@@ -71,9 +79,37 @@ describe("TaskBox", () => {
     expect(big.output).toHaveLength(OUTPUT_CAP)
   })
 
-  it("refuses every upload: the source is read-only", async () => {
-    const box = new TaskBox(fake(() => ({})).exec, "t1")
-    expect(await box.uploadFiles([["/workspace/x", new Uint8Array([1])]])).toEqual([{ path: "/workspace/x", error: "permission_denied" }])
+  it("writes uploads under /scratch only, and refuses every other path (specs/chat R6.3, R6.4)", async () => {
+    const inputs: (Uint8Array | undefined)[] = []
+    const calls: string[][] = []
+    const exec: ExecBuffer = async (args, _timeout, input) => {
+      calls.push(args)
+      inputs.push(input)
+      return { code: args.includes("/scratch/deny/x") ? 1 : 0, stdout: Buffer.from(""), stderr: "" }
+    }
+    const box = new TaskBox(exec, "t1")
+    const bytes = new Uint8Array([104, 105])
+    expect(
+      await box.uploadFiles([
+        ["/scratch/probe/run.py", bytes],
+        ["/workspace/src/a.ts", bytes],
+        ["/scratch/../workspace/a.ts", bytes],
+        ["scratch/relative", bytes],
+        ["/scratch", bytes],
+        ["/scratch/deny/x", bytes],
+      ]),
+    ).toEqual([
+      { path: "/scratch/probe/run.py", error: null },
+      { path: "/workspace/src/a.ts", error: "permission_denied" },
+      { path: "/scratch/../workspace/a.ts", error: "permission_denied" },
+      { path: "scratch/relative", error: "permission_denied" },
+      { path: "/scratch", error: "permission_denied" },
+      { path: "/scratch/deny/x", error: "permission_denied" },
+    ])
+    expect(calls).toHaveLength(2)
+    expect(calls[0].slice(0, 4)).toEqual(["exec", "-i", "hfr-orch-t1", "sh"])
+    expect(calls[0].at(-1)).toBe("/scratch/probe/run.py")
+    expect(inputs[0]).toEqual(bytes)
   })
 
   it("downloads files through cat, reporting what is missing or a directory", async () => {
@@ -191,6 +227,10 @@ describe.skipIf(!process.env.HFR_DOCKER)("TaskBox on Docker", () => {
       expect(write.exitCode).not.toBe(0)
       expect((await box.execute("getent hosts example.com || echo no-dns")).output).toContain("no-dns")
       expect((await box.execute("id -u")).output.trim()).toBe("1000")
+      // the scratch takes writes and runs them; the source still refuses them (specs/chat R6.3)
+      expect((await box.write("/scratch/probe.sh", "echo probed")).error).toBeUndefined()
+      expect((await box.execute("sh /scratch/probe.sh")).output.trim()).toBe("probed")
+      expect((await box.write("/workspace/probe.sh", "x")).error).toBeDefined()
     } finally {
       await box.dispose()
     }

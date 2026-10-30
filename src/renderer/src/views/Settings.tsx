@@ -2,7 +2,13 @@ import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide
 import { useEffect, useState } from "react"
 import { MODEL_PRESETS } from "@shared/defaults"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type KeyStatus, type LoginStatus, type SandboxStatus, type Settings } from "@shared/types"
-import { Badge, Button, Card, CardHeader, ErrorText, Field, Input, Mono } from "@/components/ui"
+import { ErrorText, Field, Mono, PanelHeader } from "@/components/common"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 /* Settings: the OpenRouter key, the model, the sandbox limits, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
 
@@ -47,7 +53,10 @@ export function SettingsView() {
       <ErrorText>{error}</ErrorText>
 
       <Card>
-        <CardHeader title="Orchestrator (OpenRouter)" actions={key && <Badge tone={key.set ? "ok" : "warn"}>{key.set ? `key ${key.hint}` : "no key"}</Badge>} />
+        <PanelHeader
+          title="Orchestrator (OpenRouter)"
+          actions={key && <Badge variant={key.set ? "ok" : "warn"}>{key.set ? `key ${key.hint}` : "no key"}</Badge>}
+        />
         <div className="flex flex-col gap-4 p-4">
           {key && !key.encryption && <ErrorText>The OS keychain is unavailable, so a key cannot be stored. It is never kept in plain text.</ErrorText>}
           <Field label="API key" hint="Encrypted with the Windows keychain. It is never shown again.">
@@ -65,7 +74,7 @@ export function SettingsView() {
                 <KeyRound size={14} /> Save
               </Button>
               {key?.set && (
-                <Button variant="bad" onClick={() => run(async () => setKey(await api.clearKey()))}>
+                <Button variant="destructive" onClick={() => run(async () => setKey(await api.clearKey()))}>
                   Clear
                 </Button>
               )}
@@ -81,8 +90,8 @@ export function SettingsView() {
               {MODEL_PRESETS.map((m) => (
                 <Button
                   key={m}
-                  size="md"
-                  variant={settings.model === m ? "primary" : "outline"}
+                  size="default"
+                  variant={settings.model === m ? "default" : "outline"}
                   onClick={() => save({ model: m })}
                   className="shrink-0 font-mono text-xs"
                 >
@@ -98,13 +107,13 @@ export function SettingsView() {
       </Card>
 
       <Card>
-        <CardHeader
+        <PanelHeader
           title="Sandbox (Docker)"
           actions={
             sandbox && (
               <div className="flex items-center gap-2">
-                <Badge tone={sandbox.docker ? "ok" : "bad"}>{sandbox.docker ? "docker running" : "docker unavailable"}</Badge>
-                <Badge tone={sandbox.images ? "ok" : "warn"}>
+                <Badge variant={sandbox.docker ? "ok" : "bad"}>{sandbox.docker ? "docker running" : "docker unavailable"}</Badge>
+                <Badge variant={sandbox.images ? "ok" : "warn"}>
                   {sandbox.building ? "building" : sandbox.images ? `images ready · claude ${sandbox.claudeVersion}` : "images missing"}
                 </Badge>
                 <Button size="sm" variant="ghost" onClick={() => run(async () => setSandbox(await api.sandboxStatus()))} aria-label="Refresh">
@@ -116,18 +125,18 @@ export function SettingsView() {
         />
         <div className="flex flex-col gap-4 p-4">
           {sandbox && !sandbox.docker && (
-            <p className="text-sm text-muted">Start Docker Desktop. The specialist never runs outside its container. ({sandbox.dockerError})</p>
+            <p className="text-sm text-muted-foreground">Start Docker Desktop. The specialist never runs outside its container. ({sandbox.dockerError})</p>
           )}
           <div className="flex items-center gap-3">
             <Button className="shrink-0" disabled={!sandbox?.docker || sandbox.building} onClick={() => run(async () => setSandbox(await api.buildSandbox()))}>
               <Hammer size={14} /> {sandbox?.images ? "Rebuild images" : "Build images"}
             </Button>
-            <span className="text-xs text-muted">
+            <span className="text-xs text-muted-foreground">
               Downloads Claude Code {sandbox?.claudeVersion}, checks its signed manifest and SHA-256, and builds the egress proxy.
             </span>
           </div>
           {sandbox?.buildLog && (
-            <pre className="max-h-56 overflow-auto rounded-md border border-line bg-bg p-3 font-mono text-[11px] whitespace-pre-wrap text-muted">
+            <pre className="max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
               {sandbox.buildLog}
             </pre>
           )}
@@ -167,22 +176,24 @@ export function SettingsView() {
               />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={settings.discardOnCompletion} onChange={(e) => save({ discardOnCompletion: e.target.checked })} />
+          <Label className="font-normal">
+            <Checkbox checked={settings.discardOnCompletion} onCheckedChange={(v) => save({ discardOnCompletion: v === true })} />
             Discard each workspace, snapshot and decided patch when its delegation ends
-          </label>
+          </Label>
         </div>
       </Card>
 
       <Card>
-        <CardHeader
+        <PanelHeader
           title="Specialist (Claude plan)"
           actions={
-            login && <Badge tone={login.loggedIn ? "ok" : "warn"}>{login.loggedIn ? `signed in${login.plan ? ` · ${login.plan}` : ""}` : "signed out"}</Badge>
+            login && (
+              <Badge variant={login.loggedIn ? "ok" : "warn"}>{login.loggedIn ? `signed in${login.plan ? ` · ${login.plan}` : ""}` : "signed out"}</Badge>
+            )
           }
         />
         <div className="flex flex-col gap-3 p-4">
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             The specialist signs in with your own Claude plan, inside the sandbox image. The app never reads the stored credential.
           </p>
           <Field
@@ -191,7 +202,7 @@ export function SettingsView() {
           >
             <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
           </Field>
-          {login?.email && <Mono className="text-muted">{login.email}</Mono>}
+          {login?.email && <Mono className="text-muted-foreground">{login.email}</Mono>}
           {login?.inProgress ? (
             <div className="flex flex-col gap-3">
               {login.url ? (
@@ -199,13 +210,13 @@ export function SettingsView() {
                   <ExternalLink size={14} /> Open the Anthropic sign-in page
                 </Button>
               ) : (
-                <span className="text-sm text-muted">Starting the sign-in…</span>
+                <span className="text-sm text-muted-foreground">Starting the sign-in…</span>
               )}
               <Field label="Code from the Anthropic page">
                 <div className="flex gap-2">
                   <Input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" />
                   <Button
-                    variant="primary"
+                    variant="default"
                     disabled={code.trim().length < 8}
                     onClick={() =>
                       run(async () => {
@@ -230,13 +241,42 @@ export function SettingsView() {
                 </Button>
               )}
               {login?.loggedIn && (
-                <Button variant="bad" onClick={() => run(async () => setLogin(await api.logout()))}>
+                <Button variant="destructive" onClick={() => run(async () => setLogin(await api.logout()))}>
                   <LogOut size={14} /> Sign out
                 </Button>
               )}
             </div>
           )}
           {login?.error && <ErrorText>{login.error}</ErrorText>}
+        </div>
+      </Card>
+
+      <Card>
+        <PanelHeader title="You in the loop" />
+        <div className="flex flex-col gap-4 p-4">
+          <p className="text-sm text-muted-foreground">
+            How long the agents wait on you. A tool call you chose to approve is rejected when its wait runs out; a question gets the default the agent gave.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Approval timeout (minutes)">
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                defaultValue={settings.approvalTimeoutMinutes}
+                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ approvalTimeoutMinutes: num(e.target.value) })}
+              />
+            </Field>
+            <Field label="Question timeout (minutes)">
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                defaultValue={settings.questionTimeoutMinutes}
+                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ questionTimeoutMinutes: num(e.target.value) })}
+              />
+            </Field>
+          </div>
         </div>
       </Card>
     </div>
@@ -248,7 +288,7 @@ function EffortSelect<T extends string>({ value, options, onChange }: { value: T
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className="h-9 w-48 rounded-md border border-line bg-bg px-2 text-sm outline-none focus:border-accent"
+      className="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
     >
       {options.map((o) => (
         <option key={o} value={o}>

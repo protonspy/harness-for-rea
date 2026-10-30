@@ -31,7 +31,8 @@ themselves. -->
 - **electron-vite** — one build for main, preload and renderer, carried over from `study-lab`.
 - **TypeScript** — one typed contract shared by main, preload and renderer.
 - **React** — renderer UI, as in both reference projects.
-- **Tailwind CSS** (with **@tailwindcss/vite**) — renderer styling, as in `study-lab`; the few primitives are written in the shadcn/ui style rather than pulling the Radix set, which no view needed.
+- **Tailwind CSS** (with **@tailwindcss/vite**) — renderer styling, as in `study-lab`, themed through shadcn/ui's CSS variables.
+- **shadcn/ui** on **radix-ui** — the renderer's components, copied in as source on Radix primitives for keyboard, focus and ARIA behaviour ([adr:0010-build-the-renderer-on-shadcn-ui-and-radix]).
 - **class-variance-authority**, **clsx** and **tailwind-merge** — the shadcn/ui helpers for variant classes and merging utilities.
 - **lucide-react** — icons, as in `study-lab`.
 - **node:sqlite** — built into the Node that Electron bundles, so no native module to rebuild; holds tasks, steps and events ([adr:0005-store-events-in-sqlite-with-raw-jsonl-per-task]).
@@ -42,7 +43,7 @@ themselves. -->
 - **@langchain/openrouter** and **@langchain/core** — `ChatOpenRouter`, the model DeepAgents runs on, so the orchestrator is not tied to one vendor.
 - **zod** — runtime validation of IPC arguments and tool schemas at the trust boundary.
 - **Claude Code CLI (pinned binary)** — the specialist, verified by the signed release manifest and SHA-256 at image build, not an npm dependency ([adr:0002-run-the-specialist-through-the-pinned-claude-code-cli]).
-- **Docker** with **debian:bookworm-slim** — the specialist image, one container per delegation ([adr:0006-run-the-specialist-inside-a-container-per-task]).
+- **Docker** with **node:24-bookworm-slim** (pinned by digest) — the specialist image, one container per delegation ([adr:0006-run-the-specialist-inside-a-container-per-task]); Node runs the ask-user MCP server ([adr:0008-ask-the-user-from-the-specialist-over-the-run-channel]) and the orchestrator's own scripts in `/scratch`. The verifying build stage stays on **debian:bookworm-slim**.
 - **tinyproxy** on **alpine** — the egress proxy, the only route out of the sandbox network, allowing Claude Code's hosts by name.
 
 ## Development

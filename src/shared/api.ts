@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ALWAYS_GATED, AnswerSchema, DecisionSchema, GATEABLE_TOOLS } from "./chat"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
 
@@ -22,6 +23,8 @@ const SettingsPatch = z
     discardOnCompletion: z.boolean(),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
+    approvalTimeoutMinutes: z.number().int().min(1).max(1440),
+    questionTimeoutMinutes: z.number().int().min(1).max(1440),
   })
   .partial()
   .strict()
@@ -41,12 +44,27 @@ export const API_SCHEMAS = {
   openLoginUrl: z.tuple([]),
   logout: z.tuple([]),
   pickFolder: z.tuple([]),
-  startTask: z.tuple([z.object({ request: z.string().trim().min(1).max(20_000), sourceRoot: z.string().trim().min(1).max(1000) }).strict()]),
+  startTask: z.tuple([
+    z
+      .object({
+        request: z.string().trim().min(1).max(20_000),
+        sourceRoot: z.string().trim().min(1).max(1000),
+        /** the tools that pause for the user's decision; apply_patch is gated whatever this says */
+        gated: z.array(z.enum(GATEABLE_TOOLS)).max(GATEABLE_TOOLS.length).default([ALWAYS_GATED]),
+      })
+      .strict(),
+  ]),
   listTasks: z.tuple([z.object({ limit: z.number().int().min(1).max(200).default(50) }).strict()]),
   getTask: z.tuple([id, z.object({ afterEvent: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(5000).default(2000) }).strict()]),
   cancelTask: z.tuple([id]),
   retryTask: z.tuple([id]),
   decidePatch: z.tuple([id, id, z.enum(["approve", "reject"])]),
+  sendMessage: z.tuple([id, z.string().trim().min(1).max(20_000)]),
+  stopTurn: z.tuple([id]),
+  continueTurn: z.tuple([id]),
+  closeTask: z.tuple([id]),
+  decideTool: z.tuple([id, id, DecisionSchema]),
+  answerQuestion: z.tuple([id, id, AnswerSchema]),
 } as const
 
 export type ApiMethod = keyof typeof API_SCHEMAS
@@ -73,6 +91,12 @@ export interface ApiResults {
   cancelTask: TaskRow
   retryTask: TaskRow
   decidePatch: PatchView
+  sendMessage: TaskRow
+  stopTurn: TaskRow
+  continueTurn: TaskRow
+  closeTask: TaskRow
+  decideTool: TaskRow
+  answerQuestion: TaskRow
 }
 
 /** What the renderer passes: the schema's input, so defaulted fields may be left out. */

@@ -60,6 +60,9 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 - **R6.2** The orchestrator shall dispatch, organise the files a delegation needs, and write code that builds on the specialist's findings, including scripts it runs to test a hypothesis.
 - **R6.3** The orchestrator shall run the code it writes in a writable scratch area in its task container that is separate from the read-only source mount, so no experiment it runs can change the user's files.
 - **R6.4** When the orchestrator produces a change to the user's source, the chat shall carry it as a patch through the existing patch approval, leaving the source read-only to the orchestrator.
+- **R6.5** The orchestrator shall have only the tools for planning, listing, finding, reading and searching files, writing and running code in its scratch area, delegating to the specialist, proposing and applying a patch, and asking the user; a call to any other tool shall be refused.
+- **R6.6** When the orchestrator proposes files from its scratch area as a change to the user's source, the chat shall record them as a patch against the current originals and carry it through the existing patch approval.
+- **R6.7** When the orchestrator delegates, the specialist's workspace shall also hold the files the orchestrator names from its scratch area, apart from the source's files and never part of a patch.
 
 ## R7 · The chat surface
 

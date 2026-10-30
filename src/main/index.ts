@@ -10,7 +10,7 @@ import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, ensureNetwork, preflight } from "./sandbox/docker"
-import { dockerExecBuffer, TaskBox, WORKSPACE } from "./sandbox/taskbox"
+import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
@@ -53,7 +53,7 @@ app.whenReady().then(async () => {
       const blocked = await preflight(dockerExec)
       if (blocked) throw new Error(blocked)
       const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, getSettings())
-      return { backend: box, root: WORKSPACE, dispose: () => box.dispose() }
+      return { backend: box, root: WORKSPACE, scratch: SCRATCH, dispose: () => box.dispose() }
     },
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
@@ -94,16 +94,24 @@ app.whenReady().then(async () => {
     },
     startTask: (input) => runner.start(input),
     listTasks: ({ limit }) => log.listTasks(limit),
-    getTask: (id, o) => log.history(id, o),
+    getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
     cancelTask: (id) => runner.cancel(id),
     retryTask: (id) => runner.retry(id),
     decidePatch: (taskId, patchId, decision) => {
       const p = log.getPatch(patchId)
       if (p.taskId !== taskId) throw new Error("That patch belongs to another task.")
-      if (runner.isLive(taskId)) return runner.decide(taskId, patchId, decision)
-      // The run that proposed it is gone (the app restarted): the user can still decide by hand.
-      return decision === "approve" ? approvePatch(deps, patchId, log.getTask(taskId).sourceRoot) : rejectPatch(deps, patchId)
+      const { state, sourceRoot } = log.getTask(taskId)
+      if (runner.waitsOn(taskId, patchId)) return runner.decide(taskId, patchId, decision)
+      if (state === "running" || state === "pending") throw new Error("The turn is running; decide the patch when the agent asks to apply it.")
+      // No paused turn waits on it — the agent never applied it, or the app restarted: the user decides by hand.
+      return decision === "approve" ? approvePatch(deps, patchId, sourceRoot) : rejectPatch(deps, patchId)
     },
+    sendMessage: (id, message) => runner.sendMessage(id, message),
+    closeTask: (id) => runner.close(id),
+    stopTurn: (id) => runner.stopTurn(id),
+    continueTurn: (id) => runner.continueTurn(id),
+    decideTool: (id, callId, decision) => runner.decideTool(id, callId, decision),
+    answerQuestion: (id, questionId, answer) => runner.answerQuestion(id, questionId, answer),
   }
   const dispatch = makeDispatcher(handlers, page)
   ipcMain.handle("api", (e, method: unknown, ...args: unknown[]) => dispatch(e.senderFrame?.url ?? "", method, args))

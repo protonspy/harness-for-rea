@@ -1,18 +1,21 @@
 import { Check, X } from "lucide-react"
 import { useState } from "react"
 import type { PatchView } from "@shared/types"
-import { Badge, Button, Card, CardHeader, Mono } from "@/components/ui"
+import { Mono, PanelHeader } from "@/components/common"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/cn"
 import { diffLines } from "@/lib/format"
 
 /* A proposed patch: its files and diff, approved or rejected by the user (specs/desktop-ui R2.4). */
 
 const LINE: Record<string, string> = {
-  add: "bg-ok/10 text-ok",
-  del: "bg-bad/10 text-bad",
-  hunk: "text-accent",
-  file: "text-muted font-semibold",
-  ctx: "text-ink/80",
+  add: "bg-success/10 text-success",
+  del: "bg-destructive/10 text-destructive",
+  hunk: "text-primary",
+  file: "text-muted-foreground font-semibold",
+  ctx: "text-foreground/80",
 }
 
 export function PatchReview({ patch, onDecide }: { patch: PatchView; onDecide(d: "approve" | "reject"): Promise<void> }) {
@@ -23,19 +26,19 @@ export function PatchReview({ patch, onDecide }: { patch: PatchView; onDecide(d:
     setBusy(false)
   }
   return (
-    <Card className="border-warn/50">
-      <CardHeader
+    <Card className="border-warning/50">
+      <PanelHeader
         title={
           <span className="flex items-center gap-2">
-            <Badge tone="warn">approval needed</Badge> The specialist proposes changes to {patch.files.length} file(s)
+            <Badge variant="warn">approval needed</Badge> The specialist proposes changes to {patch.files.length} file(s)
           </span>
         }
         actions={
           <div className="flex gap-2">
-            <Button variant="bad" size="sm" disabled={busy} onClick={() => decide("reject")}>
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => decide("reject")}>
               <X size={14} /> Reject
             </Button>
-            <Button variant="ok" size="sm" disabled={busy} onClick={() => decide("approve")}>
+            <Button variant="success" size="sm" disabled={busy} onClick={() => decide("approve")}>
               <Check size={14} /> Approve and apply
             </Button>
           </div>
@@ -46,12 +49,12 @@ export function PatchReview({ patch, onDecide }: { patch: PatchView; onDecide(d:
           <li key={f.path} className="flex items-center gap-1.5">
             <Badge>{f.status}</Badge>
             <Mono>{f.path}</Mono>
-            <span className="font-mono text-xs text-ok">+{f.added}</span>
-            <span className="font-mono text-xs text-bad">-{f.removed}</span>
+            <span className="font-mono text-xs text-success">+{f.added}</span>
+            <span className="font-mono text-xs text-destructive">-{f.removed}</span>
           </li>
         ))}
       </ul>
-      <pre className="m-4 max-h-[420px] overflow-auto rounded-md border border-line bg-bg py-2 font-mono text-[12px] leading-5">
+      <pre className="m-4 max-h-[420px] overflow-auto rounded-md border border-border bg-background py-2 font-mono text-[12px] leading-5">
         {diffLines(patch.diff).map((l, i) => (
           <div key={i} className={cn("px-3 whitespace-pre", LINE[l.kind])}>
             {l.text || " "}

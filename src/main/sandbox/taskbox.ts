@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { posix } from "node:path"
 import { BaseSandbox } from "deepagents"
 import { mountSource, SPECIALIST_IMAGE, type Limits } from "./docker"
 
@@ -6,10 +7,13 @@ import { mountSource, SPECIALIST_IMAGE, type Limits } from "./docker"
   The orchestrator's container for one task (adr:0007-run-the-orchestrators-tools-in-a-task-container):
   the source folder bind-mounted read-only at /workspace, no network, confined like the specialist's.
   DeepAgents reaches it as a sandbox backend, so its file tools and `execute` all run there through
-  `docker exec`, and no tool of the orchestrator writes the user's files.
+  `docker exec`, and no tool of the orchestrator writes the user's files. Its one writable place is
+  /scratch, a tmpfs gone with the container, where it writes and runs its own code
+  (adr:0009-give-the-orchestrator-a-writable-scratch, specs/chat R6.3).
 */
 
 export const WORKSPACE = "/workspace"
+export const SCRATCH = "/scratch"
 /** Largest command output returned to the agent. */
 export const OUTPUT_CAP = 100_000
 const EXEC_TIMEOUT_MS = 120_000
@@ -26,11 +30,14 @@ export interface BufferResult {
   overflow?: boolean
 }
 
-export type ExecBuffer = (args: string[], timeoutMs?: number) => Promise<BufferResult>
+/** Runs `docker` with these arguments, feeding `input` to its stdin when given. */
+export type ExecBuffer = (args: string[], timeoutMs?: number, input?: Uint8Array) => Promise<BufferResult>
 
-export const dockerExecBuffer: ExecBuffer = (args, timeoutMs = EXEC_TIMEOUT_MS) =>
+export const dockerExecBuffer: ExecBuffer = (args, timeoutMs = EXEC_TIMEOUT_MS, input) =>
   new Promise((resolve) => {
-    const child = spawn("docker", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn("docker", args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
+    child.stdin.on("error", () => undefined)
+    child.stdin.end(input)
     const out: Buffer[] = []
     let size = 0
     let overflow = false
@@ -82,6 +89,8 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     "--read-only",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=256m",
+    "--tmpfs",
+    `${SCRATCH}:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700`,
     "--memory",
     `${limits.memoryMb}m`,
     "--cpus",
@@ -126,9 +135,17 @@ export class TaskBox extends BaseSandbox {
     return { output, exitCode: r.code, truncated }
   }
 
-  /** The source is mounted read-only: nothing is ever uploaded. */
+  /** Writes land in /scratch only; the source is mounted read-only and nothing is uploaded to it (specs/chat R6.4). */
   async uploadFiles(files: Array<[string, Uint8Array]>) {
-    return files.map(([path]) => ({ path, error: "permission_denied" as const }))
+    const out = []
+    for (const [path, content] of files) {
+      const inScratch = path.startsWith("/") && posix.normalize(path).startsWith(`${SCRATCH}/`) && posix.normalize(path) === path
+      const r = inScratch
+        ? await this.exec(["exec", "-i", this.id, "sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", path], undefined, content)
+        : null
+      out.push({ path, error: r?.code === 0 ? null : ("permission_denied" as const) })
+    }
+    return out
   }
 
   async downloadFiles(paths: string[]) {
