@@ -4,6 +4,7 @@
 
 - [x] 1.1 (Unit) Build `ChatOpenRouter` from settings with the fallback model, `data_collection: "deny"` and a usage callback that records events and task totals — R1.1, R1.2, R1.3
 - [x] 1.2 (Unit) Map OpenRouter failures to messages the user can act on — R1.4
+- [x] 1.3 (Unit) Send the chosen reasoning effort as `reasoning.effort` through `ChatOpenRouter`'s model arguments — R1.5
 
 ## 2 · Delegation
 

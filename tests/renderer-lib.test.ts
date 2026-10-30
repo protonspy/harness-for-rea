@@ -52,8 +52,10 @@ const history = (): TaskHistory => ({ task: task("t"), steps: [], events: [], pa
 
 describe("fold (R2.2)", () => {
   it("applies messages for the open task and ignores others", () => {
-    let h = fold(history(), { type: "task", task: task("t", { state: "done" }) })
+    let h = fold({ ...history(), turn: "awaiting-user" }, { type: "task", task: task("t", { state: "done" }) })
     expect(h?.task.state).toBe("done")
+    // the turn read at load gives way to the state pushed after it (specs/chat R1.5)
+    expect(h?.turn).toBeUndefined()
     expect(fold(h, { type: "task", task: task("other") })).toBe(h)
     h = fold(h, { type: "step", step: step("b", 1) })
     h = fold(h, { type: "step", step: step("a", 0) })
@@ -169,6 +171,8 @@ describe("format", () => {
       "neutral",
       "neutral",
     ])
+    // the chat's states: your turn reads as settled, a stopped turn as needing you (specs/chat R7.5)
+    expect([tone("awaiting-user"), tone("stopped")]).toEqual(["ok", "warn"])
   })
 
   it("classifies diff lines", () => {

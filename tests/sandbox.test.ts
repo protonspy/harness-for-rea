@@ -24,7 +24,7 @@ import {
 } from "../src/main/sandbox/docker"
 import { PathRejected } from "../src/main/sandbox/paths"
 import { renderPrompt, renderSystemPrompt, workPath } from "../src/main/sandbox/prompt"
-import { discardWorkspace, prepareWorkspace, readManifest, sha256, WORKSPACE_CAP, writeSystemPrompt } from "../src/main/sandbox/workspace"
+import { askDir, discardWorkspace, prepareWorkspace, readManifest, sha256, WORKSPACE_CAP, writeSystemPrompt } from "../src/main/sandbox/workspace"
 
 /* specs/task-sandbox: workspace, container arguments, Docker checks and context isolation. */
 
@@ -50,6 +50,7 @@ describe("workspace (R1.1, R1.2, R1.4)", () => {
     expect(ws.runDir).toBe(join(data, "runs", ws.id))
     expect(ws.snapshot).toBe(join(data, "snapshots", ws.id))
     expect(prepareWorkspace(data, root, ["src/a.ts"]).id).not.toBe(ws.id)
+    expect(existsSync(askDir(ws.runDir))).toBe(true)
   })
 
   it("copies only the named files at their relative paths and records their SHA-256", () => {
@@ -94,12 +95,13 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
   }
   const after = (args: string[], flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
-  it("binds only the workspace at /work and the run directory read-only outside it", () => {
+  it("binds only the workspace at /work, the run directory read-only outside it, and its ask channel writable (specs/chat R5.2)", () => {
     const args = dockerRunArgs(spec)
     expect(after(args, "--mount")).toEqual([
       "type=volume,source=hfr-claude-config,target=/home/agent/.claude-config",
       "type=bind,source=C:\\data\\workspace\\1234,target=/work,readonly",
       "type=bind,source=C:\\data\\runs\\1234,target=/run/hfr,readonly",
+      `type=bind,source=${join("C:\\data\\runs\\1234", "ask")},target=/run/hfr-ask`,
     ])
     expect(args).not.toContain("-v")
     expect(after(args, "-w")).toEqual(["/work"])
@@ -148,6 +150,25 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(read, "--system-prompt-file")).toEqual(["/run/hfr/system.md"])
     expect(after(claudeArgs("modify"), "--tools")).toEqual(["Read,Grep,Glob,Edit,Write"])
     expect(claudeArgs("read").join(" ")).not.toMatch(/Bash|dangerously|add-dir/)
+    expect(claudeArgs("read")).not.toContain("--effort")
+    expect(after(claudeArgs("read", "opus", "max"), "--effort")).toEqual(["max"])
+  })
+
+  it("registers the ask-user MCP server as the only MCP server, and allows its one tool (specs/chat R5.2)", () => {
+    const read = claudeArgs("read")
+    expect(read).toContain("--strict-mcp-config")
+    const config = JSON.parse(after(read, "--mcp-config")[0])
+    expect(config).toEqual({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", "/run/hfr-ask"] } } })
+    expect(after(read, "--allowedTools")).toEqual(["Read,Grep,Glob,mcp__hfr__ask_user"])
+    expect(after(read, "--tools")).toEqual(["Read,Grep,Glob"])
+    expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,mcp__hfr__ask_user"])
+  })
+
+  it("bakes the MCP server into the specialist image on a Node base", () => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist", "Dockerfile"), "utf8")
+    expect(dockerfile).toMatch(/^FROM node:24[^\s]*@sha256:[0-9a-f]{64}$/m)
+    expect(dockerfile).toContain("COPY ask-user.mjs /opt/hfr/ask-user.mjs")
+    expect(dockerfile).toContain("/run/hfr-ask")
   })
 
   it("runs auth commands on the login volume without any workspace", () => {
@@ -258,6 +279,13 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
     expect(renderSystemPrompt(pkg)).toContain("/work is read-only")
     expect(renderSystemPrompt({ ...pkg, mode: "modify" })).toContain("proposed to the user as a patch")
     expect(renderSystemPrompt(pkg)).toContain("Evidence")
+  })
+
+  it("offers the ask-user tool with a reason and a default, never to ask for authorization (specs/chat R5.2)", () => {
+    const sys = renderSystemPrompt(pkg)
+    expect(sys).toContain("mcp__hfr__ask_user")
+    expect(sys).toMatch(/reason and a default/)
+    expect(sys).toMatch(/Never ask for, or assume, ownership, authorization or purpose/)
   })
 
   it("has no field for the user's request or the orchestrator's conversation", () => {

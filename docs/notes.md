@@ -44,3 +44,4 @@ over this file answers with the example above as well as with the notes. -->
 - n-0004 2026-10-28 #ceiling @src/main/orchestrator/runner.ts — MemorySaver keeps paused runs in memory only; a restart marks them interrupted and retry starts over — a SQLite checkpointer lifts it
 - n-0005 2026-10-28 #gotcha @package.json — npm 11 skips electron's install script; run node node_modules/electron/install.js after npm install, CI sets ELECTRON_SKIP_BINARY_DOWNLOAD
 - n-0006 2026-10-28 #gotcha @src/main/sandbox/taskbox.ts — the orchestrator's execute runs in hfr-orch-<task> with --network none and the source read-only; build or test commands that write fail there by design
+- n-0007 2026-10-28 #gotcha @src/main/orchestrator/agent.ts — langchain HITL resumes a rejection with jumpTo model, past every beforeModel hook: queued user messages ride on the rejection message

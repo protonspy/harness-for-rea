@@ -3,8 +3,8 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { dirname, join, relative } from "node:path"
 import type { PatchFile } from "@shared/types"
 import { countChanges, unifiedDiff } from "./diff"
-import { resolveTarget } from "./paths"
-import { readManifest, sha256, type Workspace } from "./workspace"
+import { PathRejected, resolveTarget, UNSAFE_NAME } from "./paths"
+import { PREPARED, readManifest, sha256, type Workspace } from "./workspace"
 
 /*
   A modify-mode delegation's changes (specs/task-sandbox R4): the difference between the workspace and
@@ -46,15 +46,17 @@ export function patchDir(dataDir: string, id: string): string {
   return join(dataDir, "patches", id)
 }
 
-/** Names Windows treats specially: a stream (`a:b`), a backslash, wildcards, a reserved device, a trailing dot or space. */
-const UNSAFE_NAME = /[:\\<>|?*\u0000-\u001f]|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$|[. ]$/i
-/** Where a written file could run later without anyone reading it. */
-const GUARDED = /^\.git(?:\/|$)/
+/**
+  Where a written file could run later without anyone reading it: a `.git` folder at any depth, in any
+  case (NTFS ignores it) or by its 8.3 short name.
+*/
+const GUARDED = /(?:^|\/)(?:\.git|git~\d+)(?:\/|$)/i
 
 function walk(root: string, dir: string, files: string[], skipped: string[]) {
   for (const name of readdirSync(dir)) {
     const abs = join(dir, name)
     const rel = relative(root, abs).split("\\").join("/")
+    if (rel.toLowerCase() === PREPARED) continue
     const st = lstatSync(abs)
     if (st.isSymbolicLink() || UNSAFE_NAME.test(name) || GUARDED.test(rel)) skipped.push(rel)
     else if (st.isDirectory()) walk(root, abs, files, skipped)
@@ -108,7 +110,43 @@ export function makePatch(dataDir: string, ws: Workspace): ProposedPatch | null 
   for (const rel of Object.keys(manifest).sort())
     if (!present.includes(rel) && !skipped.includes(rel)) changes.push({ path: rel, status: "deleted", base: manifest[rel] })
   if (!changes.length) return null
+  return { ...writePatch(dataDir, changes, contents, (path) => readFileSync(join(ws.snapshot, "files", path))), skipped }
+}
 
+/**
+  The patch the orchestrator proposes from the code it wrote (specs/chat R6.6): each file's new
+  contents against the original as it is now, or added where none exists, or null when nothing differs.
+  A target outside the source, through a link, or with an unsafe or guarded name is refused, and so
+  is binary content, which the diff the user reviews could not show.
+*/
+export function makePatchFrom(dataDir: string, sourceRoot: string, files: { path: string; content: Buffer }[]): ProposedPatch | null {
+  const changes: PatchChange[] = []
+  const contents = new Map<string, Buffer>()
+  const originals = new Map<string, Buffer>()
+  // Windows paths are case-insensitive: `A.ts` and `a.ts` are one file.
+  const named = new Set<string>()
+  let total = 0
+  for (const f of files) {
+    const { rel, abs } = resolveTarget(sourceRoot, f.path)
+    if (rel.split("/").some((name) => UNSAFE_NAME.test(name)) || GUARDED.test(rel) || rel.toLowerCase().startsWith(`${PREPARED}/`))
+      throw new PathRejected(f.path, "is not a name a patch may write")
+    if (named.has(rel.toLowerCase())) throw new PathRejected(f.path, "is named twice")
+    named.add(rel.toLowerCase())
+    if (isBinary(f.content)) throw new PathRejected(f.path, "is binary; only text the user can review in the diff can be proposed")
+    total += f.content.length
+    if (total > PATCH_CAP) throw new Error(`The files pass ${PATCH_CAP / 1024 / 1024} MB, so no patch was proposed.`)
+    const before = existsSync(abs) ? readFileSync(abs) : null
+    if (before && sha256(before) === sha256(f.content)) continue
+    changes.push({ path: rel, status: before ? "modified" : "added", base: before ? sha256(before) : null })
+    contents.set(rel, f.content)
+    if (before) originals.set(rel, before)
+  }
+  if (!changes.length) return null
+  return writePatch(dataDir, changes, contents, (path) => originals.get(path)!)
+}
+
+/** Keeps a patch's new contents and changes under patches/<id>/ and renders its diff. */
+function writePatch(dataDir: string, changes: PatchChange[], contents: Map<string, Buffer>, original: (path: string) => Buffer): ProposedPatch {
   const id = randomUUID()
   const dir = patchDir(dataDir, id)
   const files: PatchFile[] = []
@@ -120,13 +158,13 @@ export function makePatch(dataDir: string, ws: Workspace): ProposedPatch | null 
       mkdirSync(dirname(target), { recursive: true })
       writeFileSync(target, after)
     }
-    const before = c.status === "added" ? null : readFileSync(join(ws.snapshot, "files", c.path))
+    const before = c.status === "added" ? null : original(c.path)
     const d = textDiff(before, after, c.path, c.status)
     diffs.push(d)
     files.push({ path: c.path, status: c.status, ...countChanges(d) })
   }
   writeFileSync(join(dir, "patch.json"), JSON.stringify({ changes }, null, 2))
-  return { id, files, diff: diffs.join("\n"), changes, skipped }
+  return { id, files, diff: diffs.join("\n"), changes, skipped: [] }
 }
 
 /** Originals whose content is not what was copied in (or, for an added file, that now exist). */

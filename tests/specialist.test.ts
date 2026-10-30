@@ -267,5 +267,12 @@ describe("login (R3.1, R3.2)", () => {
     expect(cleanText("\x1b[31mred\x1b[0m\x07")).toBe("red")
     expect(parseStatus('{"loggedIn":false}')).toEqual({ loggedIn: false, method: "none", plan: undefined, email: undefined })
     expect(failureReason("Opening browser\n\n")).toBe("The sign-in did not finish.")
+    // What the pinned CLI prints: the outcome follows the prompt on the same line.
+    expect(
+      failureReason(
+        "Opening browser to sign in…\nIf the browser didn't open, visit: https://claude.com/x\nPaste code here if prompted > Login failed: Request failed with status code 400\n",
+      ),
+    ).toBe("Login failed: Request failed with status code 400")
+    expect(failureReason("Paste code here if prompted > ")).toBe("The sign-in did not finish.")
   })
 })

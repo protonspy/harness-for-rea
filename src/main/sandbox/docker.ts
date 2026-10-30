@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
 import { join } from "node:path"
+import type { SpecialistEffort } from "@shared/types"
+import { askDir } from "./workspace"
 
 /*
   The container side of a delegation (adr:0006-run-the-specialist-inside-a-container-per-task): the
@@ -96,7 +98,11 @@ export function mountSource(path: string): string {
   return path
 }
 
-/** `docker` arguments for one delegation, up to the image (specs/task-sandbox R2.1–R2.3, R3.2, R3.3). */
+/**
+  `docker` arguments for one delegation, up to the image (specs/task-sandbox R2.1–R2.3, R3.2, R3.3): the
+  workspace, the run directory read-only, and its ask channel, the one writable path outside /work
+  (specs/chat R5.2, adr:0008-ask-the-user-from-the-specialist-over-the-run-channel).
+*/
 export function dockerRunArgs(spec: RunSpec): string[] {
   return [
     ...confined(containerName(spec.id), spec.limits),
@@ -104,6 +110,8 @@ export function dockerRunArgs(spec: RunSpec): string[] {
     `type=bind,source=${mountSource(spec.workspace)},target=/work${spec.mode === "read" ? ",readonly" : ""}`,
     "--mount",
     `type=bind,source=${mountSource(spec.runDir)},target=/run/hfr,readonly`,
+    "--mount",
+    `type=bind,source=${mountSource(askDir(spec.runDir))},target=${ASK_CHANNEL}`,
     "-w",
     "/work",
     SPECIALIST_IMAGE,
@@ -112,9 +120,18 @@ export function dockerRunArgs(spec: RunSpec): string[] {
 
 export const READ_TOOLS = ["Read", "Grep", "Glob"]
 export const WRITE_TOOLS = ["Edit", "Write"]
+/** Where the ask channel is mounted in the specialist's container. */
+export const ASK_CHANNEL = "/run/hfr-ask"
+/** The ask-user MCP server's one tool, as Claude Code names it. */
+export const ASK_USER_TOOL = "mcp__hfr__ask_user"
 
-/** The Claude Code command inside the container: no setting source, no MCP, file tools only. */
-export function claudeArgs(mode: Mode, model = "opus"): string[] {
+/** The only MCP server the specialist gets: the ask-user server baked into its image. */
+export function mcpConfig(): string {
+  return JSON.stringify({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] } } })
+}
+
+/** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools only. */
+export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort = "default"): string[] {
   const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : [])].join(",")
   return [
     "claude",
@@ -122,6 +139,8 @@ export function claudeArgs(mode: Mode, model = "opus"): string[] {
     "--setting-sources",
     "",
     "--strict-mcp-config",
+    "--mcp-config",
+    mcpConfig(),
     // File tools confined to the working directory, no command-running tool, nothing that would prompt.
     "--restricted",
     "--permission-prompts",
@@ -134,10 +153,11 @@ export function claudeArgs(mode: Mode, model = "opus"): string[] {
     "--verbose",
     "--model",
     model,
+    ...(effort === "default" ? [] : ["--effort", effort]),
     "--tools",
     tools,
     "--allowedTools",
-    tools,
+    `${tools},${ASK_USER_TOOL}`,
     // The login volume under the home directory holds the plan's token: no file tool may reach it.
     "--disallowedTools",
     "Read(//home/agent/**),Edit(//home/agent/**)",

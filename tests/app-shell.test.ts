@@ -82,8 +82,28 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "cancelTask", ["../../etc"])).rejects.toThrow(/invalid arguments for cancelTask/)
     await expect(dispatch(PAGE, "saveSettings", [{ model: "x; rm -rf /" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ extra: 1 }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveSettings", [{ specialistEffort: "ultra" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "startTask", [{ request: "", sourceRoot: "C:/x" }])).rejects.toThrow(/invalid arguments/)
     expect(ran).toEqual([])
+  })
+
+  it("validates the chat's calls (specs/chat R7)", async () => {
+    const t = "00000000-0000-4000-8000-000000000001"
+    const c = "00000000-0000-4000-8000-000000000002"
+    await dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x" }])
+    expect(ran.at(-1)).toEqual(["startTask", { request: "x", sourceRoot: "C:/x", gated: ["apply_patch"] }])
+    await dispatch(PAGE, "decideTool", [t, c, { type: "edit", args: { command: "ls" } }])
+    await dispatch(PAGE, "decideTool", [t, c, { type: "reject", message: "no" }])
+    await dispatch(PAGE, "answerQuestion", [t, c, true])
+    await dispatch(PAGE, "sendMessage", [t, "  also check b.ts  "])
+    expect(ran.at(-1)).toEqual(["sendMessage", t, "also check b.ts"])
+    for (const m of ["stopTurn", "continueTurn", "closeTask"]) await dispatch(PAGE, m, [t])
+    await expect(dispatch(PAGE, "startTask", [{ request: "x", sourceRoot: "C:/x", gated: ["rm_rf"] }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "decideTool", [t, c, { type: "maybe" }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "decideTool", [t, c, { type: "approve", args: {} }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "answerQuestion", [t, c, { evil: 1 }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "sendMessage", [t, "   "])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveSettings", [{ approvalTimeoutMinutes: 0 }])).rejects.toThrow(/invalid arguments/)
   })
 
   it("has a schema for every method the bridge exposes", () => {

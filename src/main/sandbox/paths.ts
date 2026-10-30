@@ -6,6 +6,9 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path"
   drive-relative or UNC form, and no symbolic link or junction anywhere along it (specs/task-sandbox R1.3).
 */
 
+/** Names Windows treats specially: a stream (`a:b`), a backslash, wildcards, a reserved device, a trailing dot or space. */
+export const UNSAFE_NAME = /[:\\<>|?*\u0000-\u001f]|^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$|[. ]$/i
+
 export class PathRejected extends Error {
   readonly path: string
 

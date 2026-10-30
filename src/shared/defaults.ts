@@ -12,4 +12,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cpus: 2,
   pidsLimit: 256,
   discardOnCompletion: true,
+  orchestratorEffort: "default",
+  specialistEffort: "default",
+  approvalTimeoutMinutes: 30,
+  questionTimeoutMinutes: 10,
 }

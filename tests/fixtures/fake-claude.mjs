@@ -4,8 +4,10 @@
 //
 // The test steers it with HFR_FAKE (a mode) and learns what it got from HFR_FAKE_LOG (a JSONL file
 // with the arguments, environment names, system prompt and every turn). /work and /run/hfr map to
-// the working directory and HFR_RUN.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+// the working directory and HFR_RUN; /run/hfr-ask to HFR_RUN/ask. Mode "ask" puts HFR_FAKE_QUESTION (or
+// a default question) to the user over that channel, as the ask-user MCP server does, and reports the
+// answer.
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 
@@ -21,7 +23,10 @@ const host = (p) => (p.startsWith("/run/hfr/") ? join(process.env.HFR_RUN ?? "."
 
 if (args[0] === "auth") {
   log({ auth: args.slice(1) })
-  if (args[1] === "status") out({ loggedIn: mode !== "logged-out", authMethod: "claude.ai", subscriptionType: "max", email: "user@example.com" })
+  if (args[1] === "status")
+    process.stdout
+      .write(`${JSON.stringify({ loggedIn: mode !== "logged-out", authMethod: "claude.ai", subscriptionType: "max", email: "user@example.com" }, null, 2)}
+`)
   if (args[1] === "login") {
     process.stdout.write(
       "Opening browser to sign in…\nBrowser didn't open? Visit: https://claude.com/cai/oauth/authorize?code=true&state=abc\nPaste code here if prompted > ",
@@ -132,8 +137,27 @@ for await (const line of createInterface({ input: process.stdin })) {
       })
     }
   }
+  let heard = ""
+  if (mode === "ask") {
+    const channel = join(process.env.HFR_RUN ?? ".", "ask")
+    const q =
+      process.env.HFR_FAKE_QUESTION ?? JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
+    out({
+      type: "assistant",
+      session_id: session,
+      message: { content: [{ type: "tool_use", id: `tu_q${turn}`, name: "mcp__hfr__ask_user", input: JSON.parse(q) }] },
+    })
+    writeFileSync(join(channel, ".q-1.tmp"), q)
+    renameSync(join(channel, ".q-1.tmp"), join(channel, "q-1.json"))
+    const a = join(channel, "a-1.json")
+    while (!existsSync(a)) await new Promise((res) => setTimeout(res, 20))
+    heard = readFileSync(a, "utf8")
+    rmSync(a)
+    log({ heard })
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: `tu_q${turn}`, content: heard }] } })
+  }
   const answer = [
-    `Turn ${turn}: analysed ${target ?? "nothing"}.${mode === "leak" ? " Found sk-ant-oat01-LEAKEDTOKEN123456 in the config." : ""}`,
+    `Turn ${turn}: analysed ${target ?? "nothing"}.${heard ? ` The user said ${heard}.` : ""}${mode === "leak" ? " Found sk-ant-oat01-LEAKEDTOKEN123456 in the config." : ""}`,
     "",
     "Evidence",
     ...evidence,

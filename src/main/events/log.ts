@@ -20,7 +20,8 @@ export const RAW_LINE_CAP = 256 * 1024
 
 type Row = Record<string, unknown>
 
-const LIVE: TaskState[] = ["pending", "running", "waiting"]
+/** A turn under way or stopped part-way: after a restart it can only be retried. */
+const LIVE: TaskState[] = ["pending", "running", "waiting", "stopped"]
 
 function taskRow(r: Row): TaskRow {
   return {
@@ -278,8 +279,18 @@ export class EventLog {
     }
   }
 
-  /** At startup: every task and step left running or waiting is interrupted, and says so. Returns how many tasks. */
+  /**
+    At startup: every task and step left running, waiting or stopped is interrupted, and says so; a
+    conversation that waited for the user is closed, its answer kept. Returns how many were interrupted.
+  */
   recover(): number {
+    const at0 = this.now()
+    for (const r of getDb().prepare("SELECT id FROM tasks WHERE state = 'awaiting-user'").all() as Row[]) {
+      const id = String(r.id)
+      getDb().prepare("UPDATE tasks SET state = 'done', updated_at = ? WHERE id = ?").run(at0, id)
+      this.append({ taskId: id, agent: "app", kind: "task.done", state: "done", summary: "The app restarted; this conversation is closed." })
+      this.emitTask(id)
+    }
     const marks = LIVE.map(() => "?").join(", ")
     const tasks = (
       getDb()

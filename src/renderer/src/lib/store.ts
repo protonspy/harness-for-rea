@@ -16,7 +16,8 @@ export function fold(h: TaskHistory | null, p: Push): TaskHistory | null {
   if (!h) return h
   switch (p.type) {
     case "task":
-      return p.task.id === h.task.id ? { ...h, task: p.task } : h
+      // The stored state follows every change from here on; the turn read at load no longer speaks for it.
+      return p.task.id === h.task.id ? { ...h, task: p.task, turn: undefined } : h
     case "step":
       return p.step.taskId === h.task.id ? { ...h, steps: upsert<StepRow>(h.steps, p.step, (a, b) => a.ord - b.ord) } : h
     case "event": {
