@@ -1,4 +1,4 @@
-import { PROVIDERS, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { LoginStatus, Readiness, SandboxStatus, Settings } from "@shared/types"
 
 /*
@@ -13,7 +13,19 @@ export interface ReadinessDeps {
   login(): Promise<LoginStatus>
   settings(): Settings
   keySet(provider: ProviderId): boolean
-  listModels(): Promise<string[]>
+  listModels(run: RunChoice): Promise<string[]>
+}
+
+/** The provider, model and endpoint a task runs with: a project's own, or Settings' during the setup. */
+export interface RunChoice {
+  provider: ProviderId
+  model: string
+  baseUrl: string
+}
+
+/** A provider's base URL: kept in Settings for the provider Settings is on, the provider's default for any other. */
+export function baseUrlFor(provider: ProviderId, settings: Pick<Settings, "provider" | "baseUrl">): string {
+  return resolveBaseUrl(provider, provider === settings.provider ? settings.baseUrl : "")
 }
 
 /** Every provider but a custom endpoint takes a key; a local OpenAI-compatible server may take none. */
@@ -21,7 +33,11 @@ export function needsKey(provider: ProviderId): boolean {
   return provider !== "custom"
 }
 
-export async function readiness(d: ReadinessDeps): Promise<Readiness> {
+/**
+  The steps, for Settings' provider and model or for a project's (`run`). `list: false` checks the key, the endpoint
+  and the model without asking the provider for its list, which a task start does not wait on.
+*/
+export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "baseUrl">; list?: boolean } = {}): Promise<Readiness> {
   const settings = d.settings()
   const s = await d.sandbox()
   const sandbox = {
@@ -46,14 +62,17 @@ export async function readiness(d: ReadinessDeps): Promise<Readiness> {
     if (l) claude = l.loggedIn ? { ready: true, reason: "", plan: l.plan, email: l.email } : { ready: false, reason: "Sign in to Claude Code with your plan." }
   }
 
-  const provider = settings.provider
+  const provider = o.run?.provider ?? settings.provider
+  const run: RunChoice = { provider, model: o.run?.model ?? settings.model, baseUrl: baseUrlFor(provider, settings) }
   const label = PROVIDERS[provider].label
-  let model: Readiness["model"] = { ready: false, reason: "", provider, model: settings.model }
+  let model: Readiness["model"] = { ready: false, reason: "", provider, model: run.model }
   if (needsKey(provider) && !d.keySet(provider)) model.reason = `Set your ${label} API key.`
-  else if (!settings.model.trim()) model.reason = `Choose a model from ${label}.`
+  else if (!run.baseUrl) model.reason = `Set the base URL of your ${label} in Settings, with Settings on that provider.`
+  else if (!run.model.trim()) model.reason = `Choose a model from ${label}.`
+  else if (o.list === false) model = { ...model, ready: true }
   else {
     try {
-      const listed = await d.listModels()
+      const listed = await d.listModels(run)
       model = listed.length ? { ...model, ready: true } : { ...model, reason: `${label} listed no models.` }
     } catch (e) {
       model.reason = `${label} did not answer: ${(e as Error).message}`

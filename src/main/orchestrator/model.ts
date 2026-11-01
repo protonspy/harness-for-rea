@@ -62,11 +62,14 @@ export function makeModel(o: ModelOptions): BaseChatModel {
     },
   ]
   const effort = o.effort && o.effort !== "default" ? o.effort : undefined
+  const baseURL = resolveBaseUrl(o.provider, o.baseUrl ?? "")
+  // An empty base URL would send the key to the client library's own default endpoint.
+  if (PROVIDERS[o.provider].kind === "openai" && !baseURL) throw new Error(`Set the base URL of your ${PROVIDERS[o.provider].label} first.`)
   if (PROVIDERS[o.provider].kind === "openai")
     return new ChatOpenAI({
       model: o.model,
       apiKey: o.apiKey,
-      configuration: { baseURL: resolveBaseUrl(o.provider, o.baseUrl ?? "") },
+      configuration: { baseURL },
       temperature: 0.2,
       streamUsage: true,
       ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),

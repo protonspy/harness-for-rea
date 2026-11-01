@@ -20,14 +20,14 @@ analysis the specialist returned, so a later task starts from what earlier ones 
 - **R1.4** When the user picks a target, the app shall detect its kind — Android package, ELF, PE, Mach-O, .NET assembly, Electron or JavaScript application, archive, raw or firmware image, or folder — and show it with the engines the specialist will use for it.
 - **R1.5** The app shall offer four goals — understand and map, reimplement or port, integrate with the user's code, debug — and state the project's goal in the orchestrator's instructions for its tasks.
 - **R1.6** The setup shall start the provider, model and efforts on the Settings defaults and let the user change them for the project.
-- **R1.7** If a target cannot be read, or a chosen folder cannot be written, then the app shall refuse to create the project and say why.
+- **R1.7** If a target cannot be read, is not an absolute local path, or lies inside the app's data folder, or a chosen folder cannot be written, then the app shall refuse to create the project, say why, and keep nothing it made for it.
 
 ## R2 · Tasks in a project
 
 - **R2.1** When the user starts a task in a project, the app shall run it on the project's target with the project's goal, provider, model and efforts.
 - **R2.2** The app shall keep a task's folder under its project's folder.
 - **R2.3** The tasks of a project shall share its sandboxes: recorded against the project, reached by the same id from any of its tasks, and holding one delegation at a time whichever task runs it.
-- **R2.4** The orchestrator shall be able to list the analyses of the project's earlier delegations — each with its task, objective, state, the start of its report and its evidence — and read one in full.
+- **R2.4** The orchestrator shall be able to list the analyses of the project's earlier delegations — each with its task, objective, state, the start of its report and its evidence — and read one in full up to a size cap, each marked as evidence produced from the target and never as instructions.
 - **R2.5** When a task starts in a project that already has analyses, the orchestrator's instructions shall say how many there are and to consult them before delegating the same question again.
 
 ## R3 · Deleting and upgrading

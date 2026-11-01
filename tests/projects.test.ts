@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -6,8 +6,8 @@ import type { ProjectRow, Push } from "../src/shared/types"
 import { closeDb, getDb, openDb } from "../src/main/db"
 import { EventLog } from "../src/main/events/log"
 import { deleteProject, ProjectStore, slug, type NewProject } from "../src/main/projects"
-import { SandboxRegistry, type SpecialistBoxes } from "../src/main/sandbox/specialistbox"
-import { detectTarget, isDotNet, kindOf } from "../src/main/target"
+import { SandboxRegistry, SpecialistBoxes } from "../src/main/sandbox/specialistbox"
+import { detectTarget, isDotNet, kindOf, localPath } from "../src/main/target"
 
 /* specs/projects R1, R3: projects, their targets and folders, and the tasks from before them. */
 
@@ -127,6 +127,29 @@ describe("creating a project (R1.1–R1.3, R1.7)", () => {
     await expect(store.create(input(src, { name: "  " }))).rejects.toThrow(/Name the project/)
     expect(store.list()).toEqual([])
   })
+
+  it("takes only absolute local paths from the renderer, and never the app's own data", async () => {
+    expect(() => localPath("relative/game.apk")).toThrow(/not an absolute path/)
+    expect(() => localPath(String.raw`\\host\share\game.apk`)).toThrow(/network or device path/)
+    expect(() => localPath("//host/share/game.apk")).toThrow(/network or device path/)
+    expect(() => detectTarget("game.apk")).toThrow(/not an absolute path/)
+    const src = join(base, "src4")
+    mkdirSync(src)
+    await expect(store.create(input(src, { parentFolder: "projects" }))).rejects.toThrow(/not an absolute path/)
+    await expect(store.create(input(data))).rejects.toThrow(/app's data folder/)
+    mkdirSync(join(data, "inner"))
+    await expect(store.create(input(join(data, "inner")))).rejects.toThrow(/app's data folder/)
+    expect(store.list()).toEqual([])
+  })
+
+  it("removes the folder it made when the project cannot be recorded (R1.7)", async () => {
+    const target = join(base, "Downloads2", "game.apk")
+    mkdirSync(join(base, "Downloads2"))
+    writeFileSync(target, "PK\x03\x04")
+    getDb().exec("DROP TABLE projects")
+    await expect(store.create(input(target))).rejects.toThrow(/could not be created/)
+    expect(readdirSync(join(data, "projects"))).toEqual([])
+  })
 })
 
 describe("the tasks from before projects (R3.3)", () => {
@@ -148,6 +171,18 @@ describe("the tasks from before projects (R3.3)", () => {
     expect((getDb().prepare("SELECT project_id FROM sandboxes WHERE id = 's1'").get() as { project_id: string }).project_id).toBe(game.id)
     // and a second start finds nothing left to adopt
     expect(store.adopt({ provider: "openrouter", model: "m", orchestratorEffort: "default", specialistEffort: "default" })).toBe(0)
+  })
+
+  it("keeps a sandbox from before projects reachable where its task left it", () => {
+    const t = log.createTask({ request: "r", sourceRoot: "C:/work/game", model: "m" })
+    getDb().prepare("INSERT INTO sandboxes (id, project_id, created_by, limits, created_at) VALUES ('s-old', NULL, ?, '{}', 0)").run(t.id)
+    mkdirSync(join(data, "tasks", t.id, "workspace", "s-old"), { recursive: true })
+    store.adopt({ provider: "openrouter", model: "m", orchestratorEffort: "default", specialistEffort: "default" })
+    const game = store.list()[0]
+    const exec = async () => ({ code: 0, stdout: Buffer.alloc(0), stderr: "" }) as never
+    const boxes = new SpecialistBoxes({ exec, log, dir: game.folder, sourceRoot: game.sourceRoot, projectId: game.id })
+    expect(boxes.ids()).toEqual(["s-old"])
+    expect(boxes.usable("s-old").ws.workspace).toBe(join(data, "tasks", t.id, "workspace", "s-old"))
   })
 
   it("keeps a new project's tasks under its folder (R2.2)", async () => {
@@ -224,5 +259,61 @@ describe("one set of sandboxes per project (R2.3)", () => {
     // a project with no open task gets an instance of its own to be removed
     await registry.remove({ id: "q", folder: "f", sourceRoot: "s" })
     expect(made.at(-1)).toMatchObject({ id: "q", removed: 1 })
+  })
+
+  it("makes a task that opens while the last one's stop is in flight wait for it", async () => {
+    let finish = () => undefined as void
+    const afters: (Promise<void> | undefined)[] = []
+    const registry = new SandboxRegistry((_p, after) => {
+      afters.push(after)
+      return { stopAll: () => new Promise<void>((r) => (finish = r)), removeAll: async () => undefined } as unknown as SpecialistBoxes
+    })
+    const project = { id: "p", folder: "f", sourceRoot: "s" }
+    const stopping = registry.acquire(project).release()
+    registry.acquire(project)
+    expect(afters[0]).toBeUndefined()
+    let settled = false
+    void afters[1]!.then(() => (settled = true))
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    finish()
+    await stopping
+    await Promise.resolve()
+    expect(settled).toBe(true)
+  })
+
+  it("makes no Docker call before an earlier instance finished stopping", async () => {
+    const calls: string[][] = []
+    let finish = () => undefined as void
+    const after = new Promise<void>((r) => (finish = r))
+    const src = join(base, "src5")
+    mkdirSync(src)
+    const p = await store.create(input(src))
+    const t = log.createTask({ request: "r", sourceRoot: src, model: "m", projectId: p.id })
+    const exec = async (args: string[]) => (calls.push(args), { code: 0, stdout: Buffer.from("cid"), stderr: "" }) as never
+    const boxes = new SpecialistBoxes({ exec, log, dir: p.folder, sourceRoot: src, projectId: p.id, after })
+    const creating = boxes.create({}, t.id).catch(() => undefined)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(calls).toEqual([])
+    finish()
+    await creating
+    expect(calls.length).toBeGreaterThan(0)
+  })
+})
+
+describe("a project being deleted", () => {
+  it("refuses a second delete while the first runs", async () => {
+    const src = join(base, "src6")
+    mkdirSync(src)
+    const p = await store.create(input(src))
+    let go = () => undefined as void
+    const slow = new Promise<void>((r) => (go = r))
+    const d = { store, log, runner: { remove: async () => undefined }, sandboxes: { remove: () => slow } }
+    const first = deleteProject(d, p.id)
+    expect(store.deleting.has(p.id)).toBe(true)
+    await expect(deleteProject(d, p.id)).rejects.toThrow(/already being deleted/)
+    go()
+    await first
+    expect(store.deleting.has(p.id)).toBe(false)
   })
 })

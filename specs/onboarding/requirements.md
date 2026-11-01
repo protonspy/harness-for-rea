@@ -25,7 +25,7 @@ are changed later.
 
 ## R2 · After the setup
 
-- **R2.1** While a step that was ready no longer is, the desktop UI shall show which one and a way to fix it, and shall not let a task start.
+- **R2.1** While a step that was ready no longer is, the desktop UI shall show which one and a way to fix it, and shall not let a task start, checking a task's start against the provider, key, endpoint and model of its project.
 - **R2.2** The setup shall be reachable again from Settings.
 
 ## Out of scope

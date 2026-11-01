@@ -67,7 +67,9 @@ app.whenReady().then(async () => {
     projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort })
   }
   // One set of sandboxes per project while any of its tasks is open (specs/projects R2.3).
-  const registry = new SandboxRegistry((p) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id }))
+  const registry = new SandboxRegistry(
+    (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
+  )
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
   const runner = new TaskRunner({
     ...deps,
@@ -107,17 +109,17 @@ app.whenReady().then(async () => {
   )
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
-  const ready = () =>
-    readiness({
-      sandbox: () => sandbox.status(),
-      login: () => login.refresh(),
-      settings: getSettings,
-      keySet: (provider) => keyStatus(provider).set,
-      listModels: () => {
-        const { provider, baseUrl } = getSettings()
-        return listModels({ provider, baseUrl, apiKey: readKey(provider) })
+  const ready = (o?: Parameters<typeof readiness>[1]) =>
+    readiness(
+      {
+        sandbox: () => sandbox.status(),
+        login: () => login.refresh(),
+        settings: getSettings,
+        keySet: (provider) => keyStatus(provider).set,
+        listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
       },
-    })
+      o,
+    )
 
   const handlers: Handlers = {
     getSettings: () => getSettings(),
@@ -178,7 +180,10 @@ app.whenReady().then(async () => {
     // Every task runs its tool calls without asking, patches included (specs/chat R4.1); none starts while a
     // setup step is not ready (specs/onboarding R2.1).
     startTask: async (input) => {
-      const blocked = blocking(await ready())
+      // Checked against the provider and model the project runs with, without listing the provider's models again.
+      const project = input.projectId ? projects.get(input.projectId) : null
+      if (project && projects.deleting.has(project.id)) throw new Error("The project is being deleted.")
+      const blocked = blocking(await ready({ run: project ? { provider: project.provider, model: project.model } : undefined, list: false }))
       if (blocked) throw new Error(blocked)
       return runner.start({ ...input, auto: true })
     },

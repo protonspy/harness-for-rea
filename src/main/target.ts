@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs"
-import { basename, extname, join } from "node:path"
+import { basename, extname, isAbsolute, join } from "node:path"
 import type { TargetInfo, TargetKind } from "@shared/types"
 
 /*
@@ -89,8 +89,18 @@ function folderKind(dir: string): TargetKind {
 }
 
 /** What the target at `path` is; throws when it cannot be read (specs/projects R1.7). */
+/**
+  A path the renderer sent, checked before it is touched: absolute, and on this machine. A network share would be
+  reached by the stat itself, a device path is not a target, and a relative one resolves against wherever the app runs.
+*/
+export function localPath(path: string): string {
+  if (!isAbsolute(path)) throw new Error(`${path} is not an absolute path.`)
+  if (/^[\\/]{2}/.test(path)) throw new Error(`${path} is a network or device path; choose a local one.`)
+  return path
+}
+
 export function detectTarget(path: string): TargetInfo {
-  const st = statSync(path)
+  const st = statSync(localPath(path))
   if (st.isDirectory()) {
     const kind = folderKind(path)
     return { path, kind, isFile: false, size: 0, label: LABELS[kind], engines: ENGINES[kind] }

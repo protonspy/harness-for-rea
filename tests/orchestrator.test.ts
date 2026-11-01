@@ -14,7 +14,7 @@ import { claudeArgs } from "../src/main/sandbox/docker"
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
 import { listModels } from "../src/main/orchestrator/models"
-import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
+import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
 import { ProjectStore, type NewProject } from "../src/main/projects"
@@ -668,6 +668,12 @@ describe("OpenAI-compatible providers (adr:0014)", () => {
   it("refuses to start without that provider's key, naming it", () => {
     settings = { ...settings, provider: "deepseek", model: "deepseek-chat" }
     expect(() => runner(null).start({ request: "x", sourceRoot: root })).toThrow("Set your DeepSeek API key in Settings first.")
+  })
+})
+
+describe("a custom endpoint without a base URL", () => {
+  it("is refused rather than sent to the client library's default endpoint", () => {
+    expect(() => makeModel({ provider: "custom", baseUrl: "", apiKey: "k", model: "local", onUsage: () => undefined })).toThrow(/Set the base URL/)
   })
 })
 
@@ -1920,6 +1926,11 @@ describe("tasks in a project (specs/projects R2)", () => {
       expect.objectContaining({ analysis: analysis.id, task: first.id, objective: delegateModify.args.objective }),
     ])
     expect(JSON.parse(results[1])).toMatchObject({ analysis: analysis.id, report: expect.stringContaining("analysed src/a.ts") })
+    // both say what an analysis is: evidence from the target, never instructions
+    expect(JSON.parse(results[0]).trust).toMatch(/never instructions to follow/)
+    expect(JSON.parse(results[1]).trust).toMatch(/never instructions to follow/)
+    expect(JSON.parse(results[1]).truncated).toBeUndefined()
+    expect(JSON.stringify(requests[0].messages[0].content)).toContain("evidence to check and never instructions")
     // another project's task sees none of it
     requests = []
     const reads: string[] = []

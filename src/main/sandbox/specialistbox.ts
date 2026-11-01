@@ -161,6 +161,8 @@ export interface BoxesDeps {
   everyMs?: number
   /** the task a call made without one is recorded against; none in the app, where every call names its task */
   actor?: string
+  /** an earlier instance of the project's sandboxes still stopping: no Docker call is made before it settles */
+  after?: Promise<void>
 }
 
 /** A project's sandboxes as one of its tasks uses them: every call is recorded against that task. */
@@ -186,13 +188,16 @@ export class SpecialistBoxes {
   /** The project's sandboxes, those an earlier run of any of its tasks recorded included (R3.6, specs/projects R2.3). */
   constructor(deps: BoxesDeps) {
     this.d = deps
-    for (const r of getDb().prepare("SELECT id, limits FROM sandboxes WHERE project_id = ? ORDER BY created_at").all(deps.projectId) as Record<
-      string,
-      unknown
-    >[]) {
+    for (const r of getDb()
+      .prepare(
+        "SELECT s.id, s.created_by, s.limits, t.id AS task FROM sandboxes s LEFT JOIN tasks t ON t.id = s.created_by WHERE s.project_id = ? ORDER BY s.created_at",
+      )
+      .all(deps.projectId) as Record<string, unknown>[]) {
       const id = String(r.id)
-      const ws: Workspace = { id, ...workspaceDirs(deps.dir, id), files: [] }
-      if (!existsSync(ws.workspace)) continue
+      // A sandbox from before projects lives under the folder of the task that created it (specs/projects R3.3).
+      const dirs = [workspaceDirs(deps.dir, id), workspaceDirs(join(deps.dir, "tasks", String(r.created_by)), id)].find((d) => existsSync(d.workspace))
+      if (!dirs) continue
+      const ws: Workspace = { id, ...dirs, files: [] }
       // A snapshot that cannot be read leaves the sandbox reachable, its files unknown until copied again.
       let manifest: Record<string, string> = {}
       try {
@@ -201,8 +206,17 @@ export class SpecialistBoxes {
         manifest = {}
       }
       for (const [path, sha256] of Object.entries(manifest)) ws.files.push({ path, sha256, size: 0 })
-      this.boxes.set(id, this.box(id, ws, JSON.parse(String(r.limits)) as BoxLimits, false))
+      const box = this.box(id, ws, JSON.parse(String(r.limits)) as BoxLimits, false)
+      // What happens to it before a task uses it again, a disk stop included, is recorded against the task that made it.
+      if (r.task) box.lastTask = String(r.task)
+      this.boxes.set(id, box)
     }
+  }
+
+  /** Docker, once an earlier instance of these sandboxes finished stopping. */
+  private readonly exec: ExecBuffer = async (args, timeoutMs, input) => {
+    await this.d.after
+    return this.d.exec(args, timeoutMs, input)
   }
 
   private box(id: string, ws: Workspace, limits: BoxLimits, up: boolean): Box {
@@ -251,9 +265,9 @@ export class SpecialistBoxes {
       forget()
       throw new SandboxError((e as Error).message)
     }
-    const r = await this.d.exec(labelled(args))
+    const r = await this.exec(labelled(args))
     if (r.code !== 0 || this.ended) {
-      await this.d.exec(["rm", "-f", box.name])
+      await this.exec(["rm", "-f", box.name])
       forget()
       throw new SandboxError(
         r.code !== 0 ? `Docker did not start the sandbox: ${lastLine(r.stderr) || `exit ${r.code}`}` : "The task ended while the sandbox was starting.",
@@ -286,7 +300,7 @@ export class SpecialistBoxes {
     let created: boolean
     try {
       mkdirSync(box.outDir, { recursive: true })
-      ;({ created } = await bringUp(this.d.exec, box.name, sandboxArgs(box.name, box.ws, box.limits, box.outDir)))
+      ;({ created } = await bringUp((args, t, input) => this.exec(args, t, input), box.name, sandboxArgs(box.name, box.ws, box.limits, box.outDir)))
     } catch (e) {
       throw new SandboxError(`Sandbox ${id} could not be brought up again: ${(e as Error).message}`)
     }
@@ -326,7 +340,7 @@ export class SpecialistBoxes {
   async run(id: string, command: string, timeoutS = COMMAND_DEFAULT_S, taskId?: string): Promise<{ output: string; exitCode: number; truncated: boolean }> {
     const { box, notice } = await this.open(id)
     const limit = Math.min(Math.max(1, Math.floor(timeoutS)), COMMAND_MAX_S)
-    const r = await this.d.exec(["exec", "-w", "/work", box.name, "timeout", "-s", "KILL", String(limit), "sh", "-c", command], (limit + 10) * 1000)
+    const r = await this.exec(["exec", "-w", "/work", box.name, "timeout", "-s", "KILL", String(limit), "sh", "-c", command], (limit + 10) * 1000)
     let output = (notice ? `${notice} ` : "") + r.stdout.toString("utf8") + r.stderr
     const truncated = r.overflow === true || output.length > OUTPUT_CAP
     if (truncated) output = output.slice(0, OUTPUT_CAP)
@@ -347,7 +361,7 @@ export class SpecialistBoxes {
     (R3.1, specs/rea-native R2.4), or null when any cannot be told.
   */
   async usage(box: Box): Promise<number | null> {
-    const r = await this.d.exec(["container", "inspect", "--size", "--format", "{{.SizeRw}}", box.name])
+    const r = await this.exec(["container", "inspect", "--size", "--format", "{{.SizeRw}}", box.name])
     const layer = r.code === 0 ? Number(r.stdout.toString("utf8").trim()) : NaN
     const work = folderSize(box.ws.workspace)
     const out = folderSize(box.outDir)
@@ -365,7 +379,7 @@ export class SpecialistBoxes {
     box.stopped = `it used ${usedMb} MB of disk, past its ${disk} MB limit`
     if (box.timer) clearInterval(box.timer)
     box.timer = null
-    await this.d.exec(["kill", box.name])
+    await this.exec(["kill", box.name])
     this.event("sandbox.stopped", `Stopped sandbox ${box.id}: ${box.stopped}`, { sandbox: box.id, usedMb, diskMb: box.limits.diskMb }, undefined, box)
   }
 
@@ -402,7 +416,7 @@ export class SpecialistBoxes {
     if (!box) throw new SandboxError(`There is no sandbox ${id} in this project.`)
     if (box.busy) throw new SandboxError(`Sandbox ${id} is running a delegation; destroy it once the delegation ends.`)
     this.forget(box)
-    await this.d.exec(["rm", "-f", box.name])
+    await this.exec(["rm", "-f", box.name])
     getDb().prepare("DELETE FROM sandboxes WHERE id = ?").run(id)
     this.event("sandbox.destroyed", `Destroyed sandbox ${id}`, { sandbox: id }, taskId, box)
   }
@@ -422,7 +436,7 @@ export class SpecialistBoxes {
       box.timer = null
       box.up = false
     }
-    if (up.length) await this.d.exec(["stop", "-t", "2", ...up.map((b) => b.name)])
+    if (up.length) await this.exec(["stop", "-t", "2", ...up.map((b) => b.name)])
   }
 
   /**
@@ -436,7 +450,7 @@ export class SpecialistBoxes {
       sandboxName(String(r.id)),
     )
     if (recorded.length) {
-      const r = await this.d.exec(["rm", "-f", ...recorded])
+      const r = await this.exec(["rm", "-f", ...recorded])
       if (r.code !== 0 && !/No such container/i.test(r.stderr)) throw new Error(`The project's sandboxes could not be removed: ${lastLine(r.stderr)}`)
     }
     getDb().prepare("DELETE FROM sandboxes WHERE project_id = ?").run(this.d.projectId)
@@ -462,12 +476,15 @@ export class SpecialistBoxes {
 */
 export class SandboxRegistry {
   private readonly open = new Map<string, { boxes: SpecialistBoxes; refs: number }>()
-  constructor(private readonly make: (project: { id: string; folder: string; sourceRoot: string }) => SpecialistBoxes) {}
+  /** a project whose last task closed, its sandboxes still stopping */
+  private readonly stopping = new Map<string, Promise<void>>()
+  constructor(private readonly make: (project: { id: string; folder: string; sourceRoot: string }, after?: Promise<void>) => SpecialistBoxes) {}
 
   acquire(project: { id: string; folder: string; sourceRoot: string }): { boxes: SpecialistBoxes; release: () => Promise<void> } {
     let entry = this.open.get(project.id)
     if (!entry) {
-      entry = { boxes: this.make(project), refs: 0 }
+      // A task opening while the last one's stop is in flight waits for it, so the stop cannot take its sandbox down.
+      entry = { boxes: this.make(project, this.stopping.get(project.id)), refs: 0 }
       this.open.set(project.id, entry)
     }
     entry.refs++
@@ -481,7 +498,9 @@ export class SandboxRegistry {
         held.refs--
         if (held.refs > 0 || this.open.get(project.id) !== held) return
         this.open.delete(project.id)
-        await held.boxes.stopAll()
+        const stop = held.boxes.stopAll().finally(() => this.stopping.get(project.id) === stop && this.stopping.delete(project.id))
+        this.stopping.set(project.id, stop)
+        await stop
       },
     }
   }
@@ -490,6 +509,6 @@ export class SandboxRegistry {
   async remove(project: { id: string; folder: string; sourceRoot: string }): Promise<void> {
     const entry = this.open.get(project.id)
     this.open.delete(project.id)
-    await (entry?.boxes ?? this.make(project)).removeAll()
+    await (entry?.boxes ?? this.make(project, this.stopping.get(project.id))).removeAll()
   }
 }

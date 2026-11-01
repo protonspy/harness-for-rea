@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { copyFile } from "node:fs/promises"
-import { basename, join } from "node:path"
+import { basename, isAbsolute, join, relative } from "node:path"
 import { GOALS, type Goal, type OrchestratorEffort, type ProjectRow, type Push, type SpecialistEffort, type TargetKind } from "@shared/types"
 import type { ProviderId } from "@shared/providers"
 import { getDb } from "./db"
 import type { EventLog } from "./events/log"
 import { removeTree } from "./sandbox/paths"
-import { detectTarget } from "./target"
+import { detectTarget, localPath } from "./target"
 
 /*
   Projects (specs/projects, adr:0020-group-tasks-into-projects-that-share-their-analyses): one target each, with a
@@ -62,6 +62,9 @@ export function slug(name: string): string {
 }
 
 export class ProjectStore {
+  /** projects being deleted: no task of theirs starts meanwhile */
+  readonly deleting = new Set<string>()
+
   constructor(
     private readonly dataDir: string,
     private readonly push: (p: Push) => void = () => undefined,
@@ -82,26 +85,35 @@ export class ProjectStore {
     } catch (e) {
       throw new Error(`The target cannot be read: ${(e as Error).message}`, { cause: e })
     }
+    // The app's own data — keys' neighbours, every project's files — is never a target the sandboxes mount.
+    const inData = relative(this.dataDir, target.path)
+    if (!inData.startsWith("..") && !isAbsolute(inData)) throw new Error("The target cannot be the app's data folder or anything inside it.")
     const id = randomUUID()
-    const folder = p.parentFolder ? join(p.parentFolder, `${slug(name)}-${id}`) : join(this.dataDir, "projects", id)
+    const folder = p.parentFolder ? join(localPath(p.parentFolder), `${slug(name)}-${id}`) : join(this.dataDir, "projects", id)
     try {
       mkdirSync(folder, { recursive: true })
     } catch (e) {
       throw new Error(`The project's folder cannot be written: ${(e as Error).message}`, { cause: e })
     }
-    let sourceRoot = target.path
-    if (target.isFile) {
-      sourceRoot = join(folder, "target")
-      mkdirSync(sourceRoot, { recursive: true })
-      await copyFile(target.path, join(sourceRoot, basename(target.path)))
+    // A copy or a record that fails leaves nothing behind (R1.7).
+    try {
+      let sourceRoot = target.path
+      if (target.isFile) {
+        sourceRoot = join(folder, "target")
+        mkdirSync(sourceRoot, { recursive: true })
+        await copyFile(target.path, join(sourceRoot, basename(target.path)))
+      }
+      const at = this.now()
+      getDb()
+        .prepare(
+          `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, owns_folder, provider, model,
+            orchestrator_effort, specialist_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, name, p.goal, target.path, target.kind, sourceRoot, folder, p.provider, p.model, p.orchestratorEffort, p.specialistEffort, at, at)
+    } catch (e) {
+      removeTree(folder)
+      throw new Error(`The project could not be created: ${(e as Error).message}`, { cause: e })
     }
-    const at = this.now()
-    getDb()
-      .prepare(
-        `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, owns_folder, provider, model,
-          orchestrator_effort, specialist_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, name, p.goal, target.path, target.kind, sourceRoot, folder, p.provider, p.model, p.orchestratorEffort, p.specialistEffort, at, at)
     return this.emit(id)
   }
 
@@ -176,11 +188,17 @@ export async function deleteProject(
   id: string,
 ): Promise<void> {
   const project = d.store.get(id)
+  if (d.store.deleting.has(id)) throw new Error("The project is already being deleted.")
   const tasks = d.log.projectTasks(id)
   if (tasks.some((t) => ["pending", "running", "waiting"].includes(t.state)))
     throw new Error("A task of this project is running; cancel it before deleting the project.")
-  for (const t of tasks) await d.runner.remove(t.id)
-  await d.sandboxes.remove(project)
-  if (project.ownsFolder) removeTree(project.folder)
-  d.store.forget(id)
+  d.store.deleting.add(id)
+  try {
+    for (const t of tasks) await d.runner.remove(t.id)
+    await d.sandboxes.remove(project)
+    if (project.ownsFolder) removeTree(project.folder)
+    d.store.forget(id)
+  } finally {
+    d.store.deleting.delete(id)
+  }
 }

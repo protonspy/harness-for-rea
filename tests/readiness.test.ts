@@ -58,7 +58,23 @@ describe("the setup's steps", () => {
     expect((await readiness(deps({ listModels: async () => [] }))).model.reason).toMatch(/listed no models/)
     // a local OpenAI-compatible endpoint may take no key
     expect(needsKey("custom")).toBe(false)
-    expect((await readiness(deps({ keySet: () => false, settings: { provider: "custom", model: "local" } }))).model.ready).toBe(true)
+    const local = { provider: "custom" as const, model: "local", baseUrl: "http://localhost:1234/v1" }
+    expect((await readiness(deps({ keySet: () => false, settings: local }))).model.ready).toBe(true)
+    // a custom endpoint with no base URL would send the key to the client library's default endpoint
+    expect((await readiness(deps({ keySet: () => false, settings: { provider: "custom", model: "local" } }))).model.reason).toMatch(/Set the base URL/)
+  })
+
+  it("checks a project's own provider and model, and a task start lists no models (R2.1)", async () => {
+    const seen: string[] = []
+    const d = deps({ keySet: (p) => p === "openrouter", listModels: async (run) => (seen.push(run.provider), ["x"]) })
+    const deepseek = await readiness(d, { run: { provider: "deepseek", model: "deepseek-chat" } })
+    expect(deepseek.model).toMatchObject({ ready: false, provider: "deepseek", reason: "Set your DeepSeek API key." })
+    const own = await readiness(d, { run: { provider: "openrouter", model: "z-ai/glm-5.3-flash" }, list: false })
+    expect(own.model).toMatchObject({ ready: true, model: "z-ai/glm-5.3-flash" })
+    expect(seen).toEqual([])
+    // a project on a custom endpoint while Settings is on another provider has no base URL to use
+    const custom = await readiness(deps(), { run: { provider: "custom", model: "local" }, list: false })
+    expect(custom.model.reason).toMatch(/Set the base URL/)
   })
 
   it("names the first step that blocks a task (R2.1)", async () => {

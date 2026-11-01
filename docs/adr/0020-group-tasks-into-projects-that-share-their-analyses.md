@@ -60,3 +60,6 @@ data folder as the project's folder, so their files stay where they are.
 - A target file is stored twice on disk: the user's original and the project's copy.
 - What one task's specialist writes to a shared sandbox's `/work` is visible to the next task's
   delegations there. That is the point, and also how a mistake carries over.
+- An analysis is stored and replayed to every later task of the project, so text a hostile target
+  planted in a report outlives its task. The orchestrator reads analyses as evidence marked as
+  coming from the target, never as instructions, and reads each up to a size cap.

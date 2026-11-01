@@ -16,6 +16,7 @@ import {
 import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
+import { baseUrlFor } from "../readiness"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
@@ -187,10 +188,12 @@ export class TaskRunner {
     const apiKey = key ?? this.deps.apiKey(run.provider)
     if (!apiKey) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
     const abort = new AbortController()
+    // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
+    const baseUrl = baseUrlFor(run.provider, settings)
+    if (!baseUrl) throw new Error(`Set the base URL of your ${PROVIDERS[run.provider].label} in Settings, with Settings on that provider.`)
     const model = makeModel({
       provider: run.provider,
-      // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
-      baseUrl: run.provider === settings.provider ? settings.baseUrl : "",
+      baseUrl,
       apiKey,
       model: task.model,
       effort: run.orchestratorEffort,
