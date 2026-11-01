@@ -1,12 +1,17 @@
 name: CI
 
+# The gate a pull request must pass before it merges into main, which branch protection requires
+# (plans/ci-pr-gate.md). It runs on pull requests only: main takes no change any other way.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+# One run per pull request: a newer push cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   gate:
