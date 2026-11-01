@@ -1,8 +1,21 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
 import { PROVIDER_IDS } from "./providers"
-import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
-import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
+import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
+import type {
+  AnalysisSummary,
+  KeyStatus,
+  LoginStatus,
+  PatchView,
+  ProjectRow,
+  Push,
+  Readiness,
+  SandboxStatus,
+  Settings,
+  TargetInfo,
+  TaskHistory,
+  TaskRow,
+} from "./types"
 
 /*
   The whole renderer ⇄ main contract. Each method's arguments have a schema here, the main process
@@ -51,6 +64,8 @@ export const API_SCHEMAS = {
   clearKey: z.tuple([Provider.optional()]),
   listModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
+  readiness: z.tuple([]),
+  completeSetup: z.tuple([]),
   buildSandbox: z.tuple([]),
   loginStatus: z.tuple([]),
   startLogin: z.tuple([]),
@@ -63,10 +78,32 @@ export const API_SCHEMAS = {
     z
       .object({
         request: z.string().trim().min(1).max(20_000),
-        sourceRoot: z.string().trim().min(1).max(1000),
+        // A task runs in a project (specs/projects R2.1); a bare source folder is the form from before projects.
+        projectId: id.optional(),
+        sourceRoot: z.string().trim().min(1).max(1000).optional(),
+      })
+      .strict()
+      .refine((t) => t.projectId || t.sourceRoot, "Name a project or a source folder."),
+  ]),
+  listProjects: z.tuple([]),
+  getProject: z.tuple([id]),
+  createProject: z.tuple([
+    z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        goal: z.enum(GOALS),
+        target: z.string().trim().min(1).max(1000),
+        provider: Provider,
+        model: z.string().trim().min(1).max(200),
+        orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
+        specialistEffort: z.enum(SPECIALIST_EFFORTS),
+        parentFolder: z.string().trim().min(1).max(1000).nullable().optional(),
       })
       .strict(),
   ]),
+  deleteProject: z.tuple([id]),
+  pickTarget: z.tuple([z.enum(["file", "folder"])]),
+  detectTarget: z.tuple([z.string().trim().min(1).max(1000)]),
   listTasks: z.tuple([z.object({ limit: z.number().int().min(1).max(200).default(50) }).strict()]),
   getTask: z.tuple([id, z.object({ afterEvent: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(5000).default(2000) }).strict()]),
   cancelTask: z.tuple([id]),
@@ -92,6 +129,8 @@ export interface ApiResults {
   clearKey: KeyStatus
   listModels: string[]
   sandboxStatus: SandboxStatus
+  readiness: Readiness
+  completeSetup: Readiness
   buildSandbox: SandboxStatus
   loginStatus: LoginStatus
   startLogin: LoginStatus
@@ -101,6 +140,12 @@ export interface ApiResults {
   logout: LoginStatus
   pickFolder: string | null
   startTask: TaskRow
+  listProjects: ProjectRow[]
+  getProject: { project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[] }
+  createProject: ProjectRow
+  deleteProject: boolean
+  pickTarget: string | null
+  detectTarget: TargetInfo
   listTasks: TaskRow[]
   getTask: TaskHistory
   cancelTask: TaskRow

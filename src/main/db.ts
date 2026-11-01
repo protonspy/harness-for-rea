@@ -3,8 +3,8 @@ import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 /*
-  One SQLite file: settings, the tasks, steps and events of the event log, the orchestrator's conversations
-  and the specialist's sandboxes. Each migration runs
+  One SQLite file: settings, the projects, the tasks, steps and events of the event log, the orchestrator's
+  conversations and the specialist's sandboxes. Each migration runs
   once, in order, recorded in `user_version`.
 */
 
@@ -103,6 +103,43 @@ const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL
   );
   CREATE INDEX sandboxes_task ON sandboxes(task_id);
+  `,
+  // Projects: a target, a folder and the model its tasks run with; tasks and sandboxes belong to one
+  // (adr:0020-group-tasks-into-projects-that-share-their-analyses). A sandbox now outlives the task that created it,
+  // so its table is rebuilt to hang off the project; tasks from before are given projects at start.
+  `
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    target_kind TEXT NOT NULL,
+    source_root TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    owns_folder INTEGER NOT NULL DEFAULT 1,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    orchestrator_effort TEXT NOT NULL,
+    specialist_effort TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX projects_created ON projects(created_at);
+
+  ALTER TABLE tasks ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE CASCADE;
+  CREATE INDEX tasks_project ON tasks(project_id, created_at);
+
+  CREATE TABLE sandboxes_v3 (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    created_by TEXT,
+    limits TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  INSERT INTO sandboxes_v3 (id, project_id, created_by, limits, created_at) SELECT id, NULL, task_id, limits, created_at FROM sandboxes;
+  DROP TABLE sandboxes;
+  ALTER TABLE sandboxes_v3 RENAME TO sandboxes;
+  CREATE INDEX sandboxes_project ON sandboxes(project_id);
   `,
 ]
 

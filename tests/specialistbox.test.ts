@@ -32,8 +32,13 @@ beforeEach(() => {
   mkdirSync(join(root, "src"), { recursive: true })
   writeFileSync(join(root, "src", "a.bin"), Buffer.alloc(1000))
   openDb(join(data, "hfr.db"))
-  // the sandboxes are recorded against their task
-  getDb().prepare("INSERT INTO tasks (id, request, source_root, model, state, created_at, updated_at) VALUES ('t1', 'r', ?, 'm', 'running', 0, 0)").run(root)
+  // the sandboxes are recorded against their project (specs/projects R2.3)
+  getDb()
+    .prepare(
+      `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, provider, model, orchestrator_effort, specialist_effort, created_at, updated_at)
+       VALUES ('p1', 'p', 'understand', ?, 'folder', ?, ?, 'openrouter', 'm', 'default', 'default', 0, 0)`,
+    )
+    .run(root, root, data)
 })
 afterEach(() => closeDb())
 
@@ -68,7 +73,7 @@ function boxes(f: Fake, everyMs = 60_000) {
   const log = {
     append: (e: { kind: string; payload?: Record<string, unknown> }) => f.events.push({ kind: e.kind, payload: e.payload ?? {} }),
   } as unknown as EventLog
-  return new SpecialistBoxes({ exec: f.exec, log, taskDir: data, sourceRoot: root, taskId: "t1", everyMs })
+  return new SpecialistBoxes({ exec: f.exec, log, dir: data, sourceRoot: root, projectId: "p1", actor: "t1", everyMs })
 }
 
 describe("a sandbox's docker run arguments (R1.1–R1.3)", () => {
@@ -173,7 +178,7 @@ describe("creating, controlling and destroying sandboxes (R1.4, R1.5, R2)", () =
   it("refuses a sandbox this task does not have", async () => {
     const s = boxes(fake())
     expect(() => s.usable("nope")).toThrow(SandboxError)
-    await expect(s.run("nope", "ls")).rejects.toThrow(/no sandbox nope in this task/)
+    await expect(s.run("nope", "ls")).rejects.toThrow(/no sandbox nope in this project/)
     await expect(s.destroy("nope")).rejects.toThrow(SandboxError)
   })
 
@@ -274,7 +279,7 @@ describe.skipIf(!process.env.HFR_DOCKER)("SpecialistBoxes on Docker", () => {
   it("creates a root sandbox, copies in, installs and runs, and stops it past its disk", async () => {
     const f = fake()
     const log = { append: (e: { kind: string }) => f.events.push({ kind: e.kind, payload: {} }) } as unknown as EventLog
-    const s = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: data, sourceRoot: root, taskId: "t1", everyMs: 60_000 })
+    const s = new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: data, sourceRoot: root, projectId: "p1", actor: "t1", everyMs: 60_000 })
     const box = await s.create({ cpus: 1, memoryMb: 512, diskMb: 64, pidsLimit: 256 })
     try {
       await s.copy(box.id, ["src/a.bin"], [])
@@ -293,17 +298,17 @@ describe.skipIf(!process.env.HFR_DOCKER)("SpecialistBoxes on Docker", () => {
 
   it("keeps what was installed and extracted across the task's end and reopening (specs/task-persistence R3.3–R3.6)", async () => {
     const log = { append: () => undefined } as unknown as EventLog
-    const first = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: data, sourceRoot: root, taskId: "t1" })
+    const first = new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: data, sourceRoot: root, projectId: "p1", actor: "t1" })
     const box = await first.create({})
     try {
       await first.run(box.id, "touch /usr/local/bin/installed && echo extracted > /root/out/notes.txt")
       await first.stopAll()
-      const reopened = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: data, sourceRoot: root, taskId: "t1" })
+      const reopened = new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: data, sourceRoot: root, projectId: "p1", actor: "t1" })
       expect((await reopened.run(box.id, "ls /usr/local/bin/installed; cat /root/out/notes.txt")).output).toBe("/usr/local/bin/installed\nextracted\n")
       // Docker lost it: created again, the output folder still there
       await reopened.stopAll()
       await dockerExecBuffer(["rm", "-f", box.name])
-      const again = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: data, sourceRoot: root, taskId: "t1" })
+      const again = new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: data, sourceRoot: root, projectId: "p1", actor: "t1" })
       expect((await again.run(box.id, "cat /root/out/notes.txt")).output).toMatch(/created again.*extracted/s)
       await again.removeAll()
     } finally {
@@ -315,9 +320,9 @@ describe.skipIf(!process.env.HFR_DOCKER)("SpecialistBoxes on Docker", () => {
     const s = new SpecialistBoxes({
       exec: dockerExecBuffer,
       log: { append: () => undefined } as unknown as EventLog,
-      taskDir: data,
+      dir: data,
       sourceRoot: root,
-      taskId: "t1",
+      projectId: "p1",
     })
     await expect(s.create({ cpus: 4096, memoryMb: 512, diskMb: 64, pidsLimit: 256 })).rejects.toThrow(/Docker did not start the sandbox/)
   }, 60_000)

@@ -30,9 +30,9 @@ afterEach(() => closeDb())
 
 describe("database (R2.1)", () => {
   it("migrates once and records the version", () => {
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3)
     migrate(getDb())
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3)
   })
 })
 

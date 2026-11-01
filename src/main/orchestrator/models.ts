@@ -5,12 +5,22 @@ import { friendlyError } from "./errors"
   The models a provider offers, read from its `GET {baseUrl}/models` (the OpenAI list endpoint that
   DeepSeek and most compatible servers implement) so the user picks instead of typing. Runs in main so
   the key never reaches the renderer. OpenRouter lists hundreds, so only those that advertise tool
-  calling are kept: the orchestrator cannot run without it.
+  calling and take images in are kept: the orchestrator cannot run without tools, and a screenshot or a
+  decoded resource is evidence it has to read. A model that advertises neither field is kept, since
+  nothing says it lacks them.
 */
 
 interface ModelEntry {
   id?: unknown
   supported_parameters?: unknown
+  architecture?: { input_modalities?: unknown }
+}
+
+/** Whether an OpenRouter entry can call tools and read images, as far as it says. */
+function capable(m: ModelEntry): boolean {
+  const tools = !Array.isArray(m.supported_parameters) || m.supported_parameters.includes("tools")
+  const input = m.architecture?.input_modalities
+  return tools && (!Array.isArray(input) || input.includes("image"))
 }
 
 const TIMEOUT_MS = 10_000
@@ -35,7 +45,7 @@ export async function listModels(o: { provider: ProviderId; baseUrl: string; api
   if (!Array.isArray(body?.data)) throw new Error(`${base}/models did not return a model list.`)
   const ids = (body.data as ModelEntry[])
     .filter((m) => typeof m.id === "string" && m.id !== "")
-    .filter((m) => o.provider !== "openrouter" || !Array.isArray(m.supported_parameters) || m.supported_parameters.includes("tools"))
+    .filter((m) => o.provider !== "openrouter" || capable(m))
     .map((m) => m.id as string)
   return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
 }

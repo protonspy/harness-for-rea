@@ -9,10 +9,13 @@ import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
 import { listModels } from "./orchestrator/models"
+import { blocking, readiness } from "./readiness"
+import { deleteProject, ProjectStore } from "./projects"
+import { detectTarget } from "./target"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
-import { SpecialistBoxes } from "./sandbox/specialistbox"
+import { SandboxRegistry, SpecialistBoxes } from "./sandbox/specialistbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
@@ -57,32 +60,40 @@ app.whenReady().then(async () => {
   void TaskBox.sweep(dockerExecBuffer).catch(() => undefined)
   // So do the specialist's sandboxes (specs/specialist-sandbox R2.7).
   void SpecialistBoxes.sweep(dockerExecBuffer).catch(() => undefined)
+  // Projects: tasks from before them are given one each (specs/projects R3.3).
+  const projects = new ProjectStore(dataDir, push)
+  {
+    const s = getSettings()
+    projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort })
+  }
+  // One set of sandboxes per project while any of its tasks is open (specs/projects R2.3).
+  const registry = new SandboxRegistry(
+    (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
+  )
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
   const runner = new TaskRunner({
     ...deps,
+    projects,
     apiKey: (provider) => readKey(provider),
     // The orchestrator's tools run in the task's own container (adr:0007-run-the-orchestrators-tools-in-a-task-container).
     workspace: async (task) => {
       const blocked = await preflight(dockerExec)
       if (blocked) throw new Error(blocked)
       const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, join(log.taskDir(task.id), "scratch"))
-      // The specialist's sandboxes the orchestrator creates, those an earlier run recorded included (specs/task-persistence R3.6).
-      const sandboxes = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id })
+      // The project's sandboxes, shared by its tasks; those earlier runs recorded included (specs/projects R2.3).
+      const held = task.projectId ? registry.acquire(projects.get(task.projectId)) : null
       return {
         backend: box,
         root: WORKSPACE,
         scratch: SCRATCH,
-        sandboxes,
+        sandboxes: held?.boxes.forTask(task.id),
         created: box.created,
-        // Stopped and kept for when the task reopens (specs/task-persistence R3.4).
-        dispose: async () => void (await Promise.allSettled([box.dispose(), sandboxes.stopAll()])),
+        // Stopped and kept for when the task reopens (specs/task-persistence R3.4); the sandboxes once no task of the project is open.
+        dispose: async () => void (await Promise.allSettled([box.dispose(), held?.release()])),
       }
     },
-    // Only deleting the task removes its containers (specs/task-persistence R4.1).
-    removeContainers: async (task) => {
-      await TaskBox.remove(dockerExecBuffer, task.id)
-      await new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id }).removeAll()
-    },
+    // Deleting a task removes its own container; the sandboxes are the project's (specs/projects R3.2).
+    removeContainers: (task) => TaskBox.remove(dockerExecBuffer, task.id),
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
   // The first round's proxy goes, then the image is prepared if it is missing or stale (specs/sandbox-images R3.1, R4.2).
@@ -97,8 +108,30 @@ app.whenReady().then(async () => {
     (status) => push({ type: "login", status }),
   )
 
+  // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
+  const ready = (o?: Parameters<typeof readiness>[1]) =>
+    readiness(
+      {
+        sandbox: () => sandbox.status(),
+        login: () => login.refresh(),
+        settings: getSettings,
+        keySet: (provider) => keyStatus(provider).set,
+        listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
+      },
+      o,
+    )
+
   const handlers: Handlers = {
     getSettings: () => getSettings(),
+    readiness: () => ready(),
+    // Finishing records the setup only once every step is ready (specs/onboarding R1.8).
+    completeSetup: async () => {
+      const r = await ready()
+      const blocked = blocking(r)
+      if (blocked) throw new Error(blocked)
+      saveSettings({ setupCompleted: true })
+      return { ...r, completed: true }
+    },
     saveSettings: (patch) => saveSettings(patch),
     keyStatus: (provider) => keyStatus(provider),
     saveKey: (key, provider) => saveKey(key, provider),
@@ -124,8 +157,36 @@ app.whenReady().then(async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory"] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
     },
-    // Every task runs its tool calls without asking, patches included (specs/chat R4.1).
-    startTask: (input) => runner.start({ ...input, auto: true }),
+    listProjects: () => projects.list(),
+    getProject: (id) => ({
+      project: projects.get(id),
+      tasks: log.projectTasks(id),
+      analyses: log
+        .projectAnalyses(id)
+        .map(({ id: a, taskId, state, objective, evidence, createdAt }) => ({ id: a, taskId, state, objective, evidence, createdAt })),
+    }),
+    // A project is created only once the setup is completed (specs/projects R4.4).
+    createProject: async (input) => {
+      if (!getSettings().setupCompleted) throw new Error("Finish the setup before creating a project.")
+      return projects.create(input)
+    },
+    // Refused while a task of it runs; then its tasks, its sandboxes and the folder the app made for it (R3.1, R3.2).
+    deleteProject: async (id) => (await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),
+    pickTarget: async (kind) => {
+      const r = await dialog.showOpenDialog(win!, { properties: [kind === "file" ? "openFile" : "openDirectory"] })
+      return r.canceled ? null : (r.filePaths[0] ?? null)
+    },
+    detectTarget: (path) => detectTarget(path),
+    // Every task runs its tool calls without asking, patches included (specs/chat R4.1); none starts while a
+    // setup step is not ready (specs/onboarding R2.1).
+    startTask: async (input) => {
+      // Checked against the provider and model the project runs with, without listing the provider's models again.
+      const project = input.projectId ? projects.get(input.projectId) : null
+      if (project && projects.deleting.has(project.id)) throw new Error("The project is being deleted.")
+      const blocked = blocking(await ready({ run: project ? { provider: project.provider, model: project.model } : undefined, list: false }))
+      if (blocked) throw new Error(blocked)
+      return runner.start({ ...input, auto: true })
+    },
     listTasks: ({ limit }) => log.listTasks(limit),
     getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
     cancelTask: (id) => runner.cancel(id),
@@ -162,6 +223,8 @@ app.whenReady().then(async () => {
     minWidth: 960,
     minHeight: 600,
     title: "Harness for REA",
+    // The app icon, shipped with the page (plans/projects-and-onboarding.md 1.1); the installer takes resources/icon.ico.
+    icon: join(__dirname, "../renderer/icon.png"),
     backgroundColor: "#0b0d10",
     show: false,
     webPreferences: webPreferences(join(__dirname, "../preload/index.js")),

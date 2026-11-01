@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { EventRow, PatchView, StepRow, TaskHistory, TaskRow } from "../src/shared/types"
+import type { EventRow, PatchView, ProjectRow, StepRow, TaskHistory, TaskRow } from "../src/shared/types"
+import { bytes, foldProjects, GOAL_CARDS, goalCard, nameFrom, tasksOf } from "../src/renderer/src/lib/projects"
 import { canRetry, filesOfStep, fold, foldTasks, isLive, usageByAgent } from "../src/renderer/src/lib/store"
 import { clock, diffLines, tokens, tone, usd, when } from "../src/renderer/src/lib/format"
 
@@ -7,6 +8,7 @@ import { clock, diffLines, tokens, tone, usd, when } from "../src/renderer/src/l
 
 const task = (id: string, over: Partial<TaskRow> = {}): TaskRow => ({
   id,
+  projectId: null,
   request: "r",
   sourceRoot: "s",
   model: "m",
@@ -177,5 +179,51 @@ describe("format", () => {
 
   it("classifies diff lines", () => {
     expect(diffLines("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n same").map((l) => l.kind)).toEqual(["file", "file", "hunk", "del", "add", "ctx"])
+  })
+})
+
+describe("the project views (specs/projects R4)", () => {
+  const project = (id: string, createdAt: number): ProjectRow => ({
+    id,
+    name: id,
+    goal: "understand",
+    targetPath: `C:/t/${id}`,
+    targetKind: "android",
+    sourceRoot: `C:/t/${id}`,
+    folder: `C:/p/${id}`,
+    ownsFolder: true,
+    provider: "openrouter",
+    model: "m",
+    orchestratorEffort: "default",
+    specialistEffort: "default",
+    createdAt,
+    updatedAt: createdAt,
+  })
+
+  it("offers four goals, each with ideas for its first task (R1.5, R4.3)", () => {
+    expect(GOAL_CARDS.map((g) => g.goal)).toEqual(["understand", "reimplement", "integrate", "debug"])
+    for (const g of GOAL_CARDS) expect(g.ideas.length).toBeGreaterThanOrEqual(3)
+    expect(goalCard("debug").title).toBe("Debug it")
+  })
+
+  it("keeps the project list current from pushes, newest first (R4.1)", () => {
+    const a = project("a", 1)
+    const b = project("b", 2)
+    let list = foldProjects([], { type: "project", project: a })
+    list = foldProjects(list, { type: "project", project: b })
+    expect(list.map((p) => p.id)).toEqual(["b", "a"])
+    list = foldProjects(list, { type: "project", project: { ...a, name: "renamed" } })
+    expect(list.find((p) => p.id === "a")?.name).toBe("renamed")
+    expect(foldProjects(list, { type: "projectDeleted", id: "b" }).map((p) => p.id)).toEqual(["a"])
+    expect(foldProjects(list, { type: "taskDeleted", id: "x" })).toBe(list)
+  })
+
+  it("lists a project's tasks newest first, and names a project after its target (R4.2)", () => {
+    const tasks = [task("1", { projectId: "a", createdAt: 1 }), task("2", { projectId: "b", createdAt: 2 }), task("3", { projectId: "a", createdAt: 3 })]
+    expect(tasksOf(tasks, "a").map((t) => t.id)).toEqual(["3", "1"])
+    expect(nameFrom(String.raw`C:\Downloads\com.example.game.apk`)).toBe("com.example.game")
+    expect(nameFrom("C:/apps/MyTool/")).toBe("MyTool")
+    expect(bytes(512)).toBe("512 B")
+    expect(bytes(3 * 1024 ** 3)).toBe("3.00 GB")
   })
 })

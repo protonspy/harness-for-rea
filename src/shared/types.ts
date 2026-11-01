@@ -10,6 +10,8 @@ export type Agent = "orchestrator" | "specialist" | "sandbox" | "app"
 
 export interface TaskRow {
   id: string
+  /** the project the task belongs to (specs/projects) */
+  projectId: string | null
   request: string
   sourceRoot: string
   model: string
@@ -23,6 +25,55 @@ export interface TaskRow {
   costUsd: number
   /** what Claude Code reported as `total_cost_usd`: an estimate against the user's plan, not a charge */
   specialistCostUsd: number
+}
+
+/** What the user means to do with a project's target (specs/projects R1.5). */
+export const GOALS = ["understand", "reimplement", "integrate", "debug"] as const
+export type Goal = (typeof GOALS)[number]
+
+/** What a target is, as its extension and first bytes tell (specs/projects R1.4). */
+export const TARGET_KINDS = ["android", "elf", "pe", "macho", "dotnet", "electron", "javascript", "archive", "firmware", "folder", "file"] as const
+export type TargetKind = (typeof TARGET_KINDS)[number]
+
+export interface TargetInfo {
+  path: string
+  kind: TargetKind
+  /** a file, copied into the project, or a folder read in place */
+  isFile: boolean
+  size: number
+  /** a short name for the kind, for the user */
+  label: string
+  /** what the specialist works on it with */
+  engines: string[]
+}
+
+export interface ProjectRow {
+  id: string
+  name: string
+  goal: Goal
+  targetPath: string
+  targetKind: TargetKind
+  /** what the project's tasks mount read-only: the target folder, or the folder its file was copied into */
+  sourceRoot: string
+  folder: string
+  /** the app created `folder` and may remove it whole */
+  ownsFolder: boolean
+  provider: ProviderId
+  model: string
+  orchestratorEffort: OrchestratorEffort
+  specialistEffort: SpecialistEffort
+  createdAt: number
+  updatedAt: number
+}
+
+/** An earlier delegation of a project's task, as the project view lists it (specs/projects R4.3). */
+export interface AnalysisSummary {
+  id: string
+  taskId: string
+  state: TaskState
+  objective: string
+  evidence: number
+  createdAt: number
 }
 
 export type StepKind = "todo" | "delegation" | "patch"
@@ -123,6 +174,8 @@ export interface Settings {
   approvalTimeoutMinutes: number
   /** how long a question waits for an answer before its default is used (specs/chat R5.4) */
   questionTimeoutMinutes: number
+  /** the user finished the first-run setup once (specs/onboarding R1.8) */
+  setupCompleted: boolean
 }
 
 export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const
@@ -134,6 +187,23 @@ export interface KeyStatus {
   set: boolean
   hint: string
   encryption: boolean
+}
+
+/** One step of the first-run setup: whether it is ready, and why not (specs/onboarding R1). */
+export interface ReadinessStep {
+  ready: boolean
+  /** what is missing and what readies it; empty once ready */
+  reason: string
+}
+
+export interface Readiness {
+  sandbox: ReadinessStep & { building: boolean }
+  claude: ReadinessStep & { plan?: string; email?: string }
+  model: ReadinessStep & { provider: ProviderId; model: string }
+  /** all three steps are ready */
+  ready: boolean
+  /** the user finished the setup once */
+  completed: boolean
 }
 
 export interface SandboxStatus {
@@ -162,6 +232,8 @@ export type Push =
   | { type: "step"; step: StepRow }
   | { type: "task"; task: TaskRow }
   | { type: "taskDeleted"; id: string }
+  | { type: "project"; project: ProjectRow }
+  | { type: "projectDeleted"; id: string }
   | { type: "patch"; patch: PatchView }
   | { type: "sandbox"; status: SandboxStatus }
   | { type: "login"; status: LoginStatus }

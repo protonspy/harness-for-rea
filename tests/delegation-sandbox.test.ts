@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ContextPackageSchema } from "../src/shared/context"
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
-import { closeDb, openDb } from "../src/main/db"
+import { closeDb, getDb, openDb } from "../src/main/db"
 import { delegate, DelegationRefused, dockerLauncher, type Launcher } from "../src/main/delegation"
 import { EventLog } from "../src/main/events/log"
 import { claudeArgs, execArgs, stopArgs } from "../src/main/sandbox/docker"
@@ -22,6 +22,7 @@ let data = ""
 let fakeLog = ""
 let log: EventLog
 let taskId = ""
+const projectId = "00000000-0000-4000-8000-0000000000aa"
 let layer = 0
 let launches: { box?: string; cwd?: string }[] = []
 
@@ -35,7 +36,13 @@ beforeEach(() => {
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2\n")
   openDb(join(data, "hfr.db"))
   log = new EventLog(data)
-  taskId = log.createTask({ request: "r", sourceRoot: root, model: "m" }).id
+  getDb()
+    .prepare(
+      `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, provider, model, orchestrator_effort, specialist_effort, created_at, updated_at)
+       VALUES (?, 'p', 'understand', ?, 'folder', ?, ?, 'openrouter', 'm', 'default', 'default', 0, 0)`,
+    )
+    .run(projectId, root, root, data)
+  taskId = log.createTask({ request: "r", sourceRoot: root, model: "m", projectId }).id
   layer = 0
   layerDuringRun = 0
   launches = []
@@ -74,7 +81,7 @@ const deps = (mode = "answer") => ({
   launcher: launcher(mode),
   settings: () => ({ ...DEFAULT_SETTINGS, timeoutMinutes: 1 }),
 })
-const boxes = () => new SpecialistBoxes({ exec, log, taskDir: log.taskDir(taskId), sourceRoot: root, taskId, everyMs: 60_000 })
+const boxes = () => new SpecialistBoxes({ exec, log, dir: log.taskDir(taskId), sourceRoot: root, projectId, everyMs: 60_000 })
 const pkg = (o: Record<string, unknown> = {}) => ContextPackageSchema.parse({ brief: "b", objective: "Look at /work/src/a.ts", files: ["src/a.ts"], ...o })
 
 describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
