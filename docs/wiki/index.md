@@ -15,3 +15,6 @@ fixed documents, not pages, and neither is ever an orphan.
 
 <!-- One line per page, as `- [[page-slug]] — what it covers`. Group them under
 their own headings once there are enough that a flat list stops helping. -->
+
+- [[craft-anything]] — the rebuild-and-check app nearest to this harness, and which of its ideas fit here
+- [[rea-in-the-sandbox]] — REA, the reverse engineering MCP server, running headless in the specialist's sandbox

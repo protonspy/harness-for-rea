@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { QUESTION_CAP } from "../src/shared/chat"
+import { ContextPackageSchema } from "../src/shared/context"
 import { DEFAULT_SETTINGS, PRESET_MODEL } from "../src/shared/defaults"
 import type { Push, Settings } from "../src/shared/types"
 import { closeDb, getDb, openDb } from "../src/main/db"
@@ -611,11 +612,11 @@ describe("model and errors (R1.1–R1.4)", () => {
 
   it("builds the production launcher on docker only", () => {
     const l = dockerLauncher(async () => ({ code: 0, stdout: "", stderr: "" }))
-    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {})
+    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", out: "o", files: [] }, "read", {})
     expect(launch.command).toBe("docker")
     expect(launch.args[0]).toBe("run")
     expect(launch.args).toContain("claude")
-    const high = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {
+    const high = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", out: "o", files: [] }, "read", {
       specialistEffort: "high",
     })
     expect(high.args.slice(high.args.indexOf("--effort"), high.args.indexOf("--effort") + 2)).toEqual(["--effort", "high"])
@@ -1204,6 +1205,17 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
 })
 
 describe("the division of labour (specs/chat R6.1, R6.2)", () => {
+  it("keeps the brief technical and limited to the discovery, never the user's request or purpose (specs/orchestrator R2.7)", () => {
+    const p = systemPrompt("/workspace", "/scratch")
+    expect(p).toMatch(/Keep it technical and limited to the scope of the discovery/)
+    expect(p).toMatch(/what the artifact is — format, platform, architecture, language, toolchain and versions/)
+    expect(p).toMatch(/I have file X and need to map Y/)
+    expect(p).toMatch(/Never mention the user, their request, who they are, what they intend or why the work is done/)
+    expect(p).not.toMatch(/real purpose|who owns it/)
+    const brief = (ContextPackageSchema.shape.brief as { description?: string }).description ?? ""
+    expect(brief).toMatch(/Only the technical scope: never the user, their request/)
+  })
+
   it("instructs the orchestrator to delegate every analysis and conclude nothing from its own reading", () => {
     const p = systemPrompt("/workspace")
     expect(p).toMatch(/You are a coding assistant/)

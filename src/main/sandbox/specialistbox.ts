@@ -187,7 +187,7 @@ export class SpecialistBoxes {
   }
 
   private box(id: string, ws: Workspace, limits: BoxLimits, up: boolean): Box {
-    return { id, name: sandboxName(id), ws, limits, busy: false, stopped: null, timer: null, up, outDir: join(this.d.taskDir, "outputs", id) }
+    return { id, name: sandboxName(id), ws, limits, busy: false, stopped: null, timer: null, up, outDir: ws.out }
   }
 
   private event(kind: string, summary: string, payload: Record<string, unknown>) {

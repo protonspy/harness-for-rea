@@ -37,6 +37,8 @@ export interface RunSpec {
   id: string
   workspace: string
   runDir: string
+  /** the specialist's output folder, kept with the task (specs/rea-native R2.4) */
+  out: string
   mode: Mode
 }
 
@@ -66,6 +68,31 @@ export function containerEnv(): Record<string, string> {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     ENABLE_CLAUDEAI_MCP_SERVERS: "false",
     CLAUDE_CODE_DISABLE_ARTIFACT: "1",
+    // An MCP call may wait on Ghidra's cold start, up to 330 s (specs/rea-native R2.2).
+    MCP_TOOL_TIMEOUT: String(MCP_TOOL_TIMEOUT_MS),
+  }
+}
+
+/** How long one MCP call may take: ten minutes, past Ghidra's cold start. */
+export const MCP_TOOL_TIMEOUT_MS = 600_000
+/** REA's entry point in the base image's global npm root, run as an MCP server over stdio. */
+export const REA_ENTRY = "/usr/local/lib/node_modules/rea-agents/scripts/rea.mjs"
+/** The REA server's tools, as Claude Code allows them all. */
+export const REA_TOOLS = "mcp__rea"
+
+/**
+  What REA's server is started with: the engines the base image carries, the PATH its `ps` and Java need, and a
+  quiet log (specs/rea-native R1.3, R2.1). Set here too, so it holds whatever environment the client passes on.
+*/
+export function reaEnv(): Record<string, string> {
+  return {
+    HOME: "/root",
+    PATH: "/opt/jdk-21/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    JAVA_HOME: "/opt/jdk-21",
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+    REA_JADX_MCP_JAR: "/opt/jadx/jadx-headless-mcp.jar",
+    REA_APKTOOL_COMMAND: "/usr/local/bin/apktool",
+    REA_LOG_LEVEL: "warn",
   }
 }
 
@@ -130,6 +157,8 @@ export function dockerRunArgs(spec: RunSpec): string[] {
     `type=bind,source=${mountSource(spec.runDir)},target=/run/hfr,readonly`,
     "--mount",
     `type=bind,source=${mountSource(askDir(spec.runDir))},target=${ASK_CHANNEL}`,
+    "--mount",
+    `type=bind,source=${mountSource(spec.out)},target=/root/out`,
     "-w",
     "/work",
     SPECIALIST_IMAGE,
@@ -175,9 +204,14 @@ export const ASK_CHANNEL = "/run/hfr-ask"
 /** The ask-user MCP server's one tool, as Claude Code names it. */
 export const ASK_USER_TOOL = "mcp__hfr__ask_user"
 
-/** The only MCP server the specialist gets: the ask-user server baked into its image. */
+/** The specialist's MCP servers, both baked into its image: ask-user, and REA (adr:0018-make-rea-native-to-the-specialist). */
 export function mcpConfig(): string {
-  return JSON.stringify({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] } } })
+  return JSON.stringify({
+    mcpServers: {
+      hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] },
+      rea: { type: "stdio", command: "node", args: [REA_ENTRY, "mcp"], env: reaEnv() },
+    },
+  })
 }
 
 /** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools and a shell. */
@@ -207,7 +241,7 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
     "--tools",
     tools,
     "--allowedTools",
-    `${tools},${ASK_USER_TOOL}`,
+    `${tools},${ASK_USER_TOOL},${REA_TOOLS}`,
     // The login volume under the home directory holds the plan's token: no file tool may reach it. The shell
     // can, as root; adr:0016-let-the-orchestrator-run-the-specialists-sandbox accepts that exposure.
     "--disallowedTools",

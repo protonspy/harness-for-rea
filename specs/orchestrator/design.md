@@ -16,8 +16,9 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
   (adr:0007-run-the-orchestrators-tools-in-a-task-container, adr:0013-give-the-sandboxes-full-internet-access). `ls`, `read_file`,
   `glob`, `grep` and `execute` run there; uploads are refused, and DeepAgents takes no
   path rules on a backend that runs commands. Tests pass a `FilesystemBackend`, with a write-deny rule, in its place.
-- **Brief** — the context package's `brief` is the orchestrator's own prompt for the
-  step: background and real purpose, never an invented authorization.
+- **Brief** — the context package's `brief` is the orchestrator's own technical prompt for
+  the step: what the artifact is, what is known and what to discover, never the user's request
+  or purpose (adr:0019-keep-the-specialists-brief-technical).
 - **Delegation** — `delegate_to_specialist` takes a context package
   (`src/shared/context.ts`, zod) and calls the sandbox
   (`specs/task-sandbox/`), which prepares the workspace and runs the specialist

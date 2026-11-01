@@ -166,6 +166,7 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     id: "1234",
     workspace: "C:\\data\\workspace\\1234",
     runDir: "C:\\data\\runs\\1234",
+    out: "C:\\data\\outputs\\1234",
     mode: "read" as const,
   }
   const after = (args: string[], flag: string) => args.filter((_, i) => args[i - 1] === flag)
@@ -177,6 +178,8 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
       "type=bind,source=C:\\data\\workspace\\1234,target=/work,readonly",
       "type=bind,source=C:\\data\\runs\\1234,target=/run/hfr,readonly",
       `type=bind,source=${join("C:\\data\\runs\\1234", "ask")},target=/run/hfr-ask`,
+      // the specialist's own output, kept with the task (specs/rea-native R2.4)
+      "type=bind,source=C:\\data\\outputs\\1234,target=/root/out",
     ])
     expect(args).not.toContain("-v")
     expect(after(args, "-w")).toEqual(["/work"])
@@ -237,13 +240,29 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(claudeArgs("read", "opus", "max"), "--effort")).toEqual(["max"])
   })
 
-  it("registers the ask-user MCP server as the only MCP server, and allows its one tool (specs/chat R5.2)", () => {
+  it("registers the ask-user and REA MCP servers and nothing else, and allows their tools (specs/chat R5.2, specs/rea-native R2.1)", () => {
     const read = claudeArgs("read")
     expect(read).toContain("--strict-mcp-config")
     const config = JSON.parse(after(read, "--mcp-config")[0])
-    expect(config).toEqual({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", "/run/hfr-ask"] } } })
-    expect(after(read, "--allowedTools")).toEqual(["Read,Grep,Glob,Bash,mcp__hfr__ask_user"])
-    expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash,mcp__hfr__ask_user"])
+    expect(Object.keys(config.mcpServers)).toEqual(["hfr", "rea"])
+    expect(config.mcpServers.hfr).toEqual({ type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", "/run/hfr-ask"] })
+    expect(config.mcpServers.rea).toMatchObject({ type: "stdio", command: "node", args: ["/usr/local/lib/node_modules/rea-agents/scripts/rea.mjs", "mcp"] })
+    // the engines the image carries, given to REA whatever environment the client passes on (R1.3)
+    expect(config.mcpServers.rea.env).toMatchObject({
+      JAVA_HOME: "/opt/jdk-21",
+      GHIDRA_INSTALL_DIR: "/opt/ghidra",
+      REA_JADX_MCP_JAR: "/opt/jadx/jadx-headless-mcp.jar",
+      REA_APKTOOL_COMMAND: "/usr/local/bin/apktool",
+    })
+    expect(config.mcpServers.rea.env.PATH).toMatch(/^\/opt\/jdk-21\/bin:.*\/usr\/bin/)
+    expect(JSON.stringify(config)).not.toMatch(/ANTHROPIC|OPENROUTER|C:\\/i)
+    expect(after(read, "--allowedTools")).toEqual(["Read,Grep,Glob,Bash,mcp__hfr__ask_user,mcp__rea"])
+    expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash,mcp__hfr__ask_user,mcp__rea"])
+  })
+
+  it("lets an MCP call run ten minutes, past Ghidra's cold start (specs/rea-native R2.2)", () => {
+    expect(containerEnv().MCP_TOOL_TIMEOUT).toBe("600000")
+    expect(after(dockerRunArgs(spec), "-e")).toContain("MCP_TOOL_TIMEOUT=600000")
   })
 
   it("wraps the CLI so its process id is on record and the login volume goes back to the login user (specs/specialist-sandbox R4.4, R4.6)", () => {
@@ -274,10 +293,30 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
 
   it("bakes the MCP server into the base image on a Node base, with no Claude Code (specs/sandbox-images R1.1)", () => {
     const dockerfile = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist-base", "Dockerfile"), "utf8")
-    expect(dockerfile).toMatch(/^FROM node:24[^\s]*@sha256:[0-9a-f]{64}$/m)
+    expect(dockerfile).toMatch(/^ARG NODE_IMAGE=node:24[^\s]*@sha256:[0-9a-f]{64}$/m)
+    expect(dockerfile.match(/^FROM .*$/gm)).toEqual(["FROM ${NODE_IMAGE} AS fetch", "FROM ${NODE_IMAGE}"])
     expect(dockerfile).toContain("COPY ask-user.mjs /opt/hfr/ask-user.mjs")
     expect(dockerfile).toContain("/run/hfr-ask")
     expect(dockerfile).not.toMatch(/claude-code-releases|\/usr\/local\/bin\/claude/)
+  })
+
+  it("bakes REA and its engines into the base image, each pinned and checked against its SHA-256 (specs/rea-native R1)", () => {
+    const baseDir = join(import.meta.dirname, "..", "sandbox", "specialist-base")
+    const dockerfile = readFileSync(join(baseDir, "Dockerfile"), "utf8")
+    for (const engine of ["JDK", "GHIDRA", "JADX", "APKTOOL"]) {
+      expect(dockerfile).toMatch(new RegExp(`^ARG ${engine}_URL=https://github\\.com/\\S+$`, "m"))
+      expect(dockerfile).toMatch(new RegExp(`^ARG ${engine}_SHA256=[0-9a-f]{64}$`, "m"))
+      expect(dockerfile).toContain(`echo "$${engine}_SHA256 `)
+    }
+    expect(dockerfile.match(/sha256sum -c -/g)).toHaveLength(4)
+    expect(dockerfile).toMatch(/^ARG REA_VERSION=\d+\.\d+\.\d+$/m)
+    expect(dockerfile).toContain('npm install --global --omit=optional --ignore-scripts "rea-agents@$REA_VERSION"')
+    expect(dockerfile).toContain("/opt/hfr/rea-skill")
+    expect(dockerfile).toContain("COPY AGENTS.md /opt/hfr/AGENTS.md")
+    expect(dockerfile).toMatch(/GHIDRA_INSTALL_DIR=\/opt\/ghidra/)
+    expect(dockerfile).toMatch(/REA_JADX_MCP_JAR=\/opt\/jadx\/jadx-headless-mcp\.jar/)
+    expect(dockerfile).toMatch(/REA_APKTOOL_COMMAND=\/usr\/local\/bin\/apktool/)
+    expect(dockerfile).not.toMatch(/rea setup/)
   })
 
   it("adds only the verified CLI to the pinned base, labelled with both pins (specs/sandbox-images R2.1, R2.2)", () => {
@@ -441,7 +480,7 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
     const run = [
       renderSystemPrompt(pkg),
       renderPrompt(pkg),
-      ...dockerRunArgs({ id: ws.id, workspace: "<ws>", runDir: "<run>", mode: "read" }),
+      ...dockerRunArgs({ id: ws.id, workspace: "<ws>", runDir: "<run>", out: "<out>", mode: "read" }),
       ...claudeArgs("read"),
     ].join("\n")
     expect(run).not.toContain(root)
@@ -469,5 +508,28 @@ describe("diff", () => {
     const big = Array.from({ length: Math.ceil(Math.sqrt(ALIGN_CAP)) + 1 }, (_, i) => `x${i}`)
     const ops = diffLines(big, [...big].reverse())
     expect(ops.filter((o) => o.kind === " ")).toHaveLength(0)
+  })
+})
+
+describe("the specialist as a harness of REA (specs/rea-native R2.3)", () => {
+  const pkg = ContextPackageSchema.parse({ brief: "b", objective: "o", files: ["a"] })
+
+  it("carries the operating guide the image carries, and points to REA's skill", () => {
+    const guide = readFileSync(join(import.meta.dirname, "..", "sandbox", "specialist-base", "AGENTS.md"), "utf8").trim()
+    const sys = renderSystemPrompt(pkg)
+    expect(sys).toContain(guide)
+    expect(sys).toContain("/opt/hfr/rea-skill/SKILL.md")
+    expect(guide).toMatch(/Never run `rea setup`/)
+    expect(guide).toMatch(/binary_session \{\}/)
+    expect(guide).toMatch(/export_evidence_bundle.*\/root\/out\/evidence\//)
+    expect(guide).toMatch(/record_unknown/)
+    expect(guide).toMatch(/Missing evidence is never proof/)
+  })
+
+  it("names every evidence form in the default report format (R3.1)", () => {
+    expect(pkg.reportFormat).toContain("<path>:<start line>-<end line>")
+    expect(pkg.reportFormat).toContain("<path>@0x<address>")
+    expect(pkg.reportFormat).toContain("ev_<64 hex>")
+    expect(pkg.reportFormat).toContain("unk_<64 hex>")
   })
 })

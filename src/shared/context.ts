@@ -7,8 +7,11 @@ import { z } from "zod"
 
 export const DEFAULT_REPORT_FORMAT = [
   "Answer the questions in order, then list what you changed, if anything.",
-  "End with a section titled `Evidence`, one line per claim, exactly in this form:",
+  "End with a section titled `Evidence`, one line per claim, in one of these forms:",
   "- <path>:<start line>-<end line> — <the claim that range supports>",
+  "- <path>@0x<address> — <the claim that address in a binary supports>",
+  "- ev_<64 hex> — <the claim that REA evidence record supports>",
+  "- unk_<64 hex> — <what that REA unknown leaves open>",
 ].join("\n")
 
 const relPath = z.string().trim().min(1).max(500)
@@ -21,7 +24,7 @@ export const ContextPackageSchema = z
       .min(1)
       .max(8000)
       .describe(
-        "Your prompt to the specialist, read first: the background it needs and the real purpose of this step as the user's request states it — what the system is, who owns it, why it is analysed. Never invent ownership, authorization or purpose.",
+        "Your technical prompt to the specialist, read first: what the artifact is (format, platform, architecture, language, toolchain, versions), what is already established about it, and what this step must map or discover. Only the technical scope: never the user, their request, their intent or why the work is done, and never an invented ownership, authorization or purpose.",
       ),
     objective: z.string().trim().min(1).max(4000).describe("What this one step must find out or change, stated on its own."),
     mode: z
@@ -55,11 +58,16 @@ const REPORT_CAP = 256 * 1024
 const LINE_CAP = 2000
 
 export interface Evidence {
+  /** a line range of a file, an address in a binary, or an REA evidence or unknown id (specs/rea-native R3.1) */
+  kind?: "lines" | "address" | "rea"
+  /** the file cited; empty for an REA id */
   path: string
   startLine: number
   endLine: number
+  /** the address (`0x…`) or the REA id */
+  ref?: string
   claim: string
-  /** the path is one of the package's files and the range is well formed */
+  /** a range or address in one of the package's files, or an REA id in its exact form */
   checked: boolean
 }
 
@@ -68,13 +76,25 @@ export function parseEvidence(report: string, files: string[]): Evidence[] {
   const known = new Set(files.map((f) => f.replace(/\\/g, "/")))
   const out: Evidence[] = []
   for (const line of report.slice(0, REPORT_CAP).split("\n")) {
+    if (line.length > LINE_CAP) continue
+    const rea = /^\s*[-*]\s+`?((?:ev|unk)_[0-9a-f]{64})`?\s+[—–-]+\s+(.+)$/.exec(line)
+    if (rea) {
+      out.push({ kind: "rea", path: "", startLine: 0, endLine: 0, ref: rea[1], claim: rea[2].trim(), checked: true })
+      continue
+    }
+    const at = /^\s*[-*]\s+`?([^\s`@:]+)@(0x[0-9a-fA-F]{1,16})`?\s+[—–-]+\s+(.+)$/.exec(line)
+    if (at) {
+      const path = at[1].replace(/^\/work\//, "")
+      out.push({ kind: "address", path, startLine: 0, endLine: 0, ref: at[2].toLowerCase(), claim: at[3].trim(), checked: known.has(path) })
+      continue
+    }
     // One path token with no nested repetition, on a line of bounded length: matching stays linear.
-    const m = line.length <= LINE_CAP ? /^\s*[-*]\s+`?([^\s`:]+)`?:(\d+)(?:-(\d+))?`?\s+[—–-]+\s+(.+)$/.exec(line) : null
+    const m = /^\s*[-*]\s+`?([^\s`:]+)`?:(\d+)(?:-(\d+))?`?\s+[—–-]+\s+(.+)$/.exec(line)
     if (!m) continue
     const path = m[1].replace(/^\/work\//, "")
     const startLine = Number(m[2])
     const endLine = m[3] ? Number(m[3]) : startLine
-    out.push({ path, startLine, endLine, claim: m[4].trim(), checked: known.has(path) && endLine >= startLine })
+    out.push({ kind: "lines", path, startLine, endLine, claim: m[4].trim(), checked: known.has(path) && endLine >= startLine })
   }
   return out
 }

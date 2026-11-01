@@ -1,4 +1,5 @@
 import type { ContextPackage } from "@shared/context"
+import operatingGuide from "../../../sandbox/specialist-base/AGENTS.md?raw"
 
 /*
   The specialist's prompt and system prompt, rendered from the context package and nothing else
@@ -34,6 +35,9 @@ export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string
     edit,
     "Back every claim with evidence: a path relative to /work and a line range you actually read.",
     "When a fact only the user knows would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",
+    "",
+    // The same guide the image carries at /opt/hfr/AGENTS.md (specs/rea-native R2.3).
+    operatingGuide.trim(),
     "",
     "Report format:",
     pkg.reportFormat,
