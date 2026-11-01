@@ -4,6 +4,7 @@ import { z } from "zod"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { ContextPackageSchema } from "@shared/context"
 import type { SpecialistEffort } from "@shared/types"
+import { withoutContract } from "@shared/contract"
 import { approvePatch, delegate, DelegationRefused, SafeguardRefusal, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
@@ -129,10 +130,14 @@ export function delegateTool(ctx: ToolContext) {
           sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
           specialistEffort: ctx.specialistEffort,
           callId: config?.toolCall?.id,
+          projectId: ctx.projectId,
         })
         // The report goes to OpenRouter: no secret shape leaves the machine in it.
         return redactedJson({
-          report: r.report,
+          // The contract comes on its own, so the report is read without it (specs/analysis-contract R1.5).
+          report: r.contract ? withoutContract(r.report) : r.report,
+          contract: r.contract,
+          ...(r.contractProblems ? { contractProblems: r.contractProblems } : {}),
           evidence: r.evidence,
           patch: r.patch
             ? {
@@ -160,7 +165,7 @@ export function delegateTool(ctx: ToolContext) {
         "Files may come from the source or from your scratch area; the specialist gets the scratch ones under .orchestrator/, and they are never part of a patch.",
         "It sees nothing else: not the user's request, not this conversation. State the objective and questions so they stand on their own.",
         "Use mode 'modify' only when the step must change files; the change comes back as a patch.",
-        "Returns the specialist's report, its evidence lines (path:start-end — claim) and any patch.",
+        "Returns the specialist's report, its contract (functions, constants with their sources, unknowns opened and closed — checked by the app), its evidence lines (path:start-end — claim) and any patch.",
       ].join(" "),
       schema: DelegateSchema,
     },

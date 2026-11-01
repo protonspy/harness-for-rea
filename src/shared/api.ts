@@ -14,6 +14,7 @@ import type {
   Settings,
   TargetInfo,
   TaskHistory,
+  UnknownRow,
   TaskRow,
 } from "./types"
 
@@ -151,7 +152,7 @@ export interface ApiResults {
   pickFolder: string | null
   startTask: TaskRow
   listProjects: ProjectRow[]
-  getProject: { project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[] }
+  getProject: { project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[]; unknowns: UnknownRow[] }
   createProject: ProjectRow
   deleteProject: boolean
   pickTarget: string | null

@@ -456,6 +456,18 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
   it("omits empty sections", () => {
     const p = renderPrompt(ContextPackageSchema.parse({ brief: "b", objective: "x", files: ["a"] }))
     expect(p).not.toContain("## Questions")
+    expect(p).not.toContain("## Open unknowns")
+  })
+
+  it("asks for the contract at the end of every report, whatever its format, and lists the project's open unknowns (specs/analysis-contract R1.1, R2.4)", () => {
+    for (const sys of [renderSystemPrompt(pkg), renderSystemPrompt({ ...pkg, reportFormat: "One paragraph." })]) {
+      expect(sys).toMatch(/end every report with one fenced ```json block/)
+      expect(sys).toContain('"constants"')
+      expect(sys).toMatch(/estimated.*true.*once you looked for one/)
+      expect(sys).toMatch(/close it by its id in `closes`/)
+    }
+    const p = renderPrompt(pkg, [{ id: "u-1", question: "Which cipher?", severity: "high", settle: "the key schedule" }])
+    expect(p).toContain("## Open unknowns from earlier analyses\n- u-1 [high] Which cipher? — would be settled by: the key schedule")
   })
 
   it("states that the artifacts are owned or authorized, and the mode's rule", () => {

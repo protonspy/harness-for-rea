@@ -11,6 +11,7 @@ import { makeDispatcher } from "./ipc"
 import { listModels } from "./orchestrator/models"
 import { blocking, readiness } from "./readiness"
 import { deleteProject, ProjectStore } from "./projects"
+import { UnknownsLedger } from "./unknowns"
 import { detectTarget } from "./target"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
@@ -62,6 +63,7 @@ app.whenReady().then(async () => {
   void SpecialistBoxes.sweep(dockerExecBuffer).catch(() => undefined)
   // Projects: tasks from before them are given one each (specs/projects R3.3).
   const projects = new ProjectStore(dataDir, push)
+  const unknowns = new UnknownsLedger()
   {
     const s = getSettings()
     projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort })
@@ -164,6 +166,8 @@ app.whenReady().then(async () => {
       analyses: log
         .projectAnalyses(id)
         .map(({ id: a, taskId, state, objective, evidence, createdAt }) => ({ id: a, taskId, state, objective, evidence, createdAt })),
+      // What its analyses left open, and what closed it (specs/analysis-contract R2.5).
+      unknowns: unknowns.list(id),
     }),
     // A project is created only once the setup is completed (specs/projects R4.4).
     createProject: async (input) => {

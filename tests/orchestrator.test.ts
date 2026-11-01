@@ -17,6 +17,7 @@ import { listModels } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { UnknownsLedger } from "../src/main/unknowns"
 import { ProjectStore, type NewProject } from "../src/main/projects"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import { RESTARTED, SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
@@ -109,6 +110,7 @@ let log: EventLog
 let settings: Settings
 let fakeMode = "answer"
 let fakeQuestion = ""
+let fakeContract = ""
 let refusal: string | null = null
 
 function launcher(): Launcher {
@@ -123,6 +125,7 @@ function launcher(): Launcher {
         HFR_FAKE_LOG: fakeLog,
         HFR_RUN: ws.runDir,
         HFR_FAKE_QUESTION: fakeQuestion,
+        HFR_FAKE_CONTRACT: fakeContract,
         PATH: process.env.PATH ?? "",
         SYSTEMROOT: process.env.SYSTEMROOT ?? "",
       },
@@ -171,6 +174,7 @@ beforeEach(() => {
   seen = []
   status = 200
   fakeMode = "answer"
+  fakeContract = ""
   fakeQuestion = JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
   disposed = 0
   workspaceFails = ""
@@ -1260,6 +1264,61 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
   })
 })
 
+describe("the analysis contract (specs/analysis-contract R1.3–R1.5)", () => {
+  const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+  const turns = () =>
+    readFileSync(fakeLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.turn)
+
+  it("gives the orchestrator the validated contract beside the report, without the block", async () => {
+    fakeContract = JSON.stringify({ constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }] })
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const told = JSON.parse(log.getTask(task.id).result)
+    expect(told.contract).toEqual({ functions: [], constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }], unknowns: [], closes: [] })
+    expect(told.report).not.toContain("```json")
+    expect(told.contractProblems).toBeUndefined()
+    expect(turns()).toHaveLength(1)
+  })
+
+  it("returns a failing contract to the specialist in the same session and takes the corrected one", async () => {
+    fakeMode = "bad-contract-once"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const [, second] = turns()
+    expect(second.prompt).toMatch(/contract did not validate/)
+    expect(second.prompt).toMatch(/constants\.0: needs a source/)
+    expect(kinds(task.id).filter((k) => k === "contract.rejected")).toHaveLength(1)
+    expect(JSON.parse(log.getTask(task.id).result).contract).toMatchObject({ constants: [] })
+  })
+
+  it("asks at most twice, then keeps the last report and records the contract's failure (R1.4)", async () => {
+    fakeMode = "no-contract"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(turns()).toHaveLength(3)
+    expect(kinds(task.id).filter((k) => k === "contract.rejected")).toHaveLength(2)
+    expect(kinds(task.id)).toContain("contract.failed")
+    const told = JSON.parse(log.getTask(task.id).result)
+    expect(told.contract).toBeNull()
+    expect(told.contractProblems).toEqual([expect.stringContaining("does not end with a contract")])
+    expect(told.report).toContain("Turn 3")
+    const step = log.steps(task.id).find((s) => s.kind === "delegation")!
+    expect(step).toMatchObject({ state: "done", data: { contract: null, contractProblems: [expect.any(String)] } })
+    // every turn's spending is counted
+    expect(log.getTask(task.id).specialistCostUsd).toBeCloseTo(0.42 * 3, 5)
+  })
+})
+
 describe("a safeguard refusal (specs/specialist-lifecycle R2)", () => {
   const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
   const waitingQuestion = async (taskId: string, n = 1) => {
@@ -2055,5 +2114,37 @@ describe("tasks in a project (specs/projects R2)", () => {
     await r.settled(third.id)
     expect(reads[0]).toMatch(/^ERROR: there is no analysis .* in this project/)
     expect(JSON.stringify(requests[0].messages[0].content)).not.toContain("Earlier tasks of this project")
+  })
+
+  it("keeps what an analysis leaves open in the project's ledger and hands it to the next task's delegation (specs/analysis-contract R2.1, R2.2, R2.4)", async () => {
+    const store = new ProjectStore(data)
+    const p = await newProject(store)
+    const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+    fakeContract = JSON.stringify({ unknowns: [{ question: "Is the separator configurable?", severity: "medium", settle: "the CLI flags" }] })
+    script = [read, { content: "Found it." }]
+    const r = projectRunner(store)
+    const first = r.start({ projectId: p.id, request: REQUEST, auto: true })
+    await r.settled(first.id)
+    const ledger = new UnknownsLedger()
+    const [open] = ledger.open(p.id)
+    expect(open).toMatchObject({ question: "Is the separator configurable?", raisedBy: log.steps(first.id).find((s) => s.kind === "delegation")!.id })
+    expect(kinds(first.id)).toContain("unknowns.recorded")
+
+    // the next task's delegation is given it, and closes it
+    writeFileSync(fakeLog, "")
+    fakeContract = JSON.stringify({ closes: [{ id: open.id, resolution: "No: it is hard-coded.", source: "src/a.ts:1-1" }] })
+    script = [read, { content: "Done." }]
+    const second = r.start({ projectId: p.id, request: "Now the flags.", auto: true })
+    await r.settled(second.id)
+    const prompt = readFileSync(fakeLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((l) => l.turn === 1).prompt
+    expect(prompt).toContain(
+      `## Open unknowns from earlier analyses\n- ${open.id} [medium] Is the separator configurable? — would be settled by: the CLI flags`,
+    )
+    expect(ledger.open(p.id)).toEqual([])
+    expect(ledger.list(p.id)[0]).toMatchObject({ id: open.id, resolution: "No: it is hard-coded. (src/a.ts:1-1)" })
   })
 })

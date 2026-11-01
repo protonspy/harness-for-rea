@@ -1,4 +1,5 @@
 import type { ContextPackage } from "@shared/context"
+import { CONTRACT_SHAPE } from "@shared/contract"
 import operatingGuide from "../../../sandbox/specialist-base/AGENTS.md?raw"
 
 /*
@@ -41,7 +42,21 @@ export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string
     "",
     "Report format:",
     pkg.reportFormat,
+    "",
+    // Whatever the report format says, the contract ends the report (specs/analysis-contract R1.1).
+    "Contract: end every report with one fenced ```json block, the last thing in it, of this shape:",
+    CONTRACT_SHAPE,
+    'List the functions you mapped with their inputs, outputs and side effects, and the constants you found. Every constant carries a source — a line range you read, an address in a binary, or an REA evidence id — or `"estimated": true` once you looked for one and found none; missing evidence is never proof.',
+    "Record each question you leave open as an unknown, with what you tried and what would settle it, rather than guessing. When your analysis settles one of the open unknowns listed in the prompt, close it by its id in `closes`. Any list you have nothing for may be left out.",
   ].join("\n")
+}
+
+/** An unknown an earlier analysis of the project left open, as the specialist reads it (specs/analysis-contract R2.4). */
+export interface OpenUnknown {
+  id: string
+  question: string
+  severity: string
+  settle?: string
 }
 
 function section(title: string, lines: string[]): string[] {
@@ -76,7 +91,7 @@ export function scrubPaths(pkg: ContextPackage, sourceRoot: string): ContextPack
   }
 }
 
-export function renderPrompt(pkg: ContextPackage): string {
+export function renderPrompt(pkg: ContextPackage, unknowns: OpenUnknown[] = []): string {
   return [
     "## Brief",
     pkg.brief,
@@ -102,6 +117,10 @@ export function renderPrompt(pkg: ContextPackage): string {
     ...section(
       "Constraints",
       pkg.constraints.map((c) => `- ${c}`),
+    ),
+    ...section(
+      "Open unknowns from earlier analyses",
+      unknowns.map((u) => `- ${u.id} [${u.severity}] ${u.question}${u.settle ? ` — would be settled by: ${u.settle}` : ""}`),
     ),
   ].join("\n")
 }

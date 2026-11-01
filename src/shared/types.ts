@@ -50,6 +50,25 @@ export interface TargetInfo {
   engines: string[]
 }
 
+/** One item of a project's unknowns ledger (specs/analysis-contract R2). */
+export interface UnknownRow {
+  id: string
+  projectId: string
+  question: string
+  severity: "low" | "medium" | "high"
+  /** what was tried */
+  probes: string[]
+  /** what would settle it */
+  settle: string
+  /** the analysis (delegation step) that raised it */
+  raisedBy: string
+  /** the analysis that closed it, or null while it is open */
+  closedBy: string | null
+  resolution: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface ProjectRow {
   id: string
   name: string

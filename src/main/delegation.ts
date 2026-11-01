@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readd
 import { join } from "node:path"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
+import { readContract, type Contract } from "@shared/contract"
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
 import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflight, specialistCommand, stopArgs, type Exec, type Mode } from "./sandbox/docker"
@@ -12,6 +13,7 @@ import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
 import { SandboxError, type Box, type TaskSandboxes } from "./sandbox/specialistbox"
 import { askDir, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
 import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
+import { UnknownsLedger } from "./unknowns"
 
 /*
   One delegation from start to end: check the sandbox, copy the package's files into a fresh
@@ -157,6 +159,23 @@ export interface DelegationResult {
   report: string
   evidence: Evidence[]
   patch: PatchView | null
+  /** the report's validated contract, or why it failed after the last correction (specs/analysis-contract R1.4, R1.5) */
+  contract: Contract | null
+  contractProblems?: string[]
+}
+
+/** Corrections asked of the specialist for a contract that fails, after its first report (specs/analysis-contract R1.3). */
+export const CONTRACT_ROUNDS = 2
+
+const ledger = new UnknownsLedger()
+
+/** What the specialist reads when its contract failed. */
+function contractFeedback(problems: string[]): string {
+  return [
+    "Your report's contract did not validate:",
+    ...problems.map((p) => `- ${p}`),
+    "Reply with the whole report again, ending with a corrected contract in one fenced ```json block.",
+  ].join("\n")
 }
 
 /** Empty a sandbox's ask channel, so an earlier delegation's questions are not answered again (specs/specialist-sandbox R4.8). */
@@ -180,6 +199,8 @@ export async function delegate(
     specialistEffort?: SpecialistEffort
     /** the orchestrator's tool call that started this delegation, which the timeline nests it under (specs/chat-timeline R1.1) */
     callId?: string
+    /** the task's project, whose unknowns ledger this delegation reads and feeds (specs/analysis-contract R2) */
+    projectId?: string | null
   },
 ): Promise<DelegationResult> {
   const { log } = deps
@@ -234,26 +255,54 @@ export async function delegate(
   try {
     const pkg = scrubPaths(o.pkg, o.sourceRoot)
     writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null))
+    // What earlier analyses of the project left open goes into this one's package (specs/analysis-contract R2.4).
+    const open = o.projectId ? ledger.open(o.projectId) : []
+    if (open.length) log.updateStep(step.id, { data: { unknowns: open.map((u) => u.id) } })
     const session = new SpecialistSession(
       deps.launcher.launch(ws, o.pkg.mode, { specialistEffort: o.specialistEffort ?? settings.specialistEffort }, held?.box.name),
       {
         timeoutMs: settings.timeoutMinutes * 60_000,
         signal: o.signal,
         onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
-        onEvent: (e) =>
-          log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload }),
+        onEvent: (e) => {
+          log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload })
+          // Every turn's result carries what it spent, a failed one's too.
+          const u = e.payload
+          if (e.kind === "result")
+            log.addUsage(o.taskId, { tokensIn: (u.tokensIn ?? 0) + (u.cacheTokens ?? 0), tokensOut: u.tokensOut ?? 0, specialistCostUsd: u.costUsd ?? 0 })
+        },
       },
     )
     const stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
     let result
+    let check: ReturnType<typeof readContract>
     try {
-      result = await session.send(renderPrompt(pkg))
+      result = await session.send(renderPrompt(pkg, open))
+      check = readContract(result.text)
+      // A contract that fails goes back to the specialist in the same session, a bounded number of times (R1.3).
+      for (let round = 1; "problems" in check && round <= CONTRACT_ROUNDS; round++) {
+        ev("contract.rejected", `The report's contract failed (${check.problems.length} problem(s)); asked for a correction`, {
+          error: check.problems.join("\n"),
+          round,
+        })
+        result = await session.send(contractFeedback(check.problems))
+        check = readContract(result.text)
+      }
     } finally {
       stopAsking()
       await session.close()
-      // A failed turn can still have spent tokens; its result carries them.
-      const spent = session.reader.result
-      if (spent) log.addUsage(o.taskId, { tokensIn: spent.tokensIn + spent.cacheTokens, tokensOut: spent.tokensOut, specialistCostUsd: spent.costUsd ?? 0 })
+    }
+    const contract = "contract" in check ? check.contract : null
+    const contractProblems = "problems" in check ? check.problems : undefined
+    if (contractProblems) ev("contract.failed", "The report's contract still failed; the report is kept without it", { error: contractProblems.join("\n") })
+    else if (contract && o.projectId) {
+      const change = ledger.record(o.projectId, step.id, contract)
+      if (change.opened.length || change.closed.length || change.ignored.length)
+        ev(
+          "unknowns.recorded",
+          `Unknowns: ${change.opened.length} opened, ${change.closed.length} closed${change.ignored.length ? `, ${change.ignored.length} ignored` : ""}`,
+          { ...change },
+        )
     }
     const evidence = parseEvidence(
       result.text,
@@ -275,8 +324,11 @@ export async function delegate(
         })
       }
     }
-    log.updateStep(step.id, { state: "done", data: { report: result.text, evidence, patchId: patch?.id ?? null, session: result.session } })
-    return { stepId: step.id, report: result.text, evidence, patch }
+    log.updateStep(step.id, {
+      state: "done",
+      data: { report: result.text, evidence, patchId: patch?.id ?? null, session: result.session, contract, ...(contractProblems ? { contractProblems } : {}) },
+    })
+    return { stepId: step.id, report: result.text, evidence, patch, contract, ...(contractProblems ? { contractProblems } : {}) }
   } catch (e) {
     const kind = e instanceof SpecialistError ? e.kind : "failed"
     const state = kind === "cancelled" ? "cancelled" : "failed"

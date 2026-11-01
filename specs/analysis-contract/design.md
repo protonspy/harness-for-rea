@@ -1,40 +1,39 @@
 # Analysis contract — design
 
-<!-- The design must fit the decision being made. Every heading below except
-     "What changes" is OPTIONAL: delete the ones this change does not decide.
-
-     A heading filled with "N/A", or with prose written to satisfy the heading, is
-     worse than an absent heading — the next session reads invented architecture as
-     a decision somebody made, and honors it. Filler becomes binding.
-
-     Delete this comment too. -->
-
 ## What changes
 
-Serves R1.1.
+Serves R1.1–R2.5.
 
-<!-- Required. What changes, where, and why. For a change that decides nothing
-     structural, this section is the whole design and that is the correct outcome.
+- `src/shared/contract.ts` (new) — `ContractSchema` (zod) and `readContract(report)`: the last fenced
+  ```` ```json ```` block of the report, parsed and validated; the problems, one line each, when it
+  is missing or invalid (R1.2).
+- `src/main/sandbox/prompt.ts` — the system prompt states the contract's shape and that it ends the
+  report, whatever report format the package names (R1.1). `renderPrompt` gains a section listing
+  the project's open unknowns by id, with how to close one (R2.4).
+- `src/main/delegation.ts` — after the first answer, up to `CONTRACT_ROUNDS` (2) further turns in
+  the same session carry the problems back (R1.3), each logged as `contract.rejected`. The step
+  records `contract` or `contractProblems` (R1.4). Usage is counted from every turn's result event,
+  no longer from the last result alone. With a project, open unknowns go into the prompt and a valid
+  contract updates the ledger (R2.1–R2.3).
+- `src/main/db.ts` — migration 4: `unknowns (id, project_id, question, severity, probes, settle,
+  raised_by, closed_by, resolution, created_at, updated_at)`.
+- `src/main/unknowns.ts` (new) — the ledger: `open(projectId)`, `list(projectId)`, and
+  `record(projectId, stepId, contract)` which adds and closes, returning what it ignored (R2.1–R2.3).
+- `src/main/orchestrator/tools.ts` — `delegate_to_specialist` returns `contract` (or
+  `contractProblems`) beside the report (R1.5).
+- `src/shared/api.ts`, `src/main/index.ts`, `ProjectView.tsx` — `getProject` also returns the
+  project's unknowns, open first, which the view lists; it already reloads when a delegation moves
+  (R2.5).
 
-     Keep the "Serves" line above and make it real: the design has to name the
-     requirements it answers, or the trace from what to how is unreadable — and
-     `scc spec validate` says so. -->
+## Data
 
-## Boundaries and contracts <!-- optional -->
+```json
+{
+  "functions": [{ "name": "", "inputs": [""], "outputs": [""], "sideEffects": [""], "source": "" }],
+  "constants": [{ "name": "", "value": 0, "source": "path:10-12 | path@0x… | ev_…", "estimated": false }],
+  "unknowns": [{ "question": "", "severity": "low | medium | high", "probes": [""], "settle": "" }],
+  "closes": [{ "id": "", "resolution": "", "source": "" }]
+}
+```
 
-<!-- Only if this change moves a boundary or an external contract, and only for the
-     parts that actually move. -->
-
-## Data <!-- optional -->
-
-<!-- Only if a data shape changes. -->
-
-## Alternatives considered <!-- optional -->
-
-<!-- Only where there were real alternatives with trade-offs. Say which won and why.
-     If the decision is hard to reverse, write an ADR under docs/adr/ and cite it
-     here instead of arguing it twice. -->
-
-## Risks <!-- optional -->
-
-<!-- What could go wrong that the task list does not already cover. -->
+Every list defaults to empty, so a step that maps nothing still returns `{}`.
