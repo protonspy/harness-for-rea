@@ -1,14 +1,15 @@
 import { safeStorage } from "electron"
+import { PROVIDER_IDS, type ProviderId } from "@shared/providers"
 import type { KeyStatus } from "@shared/types"
 import { getSetting, setSetting } from "./db"
 
 /*
-  The OpenRouter key, encrypted with the OS keychain through `safeStorage` (DPAPI on Windows).
-  With encryption unavailable the key is refused, never stored in plain text. The renderer only
-  ever learns whether a key is set and a masked hint.
+  One API key per orchestrator provider, encrypted with the OS keychain through `safeStorage` (DPAPI
+  on Windows). With encryption unavailable the key is refused, never stored in plain text. The renderer
+  only ever learns whether a key is set and a masked hint. OpenRouter's key keeps the slot it always had.
 */
 
-const KEY = "openrouter.key"
+const slot = (provider: ProviderId) => (provider === "openrouter" ? "openrouter.key" : `${provider}.key`)
 
 export class CredentialError extends Error {
   constructor(message: string) {
@@ -17,52 +18,55 @@ export class CredentialError extends Error {
   }
 }
 
-let cached: string | null = null
+const cached = new Map<ProviderId, string>()
 const listeners = new Set<(key: string) => void>()
 
-/** Called with the key whenever it is loaded or saved, so the redactor can register it. */
+/** Called with every key whenever one is loaded or saved, so the redactor can register it. */
 export function onKey(fn: (key: string) => void) {
   listeners.add(fn)
-  if (cached) fn(cached)
+  for (const key of cached.values()) fn(key)
 }
 
-function loaded(key: string) {
-  cached = key
+function loaded(provider: ProviderId, key: string) {
+  cached.set(provider, key)
   for (const fn of listeners) fn(key)
 }
 
-/** Decrypt the stored key once; afterwards `readKey` is a synchronous read. */
+/** Decrypt the stored keys once; afterwards `readKey` is a synchronous read. */
 export function initKey() {
-  cached = null
-  const v = getSetting<string | null>(KEY, null)
-  if (!v || !safeStorage.isEncryptionAvailable()) return
-  try {
-    loaded(safeStorage.decryptString(Buffer.from(v, "base64")))
-  } catch {
-    cached = null
+  cached.clear()
+  if (!safeStorage.isEncryptionAvailable()) return
+  for (const provider of PROVIDER_IDS) {
+    const v = getSetting<string | null>(slot(provider), null)
+    if (!v) continue
+    try {
+      loaded(provider, safeStorage.decryptString(Buffer.from(v, "base64")))
+    } catch {
+      cached.delete(provider)
+    }
   }
 }
 
-export function saveKey(key: string): KeyStatus {
+export function saveKey(key: string, provider: ProviderId = "openrouter"): KeyStatus {
   const trimmed = key.trim()
   if (!safeStorage.isEncryptionAvailable())
     throw new CredentialError("The OS keychain is not available, so the key was not stored. Harness for REA never keeps it in plain text.")
-  setSetting(KEY, safeStorage.encryptString(trimmed).toString("base64"))
-  loaded(trimmed)
-  return keyStatus()
+  setSetting(slot(provider), safeStorage.encryptString(trimmed).toString("base64"))
+  loaded(provider, trimmed)
+  return keyStatus(provider)
 }
 
-export function clearKey(): KeyStatus {
-  setSetting(KEY, null)
-  cached = null
-  return keyStatus()
+export function clearKey(provider: ProviderId = "openrouter"): KeyStatus {
+  setSetting(slot(provider), null)
+  cached.delete(provider)
+  return keyStatus(provider)
 }
 
-export function readKey(): string | null {
-  return cached
+export function readKey(provider: ProviderId = "openrouter"): string | null {
+  return cached.get(provider) ?? null
 }
 
-export function keyStatus(): KeyStatus {
-  const k = cached
+export function keyStatus(provider: ProviderId = "openrouter"): KeyStatus {
+  const k = cached.get(provider)
   return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: safeStorage.isEncryptionAvailable() }
 }

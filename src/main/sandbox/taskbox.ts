@@ -74,7 +74,7 @@ export function taskBoxName(taskId: string): string {
 /**
   `docker run` for a task's container: the source read-only at /workspace, full internet access, and root
   with a writable root filesystem so the orchestrator can install what its code needs
-  (adr:0014-run-the-task-container-as-root); never privileged, never a host path but the source. No memory, CPU,
+  (adr:0015-run-the-task-container-as-root); never privileged, never a host path but the source. No memory, CPU,
   process or size limit: /scratch and /tmp are folders on the writable root, on Docker's disk rather than in memory
   (specs/specialist-sandbox R6.1, R6.2).
 */

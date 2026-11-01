@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
+import { PROVIDER_IDS } from "./providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
 
@@ -10,8 +11,25 @@ import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, 
 
 const id = z.string().uuid()
 
+const Provider = z.enum(PROVIDER_IDS)
+
 const SettingsPatch = z
   .object({
+    provider: Provider,
+    // Empty clears it; otherwise an http(s) URL with no credentials in it.
+    baseUrl: z
+      .string()
+      .trim()
+      .max(300)
+      .refine((v) => {
+        if (!v) return true
+        try {
+          const u = new URL(v)
+          return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password
+        } catch {
+          return false
+        }
+      }, "Enter a full http(s) URL"),
     model: z
       .string()
       .trim()
@@ -29,9 +47,10 @@ const SettingsPatch = z
 export const API_SCHEMAS = {
   getSettings: z.tuple([]),
   saveSettings: z.tuple([SettingsPatch]),
-  keyStatus: z.tuple([]),
-  saveKey: z.tuple([z.string().trim().min(8).max(512)]),
-  clearKey: z.tuple([]),
+  keyStatus: z.tuple([Provider.optional()]),
+  saveKey: z.tuple([z.string().trim().min(8).max(512), Provider.optional()]),
+  clearKey: z.tuple([Provider.optional()]),
+  listModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
   buildSandbox: z.tuple([]),
   loginStatus: z.tuple([]),
@@ -71,6 +90,7 @@ export interface ApiResults {
   keyStatus: KeyStatus
   saveKey: KeyStatus
   clearKey: KeyStatus
+  listModels: string[]
   sandboxStatus: SandboxStatus
   buildSandbox: SandboxStatus
   loginStatus: LoginStatus

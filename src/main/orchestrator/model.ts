@@ -1,17 +1,22 @@
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
+import { ChatOpenAI } from "@langchain/openai"
 import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
+import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
 
 /*
-  The orchestrator's chat model (specs/orchestrator R1): any OpenRouter model the user picked, with
-  the preset as the fallback in OpenRouter's `models` routing, provider data collection denied since
-  source code is sent, and each call's usage and cost handed to `onUsage`.
+  The orchestrator's chat model (specs/orchestrator R1, adr:0014-add-openai-compatible-orchestrator-providers).
+  On OpenRouter: any model the user picked, with the preset as the fallback in OpenRouter's `models`
+  routing and provider data collection denied since source code is sent. On any other provider: the
+  OpenAI chat API at the provider's base URL, DeepSeek's being one preset. Each call's usage and cost
+  is handed to `onUsage`.
 */
 
 export interface ModelUsage {
   tokensIn: number
   tokensOut: number
-  /** OpenRouter's `usage.cost`, in USD; 0 when it did not report one */
+  /** OpenRouter's `usage.cost`, in USD; 0 when the provider did not report one (OpenAI-compatible APIs do not) */
   costUsd: number
   /** the model that actually answered, which differs from the chosen one after a fallback */
   model: string
@@ -38,7 +43,35 @@ export function usageOf(output: LlmEndOutput, fallback: string): ModelUsage {
   }
 }
 
-export function makeModel(o: { apiKey: string; model: string; effort?: OrchestratorEffort; onUsage(u: ModelUsage): void }): ChatOpenRouter {
+export interface ModelOptions {
+  provider: ProviderId
+  /** the endpoint of an OpenAI-compatible provider; OpenRouter ignores it */
+  baseUrl?: string
+  apiKey: string
+  model: string
+  effort?: OrchestratorEffort
+  onUsage(u: ModelUsage): void
+}
+
+export function makeModel(o: ModelOptions): BaseChatModel {
+  const callbacks = [
+    {
+      handleLLMEnd(output: unknown) {
+        o.onUsage(usageOf(output as LlmEndOutput, o.model))
+      },
+    },
+  ]
+  const effort = o.effort && o.effort !== "default" ? o.effort : undefined
+  if (PROVIDERS[o.provider].kind === "openai")
+    return new ChatOpenAI({
+      model: o.model,
+      apiKey: o.apiKey,
+      configuration: { baseURL: resolveBaseUrl(o.provider, o.baseUrl ?? "") },
+      temperature: 0.2,
+      streamUsage: true,
+      ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),
+      callbacks,
+    })
   return new ChatOpenRouter({
     model: o.model,
     apiKey: o.apiKey,
@@ -46,15 +79,9 @@ export function makeModel(o: { apiKey: string; model: string; effort?: Orchestra
     provider: { data_collection: "deny" },
     temperature: 0.2,
     // OpenRouter's unified reasoning setting; models without reasoning ignore it.
-    ...(o.effort && o.effort !== "default" ? { modelKwargs: { reasoning: { effort: o.effort } } } : {}),
+    ...(effort ? { modelKwargs: { reasoning: { effort } } } : {}),
     siteUrl: "https://github.com/protonspy/harness-for-rea",
     siteName: "Harness for REA",
-    callbacks: [
-      {
-        handleLLMEnd(output) {
-          o.onUsage(usageOf(output as LlmEndOutput, o.model))
-        },
-      },
-    ],
+    callbacks,
   })
 }

@@ -19,14 +19,14 @@ export const CONFIG_VOLUME = "hfr-claude-config"
 const CONFIG_DIR = "/home/agent/.claude-config"
 /** The non-root user the specialist image creates, which the login container runs as. */
 const AGENT_UID = 1000
-/** The capabilities a root sandbox keeps, enough to install packages (adr:0014-run-the-task-container-as-root). */
+/** The capabilities a root sandbox keeps, enough to install packages (adr:0015-run-the-task-container-as-root). */
 export const INSTALL_CAPS = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"]
 /** Where the specialist's wrapper records the CLI's process id, so a stop can reach it inside a sandbox that outlives it. */
 export const CLAUDE_PID_FILE = "/tmp/hfr-claude.pid"
 
 export type Mode = "read" | "modify"
 
-/** Resource limits of a container; one left out is no limit (adr:0015-let-the-orchestrator-run-the-specialists-sandbox). */
+/** Resource limits of a container; one left out is no limit (adr:0016-let-the-orchestrator-run-the-specialists-sandbox). */
 export interface Limits {
   memoryMb?: number
   cpus?: number
@@ -71,7 +71,7 @@ export function containerEnv(): Record<string, string> {
 
 /**
   The user, capabilities and root filesystem of a container: a specialist's sandbox runs as root with only the
-  capabilities installing packages needs and a writable root (adr:0015-let-the-orchestrator-run-the-specialists-sandbox);
+  capabilities installing packages needs and a writable root (adr:0016-let-the-orchestrator-run-the-specialists-sandbox);
   the login container stays the non-root user on a read-only root.
 */
 export function identity(root: boolean): string[] {
@@ -209,7 +209,7 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
     "--allowedTools",
     `${tools},${ASK_USER_TOOL}`,
     // The login volume under the home directory holds the plan's token: no file tool may reach it. The shell
-    // can, as root; adr:0015-let-the-orchestrator-run-the-specialists-sandbox accepts that exposure.
+    // can, as root; adr:0016-let-the-orchestrator-run-the-specialists-sandbox accepts that exposure.
     "--disallowedTools",
     "Read(//home/agent/**),Edit(//home/agent/**)",
     "--system-prompt-file",

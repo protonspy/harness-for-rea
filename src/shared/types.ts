@@ -1,5 +1,7 @@
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
+import type { ProviderId } from "./providers"
+
 /** `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn (specs/chat R1.4, R3.1). */
 export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted"] as const
 export type TaskState = (typeof TASK_STATES)[number]
@@ -107,10 +109,14 @@ export interface TaskHistory {
 }
 
 export interface Settings {
+  /** which service the orchestrator's model runs on (adr:0014-add-openai-compatible-orchestrator-providers) */
+  provider: ProviderId
+  /** the OpenAI-compatible endpoint, used by the providers whose URL can be edited; ignored by OpenRouter */
+  baseUrl: string
   model: string
   timeoutMinutes: number
   discardOnCompletion: boolean
-  /** OpenRouter's `reasoning.effort` for the orchestrator; "default" sends none */
+  /** `reasoning.effort` for the orchestrator (OpenRouter's, or `reasoning_effort` on other providers); "default" sends none */
   orchestratorEffort: OrchestratorEffort
   /** Claude Code's `--effort` for the specialist; "default" passes none */
   specialistEffort: SpecialistEffort

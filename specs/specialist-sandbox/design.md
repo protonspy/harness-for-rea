@@ -2,7 +2,7 @@
 
 ## What changes
 
-Serves R1.1–R5.2, under adr:0015-let-the-orchestrator-run-the-specialists-sandbox.
+Serves R1.1–R5.2, under adr:0016-let-the-orchestrator-run-the-specialists-sandbox.
 
 - `src/main/sandbox/specialistbox.ts` (new) — `sandboxArgs`, the `docker run -d` arguments
   of a sandbox (R1.1–R1.3), and `SpecialistBoxes`, one per task: `create`, `copy`, `run`,

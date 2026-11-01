@@ -27,7 +27,7 @@ only through an approved patch.
 
 - **R2.1** Where a delegation names no sandbox of specs/specialist-sandbox, the sandbox shall run the specialist in a new container whose only bind mounts are the workspace at `/work`, as the working directory, and the run's rendered system prompt, read-only, outside `/work`.
 - **R2.2** While the step is in read mode, the sandbox shall mount `/work` read-only.
-- **R2.3** The sandbox shall run the container as root with every capability dropped but those installing packages needs, `no-new-privileges`, a writable root filesystem, and no memory, CPU, process or size limit (adr:0015-let-the-orchestrator-run-the-specialists-sandbox).
+- **R2.3** The sandbox shall run the container as root with every capability dropped but those installing packages needs, `no-new-privileges`, a writable root filesystem, and no memory, CPU, process or size limit (adr:0016-let-the-orchestrator-run-the-specialists-sandbox).
 - **R2.4** The sandbox shall give the container full internet access on Docker's default network, through no proxy (adr:0013-give-the-sandboxes-full-internet-access).
 - **R2.5** When a delegation is cancelled or exceeds its timeout, the sandbox shall kill its container and record the delegation as cancelled or timed out.
 - **R2.6** If Docker is unavailable or the sandbox image fails verification, then the sandbox shall refuse the delegation and report the reason, without running the specialist on the host.

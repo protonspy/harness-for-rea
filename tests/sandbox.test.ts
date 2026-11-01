@@ -85,7 +85,7 @@ describe("workspace (R1.1, R1.2, R1.4)", () => {
     expect(existsSync(join(data, "workspace"))).toBe(false)
   })
 
-  it("copies a file of any size: a delegation's workspace has no size cap (adr:0015-let-the-orchestrator-run-the-specialists-sandbox)", () => {
+  it("copies a file of any size: a delegation's workspace has no size cap (adr:0016-let-the-orchestrator-run-the-specialists-sandbox)", () => {
     // past the 100 MB the first rounds refused
     writeFileSync(join(root, "big.apk"), Buffer.alloc(101 * 1024 * 1024))
     const ws = prepareWorkspace(data, root, ["big.apk"])
@@ -193,7 +193,7 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(dockerRunArgs({ ...spec, mode: "modify" })).toContain("type=bind,source=C:\\data\\workspace\\1234,target=/work")
   })
 
-  it("runs as root with only the install capabilities, a writable root and limits (adr:0015-let-the-orchestrator-run-the-specialists-sandbox)", () => {
+  it("runs as root with only the install capabilities, a writable root and limits (adr:0016-let-the-orchestrator-run-the-specialists-sandbox)", () => {
     const args = dockerRunArgs(spec)
     expect(after(args, "--user")).toEqual(["0:0"])
     expect(after(args, "--cap-drop")).toEqual(["ALL"])

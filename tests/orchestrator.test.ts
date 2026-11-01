@@ -9,7 +9,9 @@ import { closeDb, openDb } from "../src/main/db"
 import { EventLog } from "../src/main/events/log"
 import { dockerLauncher, type Launcher } from "../src/main/delegation"
 import { claudeArgs } from "../src/main/sandbox/docker"
+import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
+import { listModels } from "../src/main/orchestrator/models"
 import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
@@ -30,6 +32,8 @@ type Body = {
   models?: string[]
   provider?: { data_collection?: string }
   reasoning?: { effort?: string }
+  stream?: boolean
+  reasoning_effort?: string
   messages: { role: string; content: unknown; tool_call_id?: string }[]
   tools?: { function: { name: string } }[]
 }
@@ -37,6 +41,7 @@ type Reply = { content?: string; tool_calls?: { name: string; args: unknown }[] 
 
 let script: Reply[] = []
 let requests: Body[] = []
+let seen: { url: string; auth: string }[] = []
 let status = 200
 const realFetch = globalThis.fetch
 
@@ -46,9 +51,10 @@ function lastTool(body: Body): string {
 }
 
 beforeAll(() => {
-  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as Body
     requests.push(body)
+    seen.push({ url: String(url instanceof Request ? url.url : url), auth: new Headers(init?.headers).get("authorization") ?? "" })
     if (status !== 200) return new Response(JSON.stringify({ error: { message: "Insufficient credits", code: status } }), { status })
     let next = script.shift()
     if (!next) throw new Error("The script ran out of replies")
@@ -64,6 +70,19 @@ beforeAll(() => {
         function: { name: t.name, arguments: JSON.stringify(t.args) },
       })),
     }
+    // OpenAI-compatible clients stream: the same reply as server-sent chunks, usage last.
+    if (body.stream) {
+      const chunk = (delta: object, finish: string | null, usage?: object) =>
+        `data: ${JSON.stringify({ id: `gen-${requests.length}`, object: "chat.completion.chunk", created: 0, model: body.model, choices: usage ? [] : [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`
+      const tools = message.tool_calls?.map((t, index) => ({ index, ...t }))
+      return new Response(
+        chunk({ role: "assistant", content: r.content ?? null, ...(tools ? { tool_calls: tools } : {}) }, null) +
+          chunk({}, r.tool_calls ? "tool_calls" : "stop") +
+          chunk({}, null, { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }) +
+          "data: [DONE]\n\n",
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    }
     return new Response(
       JSON.stringify({
         id: `gen-${requests.length}`,
@@ -71,6 +90,7 @@ beforeAll(() => {
         choices: [{ message, finish_reason: r.tool_calls ? "tool_calls" : "stop" }],
         usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.001 },
       }),
+      { headers: { "content-type": "application/json" } },
     )
   }) as typeof fetch
 })
@@ -107,14 +127,17 @@ function launcher(): Launcher {
   }
 }
 
-function runner(key: string | null = "sk-or-v1-testkey000000") {
+function runner(key: string | null = "sk-or-v1-testkey000000", asked?: (p: string) => void) {
   return new TaskRunner({
     stopGraceMs: 50,
     log,
     dataDir: data,
     launcher: launcher(),
     settings: () => settings,
-    apiKey: () => key,
+    apiKey: (p) => {
+      asked?.(p)
+      return key
+    },
     workspace: async () => {
       await workspaceGate
       if (workspaceFails) throw new Error(workspaceFails)
@@ -142,6 +165,7 @@ beforeEach(() => {
   settings = { ...DEFAULT_SETTINGS, timeoutMinutes: 1 }
   script = []
   requests = []
+  seen = []
   status = 200
   fakeMode = "answer"
   fakeQuestion = JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
@@ -570,6 +594,20 @@ describe("model and errors (R1.1–R1.4)", () => {
     expect(friendlyError("text").message).toBe("text")
   })
 
+  it("names the provider that failed", () => {
+    expect(friendlyError({ status: 401 }, "DeepSeek").message).toBe("DeepSeek rejected the API key. Set a valid key in Settings.")
+    expect(friendlyError({ status: 402 }, "DeepSeek").message).toMatch(/Your DeepSeek account is out of credits/)
+    expect(friendlyError({ status: 429 }, "DeepSeek").message).toMatch(/^DeepSeek is rate-limiting/)
+  })
+
+  it("resolves an OpenAI-compatible endpoint from the preset or the user's URL", () => {
+    expect(resolveBaseUrl("deepseek", "")).toBe("https://api.deepseek.com")
+    expect(resolveBaseUrl("deepseek", " https://proxy.example/v1/ ")).toBe("https://proxy.example/v1")
+    expect(resolveBaseUrl("custom", "http://localhost:11434/v1")).toBe("http://localhost:11434/v1")
+    expect(resolveBaseUrl("custom", "")).toBe("")
+    expect(resolveBaseUrl("openrouter", "https://elsewhere.example")).toBe(PROVIDERS.openrouter.baseUrl)
+  })
+
   it("builds the production launcher on docker only", () => {
     const l = dockerLauncher(async () => ({ code: 0, stdout: "", stderr: "" }))
     const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {})
@@ -589,6 +627,105 @@ describe("model and errors (R1.1–R1.4)", () => {
     const task = r.start({ request: "x", sourceRoot: root })
     await r.settled(task.id)
     expect(requests[0].reasoning).toEqual({ effort: "high" })
+  })
+})
+
+describe("OpenAI-compatible providers (adr:0014)", () => {
+  it("runs a task on DeepSeek with its key and base URL, and none of OpenRouter's routing", async () => {
+    settings = { ...settings, provider: "deepseek", baseUrl: "", model: "deepseek-chat", orchestratorEffort: "high" }
+    script = [{ content: "ok" }]
+    const asked: string[] = []
+    const r = runner("sk-deepseek-key00000", (p) => asked.push(p))
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    expect(asked).toEqual(["deepseek"])
+    expect(seen[0]).toEqual({ url: "https://api.deepseek.com/chat/completions", auth: "Bearer sk-deepseek-key00000" })
+    expect(requests[0].model).toBe("deepseek-chat")
+    expect(requests[0]).not.toHaveProperty("models")
+    expect(requests[0]).not.toHaveProperty("provider")
+    expect(requests[0]).not.toHaveProperty("reasoning")
+    expect(requests[0].reasoning_effort).toBe("high")
+    const done = log.getTask(task.id)
+    expect(done.error).toBeFalsy()
+    expect(done.state).toBe("awaiting-user")
+    expect(done.tokensIn).toBe(100)
+    expect(done.costUsd).toBe(0)
+  })
+
+  it("sends a custom base URL for a custom provider", async () => {
+    settings = { ...settings, provider: "custom", baseUrl: "http://localhost:11434/v1/", model: "qwen3" }
+    script = [{ content: "ok" }]
+    const r = runner("local-key-000")
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    expect(seen[0].url).toBe("http://localhost:11434/v1/chat/completions")
+  })
+
+  it("refuses to start without that provider's key, naming it", () => {
+    settings = { ...settings, provider: "deepseek", model: "deepseek-chat" }
+    expect(() => runner(null).start({ request: "x", sourceRoot: root })).toThrow("Set your DeepSeek API key in Settings first.")
+  })
+})
+
+describe("listing a provider's models (R1.9)", () => {
+  const json = (payload: unknown, init?: ResponseInit) => new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" }, ...init })
+  const withFetch = async <T>(reply: () => Response, run: () => Promise<T>) => {
+    const keep = globalThis.fetch
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") ?? "" })
+      return reply()
+    }) as typeof fetch
+    try {
+      return await run()
+    } finally {
+      globalThis.fetch = keep
+    }
+  }
+
+  it("reads DeepSeek's /models with the key, sorted and de-duplicated", async () => {
+    const ids = await withFetch(
+      () => json({ object: "list", data: [{ id: "deepseek-reasoner" }, { id: "deepseek-chat" }, { id: "deepseek-chat" }, { nope: 1 }] }),
+      () => listModels({ provider: "deepseek", baseUrl: "", apiKey: "sk-deepseek-key00000" }),
+    )
+    expect(ids).toEqual(["deepseek-chat", "deepseek-reasoner"])
+    expect(seen).toEqual([{ url: "https://api.deepseek.com/models", auth: "Bearer sk-deepseek-key00000" }])
+  })
+
+  it("keeps only OpenRouter models that support tools, without needing a key", async () => {
+    const ids = await withFetch(
+      () =>
+        json({
+          data: [
+            { id: "a/chat", supported_parameters: ["tools", "temperature"] },
+            { id: "b/plain", supported_parameters: ["temperature"] },
+            { id: "c/unknown" },
+          ],
+        }),
+      () => listModels({ provider: "openrouter", baseUrl: "", apiKey: null }),
+    )
+    expect(ids).toEqual(["a/chat", "c/unknown"])
+    expect(seen[0]).toEqual({ url: "https://openrouter.ai/api/v1/models", auth: "" })
+  })
+
+  it("uses a custom base URL and explains failures", async () => {
+    await withFetch(
+      () => json({ data: [{ id: "qwen3" }] }),
+      async () => expect(await listModels({ provider: "custom", baseUrl: "http://localhost:11434/v1/", apiKey: null })).toEqual(["qwen3"]),
+    )
+    expect(seen[0].url).toBe("http://localhost:11434/v1/models")
+    await expect(listModels({ provider: "custom", baseUrl: "", apiKey: null })).rejects.toThrow("Set a base URL first.")
+    await withFetch(
+      () => json({}, { status: 401 }),
+      () => expect(listModels({ provider: "deepseek", baseUrl: "", apiKey: "k" })).rejects.toThrow("DeepSeek rejected the API key."),
+    )
+    await withFetch(
+      () => json({}, { status: 500 }),
+      () => expect(listModels({ provider: "deepseek", baseUrl: "", apiKey: "k" })).rejects.toThrow("answered 500"),
+    )
+    await withFetch(
+      () => new Response("<html>", { status: 200 }),
+      () => expect(listModels({ provider: "deepseek", baseUrl: "", apiKey: "k" })).rejects.toThrow("did not return a model list"),
+    )
   })
 })
 

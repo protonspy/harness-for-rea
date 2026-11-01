@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# 0015 · Let the orchestrator run the specialist's sandbox
+# 0016 · Let the orchestrator run the specialist's sandbox
 
 ## Context
 
@@ -16,7 +16,7 @@ adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code sends to
 specialist. The user decided that the sandbox must run as `root:root`, that the
 orchestrator sets its CPU, memory and disk, copies files from the task's source folder into
 its workspace, runs any command in it and installs dependencies, and that the specialist
-works in the sandbox the orchestrator prepared. adr:0014-run-the-task-container-as-root
+works in the sandbox the orchestrator prepared. adr:0015-run-the-task-container-as-root
 already gave the orchestrator's own container the same freedom. Docker Desktop on this host
 uses the containerd snapshotter, which accepts `--storage-opt size=` and ignores it (a
 container capped at 1 GB wrote 1.5 GB), while `docker container inspect --size` reports the
@@ -28,7 +28,7 @@ The orchestrator creates a sandbox with no limit unless it sets one: CPUs, memor
 processes are each optional, and none comes from the app. A sandbox is a long-lived
 container, `hfr-sbx-<id>`, from the specialist image: root, a writable root filesystem,
 `no-new-privileges`, every capability dropped but those installing packages needs (the set
-of adr:0014-run-the-task-container-as-root), Docker's default network, the shared login
+of adr:0015-run-the-task-container-as-root), Docker's default network, the shared login
 volume, and three binds: `workspace/<id>/` writable at `/work`, `runs/<id>/` read-only at
 `/run/hfr`, and its ask channel. It is never `--privileged`, never gets the Docker socket
 and never another host path. The orchestrator copies files into `/work` only from the
@@ -43,7 +43,7 @@ the limits leave Settings. A disk limit the orchestrator sets is enforced by wat
 app adds the writable layer's size to the workspace's and stops the sandbox once the total
 passes its limit. After every specialist run the login volume is handed back to the
 non-root user the login container runs as. The orchestrator's own task container
-(adr:0014-run-the-task-container-as-root) loses every limit: no memory, CPU or process
+(adr:0015-run-the-task-container-as-root) loses every limit: no memory, CPU or process
 limit, and its `/scratch` and `/tmp` move from size-capped tmpfs mounts to folders on its
 writable root, on Docker's disk rather than in memory, since the user ruled that the
 orchestrator's sandbox has no limit. Rejected: a `--storage-opt` quota, ignored on

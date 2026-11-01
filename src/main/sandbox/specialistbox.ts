@@ -7,7 +7,7 @@ import { OUTPUT_CAP, type ExecBuffer } from "./taskbox"
 import { addFiles, askDir, createWorkspace, discardWorkspace, type CopiedFile, type PreparedFile, type Workspace } from "./workspace"
 
 /*
-  The sandboxes the orchestrator creates for the specialist (adr:0015-let-the-orchestrator-run-the-specialists-sandbox,
+  The sandboxes the orchestrator creates for the specialist (adr:0016-let-the-orchestrator-run-the-specialists-sandbox,
   specs/specialist-sandbox): one long-lived root container per sandbox, with the limits the orchestrator chose,
   its workspace at /work, files copied in from the source folder or the orchestrator's scratch, commands run in it
   as root, delegations run in it one at a time, and its disk watched against its limit. One `SpecialistBoxes` per

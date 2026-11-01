@@ -1,6 +1,6 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
-import { useEffect, useState } from "react"
-import { MODEL_PRESETS } from "@shared/defaults"
+import { useCallback, useEffect, useState } from "react"
+import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type KeyStatus, type LoginStatus, type SandboxStatus, type Settings } from "@shared/types"
 import { ErrorText, Field, Mono, PanelHeader } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-/* Settings: the OpenRouter key, the model, the delegation timeout, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
+/* Settings: the orchestrator's provider, key and endpoint, the model, the delegation timeout, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
 
 const message = (e: unknown) => (e as Error).message.replace(/^Error invoking remote method 'api': (\w*Error: )?/, "")
 
@@ -22,11 +22,13 @@ export function SettingsView() {
   const [login, setLogin] = useState<LoginStatus | null>(null)
   const [code, setCode] = useState("")
   const [error, setError] = useState("")
+  const [models, setModels] = useState<string[]>([])
+  const [modelsNote, setModelsNote] = useState("")
   const api = window.hfr.api
 
   useEffect(() => {
     void api.getSettings().then(setSettings)
-    void api.keyStatus().then(setKey)
+    void api.getSettings().then((st) => api.keyStatus(st.provider).then(setKey))
     void api.sandboxStatus().then(setSandbox)
     void api.loginStatus().then(setLogin)
     return window.hfr.onPush((p) => {
@@ -34,6 +36,29 @@ export function SettingsView() {
       if (p.type === "login") setLogin(p.status)
     })
   }, [api])
+
+  // The provider's own model list, read again when the provider, its endpoint or whether a key is set changes.
+  const activeProvider = settings?.provider
+  const activeBaseUrl = settings?.baseUrl
+  const keySet = key?.set
+  const loadModels = useCallback(
+    () =>
+      api.listModels().then(
+        (list) => {
+          setModels(list)
+          setModelsNote("")
+        },
+        (e: unknown) => {
+          setModels([])
+          setModelsNote(message(e))
+        },
+      ),
+    [api],
+  )
+  useEffect(() => {
+    if (!activeProvider || (PROVIDERS[activeProvider].keyRequired && !keySet) || (activeProvider === "custom" && !activeBaseUrl)) return
+    void loadModels()
+  }, [activeProvider, activeBaseUrl, keySet, loadModels])
 
   const run = async (fn: () => Promise<unknown>) => {
     setError("")
@@ -44,9 +69,18 @@ export function SettingsView() {
     }
   }
   const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
+  // Switching provider swaps in that provider's endpoint, model and key; the model name of one is meaningless to another.
+  const switchProvider = (id: ProviderId) =>
+    run(async () => {
+      setModels([])
+      setSettings(await api.saveSettings({ provider: id, baseUrl: PROVIDERS[id].baseUrl, model: PROVIDERS[id].defaultModel || settings?.model }))
+      setKey(await api.keyStatus(id))
+      setKeyInput("")
+    })
   const num = (v: string) => (v.trim() === "" ? NaN : Number(v))
 
   if (!settings) return null
+  const provider = PROVIDERS[settings.provider]
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-5 p-8">
       <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
@@ -54,19 +88,39 @@ export function SettingsView() {
 
       <Card>
         <PanelHeader
-          title="Orchestrator (OpenRouter)"
+          title={`Orchestrator (${provider.label})`}
           actions={key && <Badge variant={key.set ? "ok" : "warn"}>{key.set ? `key ${key.hint}` : "no key"}</Badge>}
         />
         <div className="flex flex-col gap-4 p-4">
           {key && !key.encryption && <ErrorText>The OS keychain is unavailable, so a key cannot be stored. It is never kept in plain text.</ErrorText>}
+          <Field label="Provider" hint="OpenRouter, DeepSeek, or any service that speaks the OpenAI chat API (base URL and API key). Each keeps its own key.">
+            <div className="flex gap-2">
+              {PROVIDER_IDS.map((id) => (
+                <Button key={id} variant={settings.provider === id ? "default" : "outline"} onClick={() => switchProvider(id)}>
+                  {PROVIDERS[id].label}
+                </Button>
+              ))}
+            </div>
+          </Field>
+          {provider.editableBaseUrl && (
+            <Field label="Base URL" hint={`Where requests go, without /chat/completions. Empty uses ${provider.baseUrl || "nothing: set one"}.`}>
+              <Input
+                defaultValue={settings.baseUrl}
+                key={`${settings.provider}:${settings.baseUrl}`}
+                placeholder={provider.baseUrl || "https://host/v1"}
+                onBlur={(e) => e.target.value.trim() !== settings.baseUrl && save({ baseUrl: e.target.value.trim() })}
+              />
+              {settings.provider === "custom" && !resolveBaseUrl("custom", settings.baseUrl) && <ErrorText>Set a base URL.</ErrorText>}
+            </Field>
+          )}
           <Field label="API key" hint="Encrypted with the Windows keychain. It is never shown again.">
             <div className="flex gap-2">
-              <Input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="sk-or-v1-…" autoComplete="off" />
+              <Input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder={provider.keyPlaceholder} autoComplete="off" />
               <Button
                 disabled={keyInput.trim().length < 8}
                 onClick={() =>
                   run(async () => {
-                    setKey(await api.saveKey(keyInput))
+                    setKey(await api.saveKey(keyInput, settings.provider))
                     setKeyInput("")
                   })
                 }
@@ -74,20 +128,36 @@ export function SettingsView() {
                 <KeyRound size={14} /> Save
               </Button>
               {key?.set && (
-                <Button variant="destructive" onClick={() => run(async () => setKey(await api.clearKey()))}>
+                <Button variant="destructive" onClick={() => run(async () => setKey(await api.clearKey(settings.provider)))}>
                   Clear
                 </Button>
               )}
             </div>
           </Field>
-          <Field label="Model" hint="Any OpenRouter model with tool calling. The preset is also sent as the fallback; provider data collection is denied.">
+          <Field
+            label="Model"
+            hint={
+              settings.provider === "openrouter"
+                ? "Any OpenRouter model with tool calling. The preset is also sent as the fallback; provider data collection is denied."
+                : "Any model of this provider with tool calling. Reasoning-only models (such as deepseek-reasoner) are not supported."
+            }
+          >
             <div className="flex gap-2">
               <Input
+                list="hfr-models"
                 defaultValue={settings.model}
                 key={settings.model}
                 onBlur={(e) => e.target.value !== settings.model && save({ model: e.target.value.trim() })}
               />
-              {MODEL_PRESETS.map((m) => (
+              <datalist id="hfr-models">
+                {models.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              <Button variant="outline" size="default" onClick={loadModels} aria-label="Refresh the model list" title="Refresh the model list">
+                <RefreshCw size={14} />
+              </Button>
+              {provider.models.map((m) => (
                 <Button
                   key={m}
                   size="default"
@@ -95,12 +165,20 @@ export function SettingsView() {
                   onClick={() => save({ model: m })}
                   className="shrink-0 font-mono text-xs"
                 >
-                  {m.split("/")[1]}
+                  {m.split("/").pop()}
                 </Button>
               ))}
             </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {models.length > 0
+                ? `${models.length} models from ${provider.label}: clear the field to see them all, or type to filter.`
+                : modelsNote || "Save a key to list this provider's models; you can still type one."}
+            </p>
           </Field>
-          <Field label="Reasoning effort" hint="Sent as OpenRouter's reasoning.effort; models without reasoning ignore it. Default sends nothing.">
+          <Field
+            label="Reasoning effort"
+            hint={`Sent as ${settings.provider === "openrouter" ? "OpenRouter's reasoning.effort" : "reasoning_effort"}; models without reasoning ignore it. Default sends nothing.`}
+          >
             <EffortSelect value={settings.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => save({ orchestratorEffort: v })} />
           </Field>
         </div>

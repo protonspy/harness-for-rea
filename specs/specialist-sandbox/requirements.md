@@ -14,7 +14,7 @@ The orchestrator prepares the place the specialist works in: it creates a sandbo
 no limit unless it sets one on CPUs, memory, disk or processes, copies files from the task's source folder and its
 own scratch into the sandbox's `/work`, runs commands in it as root and installs what the
 analysis needs, then delegates the specialist into it, where the specialist has a shell of
-its own (adr:0015-let-the-orchestrator-run-the-specialists-sandbox). It exists so the
+its own (adr:0016-let-the-orchestrator-run-the-specialists-sandbox). It exists so the
 specialist, not the orchestrator, does the extraction and the analysis.
 
 ## R1 · Creating a sandbox

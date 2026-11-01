@@ -13,6 +13,7 @@ import {
   type Question,
   type ToolDecision,
 } from "@shared/chat"
+import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
 import { buildAgent, type AgentBackend } from "./agent"
@@ -41,7 +42,7 @@ export interface TaskWorkspace {
 }
 
 export interface RunnerDeps extends DelegationDeps {
-  apiKey(): string | null
+  apiKey(provider: ProviderId): string | null
   /** the task's sandbox for the orchestrator's tools (adr:0007-run-the-orchestrators-tools-in-a-task-container) */
   workspace(task: TaskRow): Promise<TaskWorkspace>
   checkpointer?: BaseCheckpointSaver
@@ -122,15 +123,18 @@ export class TaskRunner {
       dir = false
     }
     if (!dir) throw new Error(`${input.sourceRoot} is not a folder.`)
-    const apiKey = this.deps.apiKey()
-    if (!apiKey) throw new Error("Set your OpenRouter API key in Settings first.")
+    const settings = this.deps.settings()
+    const apiKey = this.deps.apiKey(settings.provider)
+    if (!apiKey) throw new Error(`Set your ${PROVIDERS[settings.provider].label} API key in Settings first.`)
     const { log } = this.deps
-    const task = log.createTask({ request: input.request, sourceRoot: input.sourceRoot, model: this.deps.settings().model })
+    const task = log.createTask({ request: input.request, sourceRoot: input.sourceRoot, model: settings.model })
     const abort = new AbortController()
     const model = makeModel({
+      provider: settings.provider,
+      baseUrl: settings.baseUrl,
       apiKey,
       model: task.model,
-      effort: this.deps.settings().orchestratorEffort,
+      effort: settings.orchestratorEffort,
       onUsage: (u) => {
         log.append({
           taskId: task.id,
@@ -366,7 +370,7 @@ export class TaskRunner {
     } catch (e) {
       if (stale()) return
       const cancelled = live.abort.signal.aborted
-      const err = cancelled ? new Error("Cancelled.") : friendlyError(e)
+      const err = cancelled ? new Error("Cancelled.") : friendlyError(e, PROVIDERS[this.deps.settings().provider].label)
       log.updateTask(taskId, { state: cancelled ? "cancelled" : "failed", error: err.message })
       log.append({
         taskId,

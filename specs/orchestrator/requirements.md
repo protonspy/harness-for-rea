@@ -23,12 +23,16 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **R1.3** When a model call completes, the orchestrator shall record its tokens, its cost from OpenRouter's usage and the model that answered as an event, and add them to the task's totals.
 - **R1.4** If OpenRouter rejects the key, reports no credits or rate-limits the request, then the orchestrator shall fail the task with a message the user can act on.
 - **R1.5** Where the user chose a reasoning effort for the orchestrator, the orchestrator shall send it as OpenRouter's `reasoning.effort` on every request.
+- **R1.6** Where the user chose an OpenAI-compatible provider (DeepSeek, or a custom endpoint), the orchestrator shall run `createDeepAgent` on `ChatOpenAI` at that provider's base URL with that provider's API key and send none of OpenRouter's routing fields (adr:0014-add-openai-compatible-orchestrator-providers).
+- **R1.7** The orchestrator shall keep one API key per provider and use the chosen provider's, and if that key is not set, then it shall refuse to start the task and name the provider.
+- **R1.9** When the user opens the orchestrator's settings, the orchestrator shall offer the models listed by the chosen provider's `GET /models` (for OpenRouter, only those that support tool calling), read in the main process with that provider's key, and if the list cannot be read, then it shall say why and still accept a typed model name.
+- **R1.8** Where the user chose a reasoning effort for an OpenAI-compatible provider, the orchestrator shall send it as `reasoning_effort` on every request.
 
 ## R2 · Decomposition and delegation
 
 - **R2.1** When a task starts, the orchestrator shall decompose it with `write_todos` and record each todo list change as steps and an event.
 - **R2.2** The orchestrator shall run its file and command tools in a container for the task, with the source folder bind-mounted read-only at `/workspace`, full internet access (adr:0013-give-the-sandboxes-full-internet-access), and the container removed when the task ends.
-- **R2.8** (ADDED) The orchestrator's task container shall run its commands as root with a writable root filesystem, so the orchestrator may install any software its code needs, while the source folder stays bind-mounted read-only (adr:0014-run-the-task-container-as-root).
+- **R2.8** (ADDED) The orchestrator's task container shall run its commands as root with a writable root filesystem, so the orchestrator may install any software its code needs, while the source folder stays bind-mounted read-only (adr:0015-run-the-task-container-as-root).
 - **R2.9** (ADDED) If the task's container is gone while the task is open, then the orchestrator shall start it again, retry the call once, and tell the agent that its scratch and what it installed were reset.
 - **R2.3** The orchestrator shall expose the specialist as a `delegate_to_specialist` tool whose input is a context package validated against its schema.
 - **R2.4** When the agent delegates a step, the orchestrator shall run the delegation in the sandbox and return the specialist's report, its evidence and any proposed patch to the agent.
