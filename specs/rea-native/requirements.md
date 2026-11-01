@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/rea-native
-delivery: in-progress
+delivery: in-review
+pr: 10
 ---
 
 # Rea native — requirements
