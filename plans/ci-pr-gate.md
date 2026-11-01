@@ -32,7 +32,7 @@ pass.
 ## Tasks
 
 - [x] 1.1 (Unit) Run the CI gate on pull requests only, one run per pull request at a time
-- [ ] 1.2 (Unit) Protect `main`: require the `gate` check, up to date with `main`, for administrators too
+- [x] 1.2 (Unit) Protect `main`: require the `gate` check, up to date with `main`, for administrators too
   _Depends 1.1_
 
 ## Done when
