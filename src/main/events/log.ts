@@ -21,12 +21,27 @@ export const RAW_LINE_CAP = 256 * 1024
 
 type Row = Record<string, unknown>
 
+/** One delegation of a project's task, as the orchestrator reads it back (specs/projects R2.4). */
+export interface ProjectAnalysis {
+  id: string
+  taskId: string
+  state: TaskState
+  objective: string
+  pkg: unknown
+  report: string
+  evidence: number
+  evidenceList: unknown[]
+  error: string
+  createdAt: number
+}
+
 /** A turn under way or stopped part-way: after a restart it can only be retried. */
 const LIVE: TaskState[] = ["pending", "running", "waiting", "stopped"]
 
 function taskRow(r: Row): TaskRow {
   return {
     id: String(r.id),
+    projectId: r.project_id === null || r.project_id === undefined ? null : String(r.project_id),
     request: String(r.request),
     sourceRoot: String(r.source_root),
     model: String(r.model),
@@ -127,19 +142,49 @@ export class EventLog {
     this.push = push
   }
 
+  /** A task's folder: under its project's folder (specs/projects R2.2), or the app's data folder for one without. */
   taskDir(taskId: string): string {
-    return join(this.dataDir, "tasks", taskId)
+    const r = getDb().prepare("SELECT p.folder AS folder FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ?").get(taskId) as Row | undefined
+    return join(r ? String(r.folder) : this.dataDir, "tasks", taskId)
   }
 
   /* ---------- tasks ---------- */
 
-  createTask(t: { request: string; sourceRoot: string; model: string }): TaskRow {
+  createTask(t: { request: string; sourceRoot: string; model: string; projectId?: string | null }): TaskRow {
     const id = randomUUID()
     const at = this.now()
     getDb()
-      .prepare("INSERT INTO tasks (id, request, source_root, model, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
-      .run(id, redact(t.request), t.sourceRoot, t.model, at, at)
+      .prepare("INSERT INTO tasks (id, project_id, request, source_root, model, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)")
+      .run(id, t.projectId ?? null, redact(t.request), t.sourceRoot, t.model, at, at)
     return this.emitTask(id)
+  }
+
+  /** The delegations of a project's tasks, newest first: what the specialist found for it (specs/projects R2.4). */
+  projectAnalyses(projectId: string): ProjectAnalysis[] {
+    const rows = getDb()
+      .prepare("SELECT s.* FROM steps s JOIN tasks t ON t.id = s.task_id WHERE t.project_id = ? AND s.kind = 'delegation' ORDER BY s.created_at DESC")
+      .all(projectId) as Row[]
+    return rows.map((r) => {
+      const s = stepRow(r)
+      const data = s.data as { context?: { objective?: string }; report?: string; evidence?: unknown[]; error?: string }
+      return {
+        id: s.id,
+        taskId: s.taskId,
+        state: s.state,
+        objective: String(data.context?.objective ?? s.title),
+        pkg: data.context ?? null,
+        report: String(data.report ?? ""),
+        evidence: Array.isArray(data.evidence) ? data.evidence.length : 0,
+        evidenceList: Array.isArray(data.evidence) ? data.evidence : [],
+        error: String(data.error ?? ""),
+        createdAt: s.createdAt,
+      }
+    })
+  }
+
+  /** The tasks of a project, newest first. */
+  projectTasks(projectId: string): TaskRow[] {
+    return (getDb().prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as Row[]).map(taskRow)
   }
 
   getTask(id: string): TaskRow {

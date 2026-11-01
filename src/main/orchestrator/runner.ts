@@ -14,12 +14,12 @@ import {
   type ToolDecision,
 } from "@shared/chat"
 import { PROVIDERS, type ProviderId } from "@shared/providers"
-import type { PatchView, TaskRow, TaskState } from "@shared/types"
+import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
-import type { SpecialistBoxes } from "../sandbox/specialistbox"
+import type { TaskSandboxes } from "../sandbox/specialistbox"
 import { RESTARTED } from "../sandbox/taskbox"
 import { SqliteSaver } from "./checkpoint"
 import { APPLY_PATCH, type ToolContext } from "./tools"
@@ -39,7 +39,7 @@ export interface TaskWorkspace {
   /** the writable place for the agent's own code, when the backend has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
   /** the sandboxes the orchestrator creates for the specialist, stopped with the workspace (specs/specialist-sandbox R2.6) */
-  sandboxes?: SpecialistBoxes
+  sandboxes?: TaskSandboxes
   /** the task's container had to be created again: what was installed in it is gone (specs/task-persistence R3.5) */
   created?: boolean
   /** stop the containers and keep them for when the task reopens (specs/task-persistence R3.4) */
@@ -50,6 +50,8 @@ export interface RunnerDeps extends DelegationDeps {
   apiKey(provider: ProviderId): string | null
   /** the task's sandbox for the orchestrator's tools (adr:0007-run-the-orchestrators-tools-in-a-task-container) */
   workspace(task: TaskRow): Promise<TaskWorkspace>
+  /** the projects tasks belong to: their target, goal, model and efforts (specs/projects R2.1) */
+  projects?: { get(id: string): ProjectRow }
   /** remove the containers of a task being deleted (specs/task-persistence R4.1) */
   removeContainers?(task: TaskRow): Promise<void>
   checkpointer?: BaseCheckpointSaver
@@ -131,19 +133,22 @@ export class TaskRunner {
     this.checkpointer = deps.checkpointer ?? new SqliteSaver()
   }
 
-  start(input: { request: string; sourceRoot: string; gated?: GateableTool[]; auto?: boolean }): TaskRow {
+  start(input: { request: string; sourceRoot?: string; projectId?: string | null; gated?: GateableTool[]; auto?: boolean }): TaskRow {
+    // A task in a project runs on its target with its model (specs/projects R2.1); one without names a folder.
+    const project = input.projectId && this.deps.projects ? this.deps.projects.get(input.projectId) : null
+    const sourceRoot = project?.sourceRoot ?? input.sourceRoot ?? ""
     let dir = false
     try {
-      dir = statSync(input.sourceRoot).isDirectory()
+      dir = statSync(sourceRoot).isDirectory()
     } catch {
       dir = false
     }
-    if (!dir) throw new Error(`${input.sourceRoot} is not a folder.`)
-    const settings = this.deps.settings()
-    const apiKey = this.deps.apiKey(settings.provider)
-    if (!apiKey) throw new Error(`Set your ${PROVIDERS[settings.provider].label} API key in Settings first.`)
+    if (!dir) throw new Error(`${sourceRoot || "The source"} is not a folder.`)
+    const run = this.runWith(project)
+    const apiKey = this.deps.apiKey(run.provider)
+    if (!apiKey) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
     const { log } = this.deps
-    const task = log.createTask({ request: input.request, sourceRoot: input.sourceRoot, model: settings.model })
+    const task = log.createTask({ request: input.request, sourceRoot, model: run.model, projectId: project?.id ?? null })
     const auto = input.auto === true
     const gated = auto ? [] : [...new Set<GateableTool>([ALWAYS_GATED, ...(input.gated ?? [])])]
     const live = this.open(task, auto, gated, apiKey)
@@ -166,18 +171,29 @@ export class TaskRunner {
     task opens once; a cancelled, failed, interrupted or closed one opens again on the same thread
     (specs/task-persistence R2).
   */
+  /** The provider, model and efforts a task runs with: its project's, or the Settings defaults (specs/projects R2.1). */
+  private runWith(project: ProjectRow | null) {
+    const s = this.deps.settings()
+    return project
+      ? { provider: project.provider, model: project.model, orchestratorEffort: project.orchestratorEffort, specialistEffort: project.specialistEffort }
+      : { provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort }
+  }
+
   private open(task: TaskRow, auto: boolean, gated: GateableTool[], key?: string): Live {
     const { log } = this.deps
     const settings = this.deps.settings()
-    const apiKey = key ?? this.deps.apiKey(settings.provider)
-    if (!apiKey) throw new Error(`Set your ${PROVIDERS[settings.provider].label} API key in Settings first.`)
+    const project = task.projectId && this.deps.projects ? this.deps.projects.get(task.projectId) : null
+    const run = this.runWith(project)
+    const apiKey = key ?? this.deps.apiKey(run.provider)
+    if (!apiKey) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
     const abort = new AbortController()
     const model = makeModel({
-      provider: settings.provider,
-      baseUrl: settings.baseUrl,
+      provider: run.provider,
+      // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
+      baseUrl: run.provider === settings.provider ? settings.baseUrl : "",
       apiKey,
       model: task.model,
-      effort: settings.orchestratorEffort,
+      effort: run.orchestratorEffort,
       onUsage: (u) => {
         log.append({
           taskId: task.id,
@@ -196,6 +212,8 @@ export class TaskRunner {
       root: "",
       signal: abort.signal,
       ask: (q, agent, stepId) => this.ask(task.id, q, agent, stepId),
+      projectId: task.projectId,
+      specialistEffort: run.specialistEffort,
     }
     ctx.auto = auto
     // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
@@ -217,6 +235,9 @@ export class TaskRunner {
           gated,
           auto,
           scratch: ws.scratch,
+          goal: project?.goal,
+          // What earlier tasks of the project established, counted when this one opens (specs/projects R2.5).
+          analyses: task.projectId ? log.projectAnalyses(task.projectId).filter((a) => a.taskId !== task.id).length : 0,
         }),
       }))
     ready.catch(() => undefined)
@@ -778,7 +799,7 @@ export class TaskRunner {
       throw new Error(`Only an interrupted, failed or cancelled task can be retried; this one is ${t.state}.`)
     // A task runs its calls without asking unless it was started with gates; one from before that choice existed runs without (specs/chat R4.1).
     const { auto, gated } = this.startedWith(taskId)
-    return this.start({ request: t.request, sourceRoot: t.sourceRoot, gated, auto })
+    return this.start({ request: t.request, sourceRoot: t.sourceRoot, projectId: t.projectId, gated, auto })
   }
 
   /**

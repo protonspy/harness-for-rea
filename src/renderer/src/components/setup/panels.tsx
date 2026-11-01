@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
+import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -268,32 +269,23 @@ export function ModelPanel({
             : "Any model of this provider with tool calling. Reasoning-only models (such as deepseek-reasoner) are not supported."
         }
       >
-        <div className="flex flex-wrap gap-2">
-          <Input
-            list="hfr-models"
-            defaultValue={settings.model}
-            key={settings.model}
-            className="min-w-64 flex-1"
-            onBlur={(e) => e.target.value !== settings.model && save({ model: e.target.value.trim() })}
+        <div className="flex items-start gap-2">
+          <ModelPicker
+            key={`${settings.provider}:${settings.model}`}
+            provider={settings.provider}
+            value={settings.model}
+            listed={models}
+            onChange={(m) => save({ model: m })}
           />
-          <datalist id="hfr-models">
-            {models.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
           <Button variant="outline" onClick={() => run(loadModels)} aria-label="Refresh the model list" title="Refresh the model list">
             <RefreshCw size={14} />
           </Button>
-          {provider.models.map((m) => (
-            <Button key={m} variant={settings.model === m ? "default" : "outline"} onClick={() => save({ model: m })} className="shrink-0 font-mono text-xs">
-              {m.split("/").pop()}
-            </Button>
-          ))}
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
           {models.length > 0
-            ? `${models.length} models from ${provider.label}: clear the field to see them all, or type to filter.`
-            : modelsNote || "Save a key to list this provider's models; you can still type one."}
+            ? `${models.length} models with tool calling from ${provider.label}, recommended first.`
+            : modelsNote ||
+              (keySet || !provider.keyRequired ? `Reading ${provider.label}'s models…` : "Save a key to list this provider's models; you can still name one.")}
         </p>
       </Field>
       {children?.(settings, save)}

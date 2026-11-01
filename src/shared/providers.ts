@@ -32,7 +32,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     editableBaseUrl: false,
     keyRequired: false,
     defaultModel: "deepseek/deepseek-v4.1-flash-1017",
-    models: ["deepseek/deepseek-v4.1-flash-1017", "z-ai/glm-5.3-flash"],
+    // Recommended first: DeepSeek by default, then GLM and the other Chinese coding models with tool calling.
+    models: ["deepseek/deepseek-v4.1-flash-1017", "z-ai/glm-5.3-flash", "moonshotai/kimi-k3.1-pro", "qwen/qwen3.8-flash", "minimax/minimax-m3.1-flash"],
     keyPlaceholder: "sk-or-v1-…",
   },
   deepseek: {
@@ -67,4 +68,51 @@ export function isProviderId(v: unknown): v is ProviderId {
 export function resolveBaseUrl(provider: ProviderId, baseUrl: string): string {
   const p = PROVIDERS[provider]
   return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "")
+}
+
+/** The vendors of Chinese models on OpenRouter, whose coding models the model choice lists next. */
+export const CHINESE_VENDORS = [
+  "deepseek",
+  "z-ai",
+  "qwen",
+  "moonshotai",
+  "minimax",
+  "thudm",
+  "baidu",
+  "tencent",
+  "bytedance-seed",
+  "bytedance",
+  "stepfun",
+  "meituan",
+  "inclusionai",
+  "xiaomi",
+]
+
+export interface ModelGroup {
+  label: string
+  models: string[]
+}
+
+/**
+  A provider's models as the model choice offers them: its recommended ones first, then, for OpenRouter, the Chinese
+  models it lists with tool calling — coding models first — then every other model it lists. Batch variants are left
+  out: a task needs answers now.
+*/
+export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[] {
+  const recommended = [...PROVIDERS[provider].models]
+  const rest = [...new Set(listed)].filter((m) => !recommended.includes(m) && !m.endsWith(":batch"))
+  if (provider !== "openrouter")
+    return [
+      { label: "Recommended", models: recommended },
+      { label: "Models", models: rest.sort() },
+    ].filter((g) => g.models.length)
+  const vendor = (m: string) => m.split("/")[0]
+  const coding = (m: string) => /cod(e|er|ing)/i.test(m)
+  const chinese = rest.filter((m) => CHINESE_VENDORS.includes(vendor(m))).sort((a, b) => Number(coding(b)) - Number(coding(a)) || a.localeCompare(b))
+  const others = rest.filter((m) => !CHINESE_VENDORS.includes(vendor(m))).sort()
+  return [
+    { label: "Recommended", models: recommended },
+    { label: "Chinese coding models", models: chinese },
+    { label: "Other models with tool calling", models: others },
+  ].filter((g) => g.models.length)
 }

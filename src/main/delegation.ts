@@ -9,7 +9,7 @@ import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflig
 import { applyPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
 import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
-import { SandboxError, type Box, type SpecialistBoxes } from "./sandbox/specialistbox"
+import { SandboxError, type Box, type TaskSandboxes } from "./sandbox/specialistbox"
 import { askDir, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
 import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
 
@@ -164,7 +164,9 @@ export async function delegate(
     ask?: AskUser
     prepared?: PreparedFile[]
     /** the orchestrator's sandbox to run in, instead of a container of the delegation's own (specs/specialist-sandbox R4) */
-    sandbox?: { boxes: SpecialistBoxes; id: string }
+    sandbox?: { boxes: TaskSandboxes; id: string }
+    /** the specialist's effort for this delegation, the project's; the Settings default when absent */
+    specialistEffort?: SpecialistEffort
   },
 ): Promise<DelegationResult> {
   const { log } = deps
@@ -219,13 +221,16 @@ export async function delegate(
   try {
     const pkg = scrubPaths(o.pkg, o.sourceRoot)
     writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null))
-    const session = new SpecialistSession(deps.launcher.launch(ws, o.pkg.mode, settings, held?.box.name), {
-      timeoutMs: settings.timeoutMinutes * 60_000,
-      signal: o.signal,
-      onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
-      onEvent: (e) =>
-        log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload }),
-    })
+    const session = new SpecialistSession(
+      deps.launcher.launch(ws, o.pkg.mode, { specialistEffort: o.specialistEffort ?? settings.specialistEffort }, held?.box.name),
+      {
+        timeoutMs: settings.timeoutMinutes * 60_000,
+        signal: o.signal,
+        onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
+        onEvent: (e) =>
+          log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload }),
+      },
+    )
     const stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
     let result
     try {

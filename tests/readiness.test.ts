@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import type { LoginStatus, SandboxStatus, Settings } from "../src/shared/types"
 import { blocking, needsKey, readiness, type ReadinessDeps } from "../src/main/readiness"
+import { groupModels, PROVIDERS } from "../src/shared/providers"
 
 /* specs/onboarding R1.3–R1.8, R2.1: the three steps of the first-run setup. */
 
@@ -68,5 +69,35 @@ describe("the setup's steps", () => {
 
   it("reports a setup the user completed", async () => {
     expect((await readiness(deps({ settings: { setupCompleted: true } }))).completed).toBe(true)
+  })
+})
+
+describe("the orchestrator's model choice (specs/onboarding R1.5)", () => {
+  it("offers OpenRouter's recommended models first, DeepSeek by default, then Chinese coding models, then the rest", () => {
+    expect(PROVIDERS.openrouter.defaultModel).toBe("deepseek/deepseek-v4.1-flash-1017")
+    expect(PROVIDERS.openrouter.models[0]).toBe(PROVIDERS.openrouter.defaultModel)
+    expect(PROVIDERS.openrouter.models).toContain("z-ai/glm-5.3-flash")
+    const groups = groupModels("openrouter", [
+      "openai/gpt-6",
+      "qwen/qwen3.8-flash",
+      "moonshotai/kimi-k2.7-code",
+      "bytedance-seed/seed-2.0-code",
+      "z-ai/glm-5.3:batch",
+      "anthropic/claude-x",
+      "tencent/hy3",
+    ])
+    expect(groups.map((g) => g.label)).toEqual(["Recommended", "Chinese coding models", "Other models with tool calling"])
+    expect(groups[0].models).toEqual(PROVIDERS.openrouter.models)
+    // coding models lead the Chinese ones; a recommended model is not listed twice; batch variants are left out
+    expect(groups[1].models).toEqual(["bytedance-seed/seed-2.0-code", "moonshotai/kimi-k2.7-code", "tencent/hy3"])
+    expect(groups[2].models).toEqual(["anthropic/claude-x", "openai/gpt-6"])
+  })
+
+  it("lists another provider's models after its recommended ones", () => {
+    expect(groupModels("deepseek", ["deepseek-chat", "deepseek-reasoner"])).toEqual([
+      { label: "Recommended", models: ["deepseek-chat"] },
+      { label: "Models", models: ["deepseek-reasoner"] },
+    ])
+    expect(groupModels("custom", [])).toEqual([])
   })
 })

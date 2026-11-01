@@ -3,11 +3,12 @@ import { tool } from "@langchain/core/tools"
 import { z } from "zod"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { ContextPackageSchema } from "@shared/context"
+import type { SpecialistEffort } from "@shared/types"
 import { approvePatch, delegate, DelegationRefused, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
 import { PathRejected } from "../sandbox/paths"
-import { COMMAND_DEFAULT_S, COMMAND_MAX_S, SandboxError, type SpecialistBoxes } from "../sandbox/specialistbox"
+import { COMMAND_DEFAULT_S, COMMAND_MAX_S, SandboxError, type TaskSandboxes } from "../sandbox/specialistbox"
 import { PREPARED, type PreparedFile } from "../sandbox/workspace"
 import { SpecialistError } from "../specialist/executor"
 
@@ -23,6 +24,8 @@ export const DELEGATE = "delegate_to_specialist"
 export const APPLY_PATCH = "apply_patch"
 export const ASK_USER = "ask_user"
 export const PROPOSE_PATCH = "propose_patch"
+export const PROJECT_ANALYSES = "project_analyses"
+export const READ_ANALYSIS = "read_analysis"
 export const SANDBOX_CREATE = "sandbox_create"
 /** Most bytes read out of the scratch at once: they pass through the app's own memory on the way. */
 export const PREPARED_CAP = 512 * 1024 * 1024
@@ -46,7 +49,11 @@ export interface ToolContext {
   /** reads files out of the scratch; one it cannot read comes back with no content */
   readScratch?(paths: string[]): Promise<{ path: string; content: Uint8Array | null }[]>
   /** the sandboxes the orchestrator creates for the specialist (specs/specialist-sandbox) */
-  sandboxes?: SpecialistBoxes
+  sandboxes?: TaskSandboxes
+  /** the project the task belongs to, whose earlier analyses the orchestrator may read (specs/projects R2.4) */
+  projectId?: string | null
+  /** the specialist's effort for this task's delegations, the project's (specs/projects R2.1) */
+  specialistEffort?: SpecialistEffort
 }
 
 function redactedJson(v: unknown): string {
@@ -104,6 +111,7 @@ export function delegateTool(ctx: ToolContext) {
           ask: ctx.ask,
           prepared,
           sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
+          specialistEffort: ctx.specialistEffort,
         })
         // The report goes to OpenRouter: no secret shape leaves the machine in it.
         return redactedJson({
@@ -138,7 +146,7 @@ export function delegateTool(ctx: ToolContext) {
 }
 
 /** A sandbox call's refusal goes back to the agent as its error; anything else is the app's. */
-async function sandboxCall(ctx: ToolContext, run: (boxes: SpecialistBoxes) => Promise<string>): Promise<string> {
+async function sandboxCall(ctx: ToolContext, run: (boxes: TaskSandboxes) => Promise<string>): Promise<string> {
   if (!ctx.sandboxes) return "ERROR: this task has no sandboxes."
   try {
     return await run(ctx.sandboxes)
@@ -378,6 +386,55 @@ export function proposePatchTool(ctx: ToolContext) {
           .min(1)
           .max(100),
       }),
+    },
+  )
+}
+
+/** The project's earlier delegations, newest first, without this task's own: what has already been found (specs/projects R2.4). */
+export function projectAnalysesTool(ctx: ToolContext) {
+  return tool(
+    async () => {
+      if (!ctx.projectId) return "ERROR: this task belongs to no project."
+      const list = ctx.deps.log
+        .projectAnalyses(ctx.projectId)
+        .filter((a) => a.taskId !== ctx.taskId)
+        .slice(0, 50)
+        .map((a) => ({
+          analysis: a.id,
+          task: a.taskId,
+          state: a.state,
+          objective: a.objective,
+          report: a.report.slice(0, 600),
+          evidence: a.evidence,
+        }))
+      // The reports go to the model's provider: no secret shape leaves the machine in them.
+      return redactedJson({
+        analyses: list,
+        note: list.length ? `Call ${READ_ANALYSIS} with an analysis id to read its whole report.` : "No earlier analysis in this project.",
+      })
+    },
+    {
+      name: PROJECT_ANALYSES,
+      description:
+        "List what the specialist already found for this project in earlier tasks: each analysis with its objective, state, the start of its report and how much evidence it has. Read this before delegating a question an earlier task may have answered.",
+      schema: z.object({}),
+    },
+  )
+}
+
+/** One earlier analysis of the project, whole: its package and the specialist's report and evidence. */
+export function readAnalysisTool(ctx: ToolContext) {
+  return tool(
+    async ({ analysis }) => {
+      if (!ctx.projectId) return "ERROR: this task belongs to no project."
+      const a = ctx.deps.log.projectAnalyses(ctx.projectId).find((x) => x.id === analysis)
+      if (!a) return `ERROR: there is no analysis ${analysis} in this project.`
+      return redactedJson({ analysis: a.id, task: a.taskId, state: a.state, package: a.pkg, report: a.report, evidence: a.evidenceList, error: a.error })
+    },
+    {
+      name: READ_ANALYSIS,
+      description: `Read one earlier analysis of this project in full: the package it was given, the specialist's whole report and its evidence. Ids come from ${PROJECT_ANALYSES}.`,
+      schema: z.object({ analysis: z.string().uuid().describe(`An analysis id from ${PROJECT_ANALYSES}.`) }),
     },
   )
 }

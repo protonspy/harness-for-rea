@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -16,6 +17,7 @@ import { listModels } from "../src/main/orchestrator/models"
 import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { ProjectStore, type NewProject } from "../src/main/projects"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import { RESTARTED, SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
 import { FilesystemBackend } from "deepagents"
@@ -1433,11 +1435,19 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
       settings: () => settings,
       apiKey: () => "sk-or-v1-testkey000000",
       workspace: async (task) => {
-        sandboxes = new SpecialistBoxes({ exec, log, taskDir: log.taskDir(task.id), sourceRoot: root, taskId: task.id, everyMs: 60_000 })
+        // A project of the task's own, so its sandboxes are recorded against it (specs/projects R2.3).
+        const projectId = randomUUID()
+        getDb()
+          .prepare(
+            `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, provider, model, orchestrator_effort, specialist_effort, created_at, updated_at)
+             VALUES (?, 'p', 'understand', ?, 'folder', ?, ?, 'openrouter', 'm', 'default', 'default', 0, 0)`,
+          )
+          .run(projectId, root, root, data)
+        sandboxes = new SpecialistBoxes({ exec, log, dir: log.taskDir(task.id), sourceRoot: root, projectId, everyMs: 60_000 })
         return {
           backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
           root: "/",
-          sandboxes,
+          sandboxes: sandboxes.forTask(task.id),
           dispose: () => sandboxes.stopAll(),
         }
       },
@@ -1541,7 +1551,7 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
     ]
     const r = sandboxRunner()
     await r.settled(r.start({ request: "x", sourceRoot: root }).id)
-    expect(results[0]).toMatch(/^ERROR: There is no sandbox 00000000-0000-4000-8000-000000000000 in this task/)
+    expect(results[0]).toMatch(/^ERROR: There is no sandbox 00000000-0000-4000-8000-000000000000 in this project/)
     expect(results[1]).toMatch(/^ERROR: .*outside\.txt cannot be copied/)
     expect(existsSync(join(data, "workspace", id, "src", "a.ts"))).toBe(false)
   })
@@ -1826,5 +1836,102 @@ describe("deleting safely (specs/task-persistence R4)", () => {
     release()
     await deleting
     expect(r.isLive(task.id)).toBe(false)
+  })
+})
+
+describe("tasks in a project (specs/projects R2)", () => {
+  const efforts: unknown[] = []
+  const projectRunner = (store: ProjectStore) =>
+    new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: {
+        preflight: async () => null,
+        launch: (ws, mode, o) => {
+          efforts.push(o.specialistEffort)
+          return launcher().launch(ws, mode, o)
+        },
+      },
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      projects: store,
+      workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+    })
+  const newProject = (store: ProjectStore, o: Partial<NewProject> = {}) =>
+    store.create({
+      name: "parser",
+      goal: "reimplement",
+      target: root,
+      provider: "openrouter",
+      model: "z-ai/glm-5.3-flash",
+      orchestratorEffort: "high",
+      specialistEffort: "max",
+      ...o,
+    })
+  beforeEach(() => void (efforts.length = 0))
+
+  it("runs on the project's target with its goal, model and efforts, its folder under the project's (R2.1, R2.2, R1.5)", async () => {
+    const store = new ProjectStore(data)
+    const p = await newProject(store)
+    script = [{ tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }, { content: "Done." }]
+    const r = projectRunner(store)
+    const task = r.start({ projectId: p.id, request: REQUEST, auto: true })
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ projectId: p.id, sourceRoot: root, model: "z-ai/glm-5.3-flash", state: "awaiting-user" })
+    expect(requests[0].model).toBe("z-ai/glm-5.3-flash")
+    expect(requests[0].reasoning).toEqual({ effort: "high" })
+    expect(efforts).toEqual(["max"])
+    expect(JSON.stringify(requests[0].messages[0].content)).toContain("the user's goal for this target is to reimplement or port the target")
+    expect(log.taskDir(task.id)).toBe(join(p.folder, "tasks", task.id))
+    expect(readdirSync(join(p.folder, "tasks", task.id, "workspace"))).toHaveLength(1)
+  })
+
+  it("reads what earlier tasks of the project found, and nothing of another project's (R2.4, R2.5)", async () => {
+    const store = new ProjectStore(data)
+    const p = await newProject(store)
+    const other = await newProject(store, { name: "other" })
+    // a first task leaves one analysis
+    script = [{ tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }, { content: "Found it." }]
+    const r = projectRunner(store)
+    const first = r.start({ projectId: p.id, request: REQUEST, auto: true })
+    await r.settled(first.id)
+    const [analysis] = log.projectAnalyses(p.id)
+    expect(analysis).toMatchObject({ taskId: first.id, state: "done", objective: delegateModify.args.objective, evidence: 1 })
+    // a second task is told about it, lists it and reads it
+    const results: string[] = []
+    requests = []
+    script = [
+      { tool_calls: [{ name: "project_analyses", args: {} }] },
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "read_analysis", args: { analysis: analysis.id } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "Reused it." }
+      },
+    ]
+    const second = r.start({ projectId: p.id, request: "Now the lexer.", auto: true })
+    await r.settled(second.id)
+    expect(JSON.stringify(requests[0].messages[0].content)).toContain("Earlier tasks of this project left 1 analysis by the specialist")
+    expect(JSON.parse(results[0]).analyses).toEqual([
+      expect.objectContaining({ analysis: analysis.id, task: first.id, objective: delegateModify.args.objective }),
+    ])
+    expect(JSON.parse(results[1])).toMatchObject({ analysis: analysis.id, report: expect.stringContaining("analysed src/a.ts") })
+    // another project's task sees none of it
+    requests = []
+    const reads: string[] = []
+    script = [
+      { tool_calls: [{ name: "read_analysis", args: { analysis: analysis.id } }] },
+      (body) => {
+        reads.push(lastTool(body))
+        return { content: "ok" }
+      },
+    ]
+    const third = r.start({ projectId: other.id, request: "x", auto: true })
+    await r.settled(third.id)
+    expect(reads[0]).toMatch(/^ERROR: there is no analysis .* in this project/)
+    expect(JSON.stringify(requests[0].messages[0].content)).not.toContain("Earlier tasks of this project")
   })
 })
