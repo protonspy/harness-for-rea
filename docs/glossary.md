@@ -23,7 +23,7 @@ anyone in the domain.
 <!-- Entries go below this line. Delete the guidance above once they read for
 themselves. -->
 
-- **orchestrator** — the DeepAgents agent on an OpenRouter model that plans a task, delegates steps and consolidates the results. Avoid: coordinator, planner agent
+- **orchestrator** — the DeepAgents agent on a model from OpenRouter, DeepSeek or another OpenAI-compatible provider that plans a task, delegates steps and consolidates the results. Avoid: coordinator, planner agent
 - **specialist** — the Claude Opus agent run through the pinned Claude Code CLI for steps that need deep analysis. Avoid: expert agent, worker agent
 - **delegation** — handing one step from the orchestrator to the specialist with a context package. Avoid: handoff
 - **context package** — what a delegation carries: the orchestrator's brief, objective, files and excerpts, environment facts, questions, constraints, and the expected report format. Avoid: context bundle

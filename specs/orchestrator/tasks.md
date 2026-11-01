@@ -5,6 +5,10 @@
 - [x] 1.1 (Unit) Build `ChatOpenRouter` from settings with the fallback model, `data_collection: "deny"` and a usage callback that records events and task totals — R1.1, R1.2, R1.3
 - [x] 1.2 (Unit) Map OpenRouter failures to messages the user can act on — R1.4
 - [x] 1.3 (Unit) Send the chosen reasoning effort as `reasoning.effort` through `ChatOpenRouter`'s model arguments — R1.5
+- [x] 1.4 (Unit) Choose the orchestrator's model by provider: `ChatOpenAI` at a base URL for DeepSeek and custom endpoints, one encrypted key per provider, errors that name the provider — R1.6, R1.7, R1.8
+  _Depends 1.1_
+- [x] 1.5 (Unit) List the chosen provider's models from its `/models` in main and offer them in Settings beside the typed name — R1.9
+  _Depends 1.4_
 
 ## 2 · Delegation
 

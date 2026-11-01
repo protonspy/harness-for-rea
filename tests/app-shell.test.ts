@@ -82,6 +82,10 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "cancelTask", ["../../etc"])).rejects.toThrow(/invalid arguments for cancelTask/)
     await expect(dispatch(PAGE, "saveSettings", [{ model: "x; rm -rf /" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ extra: 1 }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveSettings", [{ provider: "nope" }])).rejects.toThrow(/invalid arguments/)
+    for (const baseUrl of ["file:///etc/passwd", "not a url", "https://user:pw@host.example/v1"])
+      await expect(dispatch(PAGE, "saveSettings", [{ baseUrl }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveKey", ["sk-deepseek-1234567890", "nope"])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ specialistEffort: "ultra" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "startTask", [{ request: "", sourceRoot: "C:/x" }])).rejects.toThrow(/invalid arguments/)
     expect(ran).toEqual([])
@@ -147,6 +151,24 @@ describe("credentials (R3.1–R3.3)", () => {
     onKey((k) => seen.push(k))
     saveKey("sk-or-v1-zzzzzzzz9999")
     expect(seen).toContain("sk-or-v1-zzzzzzzz9999")
+  })
+
+  it("keeps one key per provider, OpenRouter's in its original slot", () => {
+    saveKey("sk-or-v1-abcdef1234567890")
+    saveKey("sk-deepseek-1234567890", "deepseek")
+    expect(getSetting<string>("openrouter.key", "")).not.toBe("")
+    expect(getSetting<string>("deepseek.key", "")).not.toBe("")
+    initKey()
+    expect(readKey()).toBe("sk-or-v1-abcdef1234567890")
+    expect(readKey("deepseek")).toBe("sk-deepseek-1234567890")
+    expect(readKey("custom")).toBeNull()
+    expect(keyStatus("deepseek").hint).toBe("…7890")
+    clearKey("deepseek")
+    expect(readKey("deepseek")).toBeNull()
+    expect(readKey()).toBe("sk-or-v1-abcdef1234567890")
+    const seen: string[] = []
+    onKey((k) => seen.push(k))
+    expect(seen).toEqual(["sk-or-v1-abcdef1234567890"])
   })
 
   it("forgets the key when cleared, and treats a corrupt record as no key", () => {

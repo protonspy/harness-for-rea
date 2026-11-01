@@ -37,6 +37,7 @@ themselves. -->
 - **lucide-react** — icons, as in `study-lab`.
 - **node:sqlite** — built into the Node that Electron bundles, so no native module to rebuild; holds tasks, steps and events ([adr:0005-store-events-in-sqlite-with-raw-jsonl-per-task]).
 - **deepagents** — orchestration: planning, delegation tools, filesystem backends and approval interrupts ([adr:0001-use-deepagents-on-openrouter-for-orchestration]).
+- **@langchain/openai** — the OpenAI chat client behind the DeepSeek and custom orchestrator providers, which only need a base URL and a key ([adr:0014-add-openai-compatible-orchestrator-providers]); already installed beneath DeepAgents and `@langchain/openrouter`.
 - **langchain** — `todoListMiddleware`, which DeepAgents 1.15 no longer adds by default and which provides `write_todos`.
 - **@langchain/langgraph** — `MemorySaver` and `Command`, the checkpointer and resume command behind patch approval.
 - **langsmith** — a peer dependency of DeepAgents; nothing is sent to LangSmith.

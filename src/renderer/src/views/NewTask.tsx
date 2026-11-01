@@ -1,6 +1,7 @@
 import { FolderOpen, Play } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ALWAYS_GATED, GATEABLE_TOOLS, type GateableTool } from "@shared/chat"
+import { PROVIDERS } from "@shared/providers"
 import type { KeyStatus, SandboxStatus, TaskRow } from "@shared/types"
 import { ErrorText, Field } from "@/components/common"
 import { Button } from "@/components/ui/button"
@@ -27,10 +28,14 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
   const [busy, setBusy] = useState(false)
   const [gated, setGated] = useState<GateableTool[]>([ALWAYS_GATED])
   const [key, setKey] = useState<KeyStatus | null>(null)
+  const [provider, setProvider] = useState("OpenRouter")
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
 
   useEffect(() => {
-    void window.hfr.api.keyStatus().then(setKey)
+    void window.hfr.api.getSettings().then((st) => {
+      setProvider(PROVIDERS[st.provider].label)
+      return window.hfr.api.keyStatus(st.provider).then(setKey)
+    })
     void window.hfr.api.sandboxStatus().then(setSandbox)
   }, [])
 
@@ -51,7 +56,7 @@ export function NewTask({ onStarted, onSettings }: { onStarted(t: TaskRow): void
     }
   }
 
-  const missing = [!key?.set && "an OpenRouter key", sandbox && !(sandbox.docker && sandbox.images) && "a running Docker with the sandbox images"].filter(
+  const missing = [!key?.set && `a ${provider} key`, sandbox && !(sandbox.docker && sandbox.images) && "a running Docker with the sandbox images"].filter(
     Boolean,
   )
 

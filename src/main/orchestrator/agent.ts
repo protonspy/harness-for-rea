@@ -2,11 +2,11 @@ import { HumanMessage, ToolMessage } from "@langchain/core/messages"
 import type { BaseCheckpointSaver } from "@langchain/langgraph"
 import { createDeepAgent, isSandboxBackend, type BaseSandbox, type FilesystemBackend } from "deepagents"
 import { createMiddleware, todoListMiddleware } from "langchain"
-import type { ChatOpenRouter } from "@langchain/openrouter"
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { APPLY_PATCH, applyPatchTool, ASK_USER, askUserTool, DELEGATE, delegateTool, PROPOSE_PATCH, proposePatchTool, type ToolContext } from "./tools"
 
 /*
-  The orchestrator agent (specs/orchestrator R2, R3.1; adr:0001-use-deepagents-on-openrouter-for-orchestration):
+  The orchestrator agent (specs/orchestrator R2, R3.1; adr:0001-use-deepagents-on-openrouter-for-orchestration, adr:0014-add-openai-compatible-orchestrator-providers):
   DeepAgents with `write_todos` for decomposition, the source tree read-only in the task's sandbox
   (adr:0007-run-the-orchestrators-tools-in-a-task-container), the specialist as a tool, and
   `apply_patch` paused for the user's decision. Messages the user sends mid-turn join the
@@ -100,7 +100,7 @@ export function inboxMiddleware(drain: () => string[]) {
 }
 
 export function buildAgent(o: {
-  model: ChatOpenRouter
+  model: BaseChatModel
   ctx: ToolContext
   checkpointer: BaseCheckpointSaver
   backend: AgentBackend
