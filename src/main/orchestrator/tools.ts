@@ -4,13 +4,15 @@ import { z } from "zod"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { ContextPackageSchema } from "@shared/context"
 import type { SpecialistEffort } from "@shared/types"
-import { approvePatch, delegate, DelegationRefused, type DelegationDeps } from "../delegation"
+import { withoutContract, type Contract } from "@shared/contract"
+import { approvePatch, delegate, DelegationRefused, SafeguardRefusal, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
 import { PathRejected } from "../sandbox/paths"
 import { COMMAND_DEFAULT_S, COMMAND_MAX_S, SandboxError, type TaskSandboxes } from "../sandbox/specialistbox"
 import { PREPARED, type PreparedFile } from "../sandbox/workspace"
 import { SpecialistError } from "../specialist/executor"
+import { compare, replayCommand, type Outcome } from "./replay"
 
 /*
   The orchestrator's own tools (specs/orchestrator R2.3–R2.5, R3.1): the specialist behind
@@ -32,6 +34,7 @@ export const PREPARED_CAP = 512 * 1024 * 1024
 export const SANDBOX_COPY = "sandbox_copy"
 export const SANDBOX_EXEC = "sandbox_exec"
 export const SANDBOX_DESTROY = "sandbox_destroy"
+export const REPLAY_VECTORS = "replay_vectors"
 
 export interface ToolContext {
   deps: DelegationDeps
@@ -42,6 +45,8 @@ export interface ToolContext {
   signal: AbortSignal
   /** puts a question to the user and settles with the answer, or the default and why; a specialist's names its delegation step */
   ask?(q: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }>
+  /** the user's choice after a safeguard refusal, waited on with no timeout; a stop has cancelled the task (specs/specialist-lifecycle R2.2) */
+  refusal?(stepId: string, message: string): Promise<RefusalChoice>
   /** the agent's writable scratch in its sandbox, when it has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
   /** the task runs its calls without asking, so nobody approves a patch it applies (specs/chat R4.1) */
@@ -54,6 +59,8 @@ export interface ToolContext {
   projectId?: string | null
   /** the specialist's effort for this task's delegations, the project's (specs/projects R2.1) */
   specialistEffort?: SpecialistEffort
+  /** runs a shell command in the task's sandbox, where the orchestrator's code is (specs/vector-replay R2.1) */
+  run?(command: string): Promise<{ output: string; exitCode: number | null; truncated?: boolean }>
 }
 
 function redactedJson(v: unknown): string {
@@ -85,9 +92,23 @@ function splitFiles(ctx: ToolContext, files: string[]) {
   return { scratch, name, source: files.filter((f) => !inScratch(f, ctx.scratch)).map(name) }
 }
 
+export type RefusalChoice = { choice: "stop" } | { choice: "skip" } | { choice: "approach"; approach: string }
+
+/**
+  What the orchestrator reads after a safeguard refusal (specs/specialist-lifecycle R2.4, R2.6): that it was one,
+  and the user's choice — never a cue to reword the request or justify it.
+*/
+export function refusalReport(message: string, c: RefusalChoice | null): string {
+  const head = `ERROR: SAFEGUARD REFUSAL. ${message} This is not a failure to retry: never reword the refused request or add a purpose or an authorization to a brief so that it passes.`
+  if (!c) return `${head} Tell the user it was refused and ask how to go on.`
+  if (c.choice === "approach")
+    return `${head} The user asks for a different technical approach, in their words: ${JSON.stringify(c.approach)}. Delegate a step that takes that approach, scoped and technical as always.`
+  return `${head} The user chose to skip this step: continue the task without it, and do not delegate it again.`
+}
+
 export function delegateTool(ctx: ToolContext) {
   return tool(
-    async ({ sandbox, ...input }) => {
+    async ({ sandbox, ...input }, config?: { toolCall?: { id?: string } }) => {
       if (sandbox && !ctx.sandboxes) return "ERROR: this task has no sandboxes."
       // A file from the scratch goes to the specialist under .orchestrator/ (specs/chat R6.7); the rest are the source's.
       const { scratch, name } = splitFiles(ctx, input.files)
@@ -112,10 +133,15 @@ export function delegateTool(ctx: ToolContext) {
           prepared,
           sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
           specialistEffort: ctx.specialistEffort,
+          callId: config?.toolCall?.id,
+          projectId: ctx.projectId,
         })
         // The report goes to OpenRouter: no secret shape leaves the machine in it.
         return redactedJson({
-          report: r.report,
+          // The contract comes on its own, so the report is read without it (specs/analysis-contract R1.5).
+          report: r.contract ? withoutContract(r.report) : r.report,
+          contract: r.contract,
+          ...(r.contractProblems ? { contractProblems: r.contractProblems } : {}),
           evidence: r.evidence,
           patch: r.patch
             ? {
@@ -127,6 +153,11 @@ export function delegateTool(ctx: ToolContext) {
         })
       } catch (e) {
         if (e instanceof SpecialistError && e.kind === "cancelled") throw e
+        if (e instanceof SafeguardRefusal) {
+          const choice = ctx.refusal ? await ctx.refusal(e.stepId, e.message) : null
+          if (choice?.choice === "stop") throw new SpecialistError("cancelled", "Cancelled.")
+          return refusalReport(e.message, choice)
+        }
         if (e instanceof DelegationRefused || e instanceof SpecialistError) return `ERROR: ${e.message}`
         throw e
       }
@@ -138,7 +169,7 @@ export function delegateTool(ctx: ToolContext) {
         "Files may come from the source or from your scratch area; the specialist gets the scratch ones under .orchestrator/, and they are never part of a patch.",
         "It sees nothing else: not the user's request, not this conversation. State the objective and questions so they stand on their own.",
         "Use mode 'modify' only when the step must change files; the change comes back as a patch.",
-        "Returns the specialist's report, its evidence lines (path:start-end — claim) and any patch.",
+        "Returns the specialist's report, its contract (functions, constants with their sources, unknowns opened and closed — checked by the app), its evidence lines (path:start-end — claim) and any patch.",
       ].join(" "),
       schema: DelegateSchema,
     },
@@ -453,6 +484,71 @@ export function readAnalysisTool(ctx: ToolContext) {
       name: READ_ANALYSIS,
       description: `Read one earlier analysis of this project in full: the package it was given, the specialist's whole report and its evidence. Ids come from ${PROJECT_ANALYSES}.`,
       schema: z.object({ analysis: z.string().uuid().describe(`An analysis id from ${PROJECT_ANALYSES}.`) }),
+    },
+  )
+}
+
+/** The contract of a delegation of this task or its project, or why there is none to read (specs/vector-replay R2.4). */
+function analysisContract(ctx: ToolContext, analysis: string): { contract: Contract | null } | string {
+  const { log } = ctx.deps
+  const own = log.steps(ctx.taskId).some((s) => s.id === analysis && s.kind === "delegation")
+  const shared = !own && ctx.projectId ? log.projectAnalyses(ctx.projectId).some((a) => a.id === analysis) : false
+  if (!own && !shared) return `there is no analysis ${analysis} in this task or its project`
+  return { contract: (log.getStep(analysis).data.contract as Contract | null | undefined) ?? null }
+}
+
+/**
+  Replay an analysis's test vectors against the orchestrator's own command in the task's sandbox, one at a time,
+  comparing standard output and the exit code with what the specialist observed (specs/vector-replay R2).
+*/
+export function replayVectorsTool(ctx: ToolContext) {
+  return tool(
+    async ({ analysis, command }) => {
+      if (!ctx.run) return "ERROR: this task has no sandbox to run commands in."
+      const found = analysisContract(ctx, analysis)
+      if (typeof found === "string") return `ERROR: ${found}.`
+      const vectors = found.contract?.vectors ?? []
+      if (!vectors.length)
+        return `ERROR: analysis ${analysis} recorded no test vectors; delegate again asking the specialist to run the target and record them.`
+      const outcomes: Outcome[] = []
+      for (const v of vectors) {
+        if (ctx.signal.aborted) break
+        const r = await ctx.run(replayCommand(command, v))
+        const o = compare(v, r.output, r.exitCode ?? -1)
+        outcomes.push(r.truncated ? { ...o, pass: false } : o)
+      }
+      const passed = outcomes.filter((o) => o.pass).length
+      const failed = outcomes.length - passed
+      ctx.deps.log.append({
+        taskId: ctx.taskId,
+        agent: "orchestrator",
+        kind: "vectors.replayed",
+        summary: `Replayed ${outcomes.length} test vector(s): ${passed} passed, ${failed} failed`,
+        payload: {
+          analysis,
+          command,
+          passed,
+          failed,
+          ...(failed
+            ? {
+                error: outcomes
+                  .filter((o) => !o.pass)
+                  .map((o) => o.name)
+                  .join(", "),
+              }
+            : {}),
+        },
+      })
+      return redactedJson({ analysis, command, passed, failed, outcomes })
+    },
+    {
+      name: REPLAY_VECTORS,
+      description:
+        "Replay the test vectors an analysis recorded — inputs given to the target and the output and exit code it produced — against your own reimplementation, in your sandbox. `command` runs your code (e.g. `python3 /scratch/impl.py`); each vector's arguments are appended and its standard input piped in. Returns each vector's outcome and what differed.",
+      schema: z.object({
+        analysis: z.string().uuid().describe("The delegation whose contract recorded the vectors: one of this task's, or an analysis id of its project."),
+        command: z.string().trim().min(1).max(2000).describe("The command that runs your reimplementation, one program and its fixed arguments."),
+      }),
     },
   )
 }

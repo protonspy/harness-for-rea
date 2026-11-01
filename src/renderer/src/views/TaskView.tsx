@@ -1,11 +1,12 @@
 import { ListTodo, RotateCcw, ScrollText, SquareX, Trash2, Users, Wallet } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { Answer, ToolDecision } from "@shared/chat"
 import type { Push, TaskHistory } from "@shared/types"
 import { ApprovalCard } from "@/components/chat/ApprovalCard"
 import { Composer } from "@/components/chat/Composer"
-import { AgentMessage, Notice, ToolCall, ToolRun, UserMessage } from "@/components/chat/Messages"
+import { AgentMessage, Notice, ToolCall, ToolRun, UserMessage, type ToolContext } from "@/components/chat/Messages"
 import { QuestionCard } from "@/components/chat/QuestionCard"
+import { VirtualTimeline } from "@/components/chat/VirtualTimeline"
 import { ErrorText, Mono } from "@/components/common"
 import { DelegationCard } from "@/components/DelegationCard"
 import { EventLogPanel } from "@/components/EventLog"
@@ -14,54 +15,81 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { blocks, canClose, canDelete, conversation, pendingCalls, pendingQuestions } from "@/lib/chat"
+import { blocks, canClose, canDelete, pendingCalls, pendingQuestions, type ChatBlock } from "@/lib/chat"
 import { tokens, tone, usd, when } from "@/lib/format"
-import { canRetry, fold, isLive, usageByAgent } from "@/lib/store"
+import { addUsage, canRetry, fold, isLive } from "@/lib/store"
+import { Timeline } from "@/lib/timeline"
 
 /*
-  One task as a conversation (specs/chat R7): the messages, tool calls, approvals and questions in
-  order, the message box under them, and beside them the plan, delegations, usage and event log.
+  One task as a chat timeline (specs/chat R7, specs/chat-timeline): the newest page of its events first,
+  older pages as the user scrolls up, only the entries near the viewport rendered, the message box under
+  them, and beside them the plan, delegations, usage and event log. Usage and step state are the main
+  process's, for the whole task (specs/chat-timeline R3.3).
 */
 
+/** Events per page read from the log (specs/chat-timeline R2.2). */
+const PAGE = 400
+
 export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: string): void; onDeleted(): void }) {
+  /** the history without its events, which the timeline holds */
   const [h, setH] = useState<TaskHistory | null>(null)
+  const [timeline, setTimeline] = useState<Timeline | null>(null)
+  /** the timeline's entries, taken again whenever it folds in place (specs/chat-timeline R3.2) */
+  const [entries, setEntries] = useState<ChatBlock[]>([])
   const [error, setError] = useState("")
   const api = window.hfr.api
-  const viewport = useRef<HTMLDivElement>(null)
+  const loadingOlder = useRef(false)
 
   useEffect(() => {
     let alive = true
+    let line: Timeline | null = null
     const queued: Push[] = []
-    let loaded = false
-    const off = window.hfr.onPush((p) => (loaded ? setH((cur) => fold(cur, p)) : queued.push(p)))
-    const load = async () => {
-      let hist = await api.getTask(id, {})
-      while (hist.hasMore) {
-        const more = await api.getTask(id, { afterEvent: hist.events.at(-1)!.id })
-        hist = { ...more, turn: hist.turn, events: [...hist.events, ...more.events] }
-      }
-      if (!alive) return
-      loaded = true
-      setH(queued.reduce((cur, p) => fold(cur, p), hist as TaskHistory | null))
+    const apply = (p: Push) => {
+      if (p.type === "event") {
+        if (p.event.taskId !== id || !line) return
+        if (line.append([p.event])) {
+          setEntries(blocks(line.items))
+          setH((cur) => (cur ? { ...cur, usage: addUsage(cur.usage, p.event) } : cur))
+        }
+      } else setH((cur) => fold(cur, p))
     }
-    void load()
+    const off = window.hfr.onPush((p) => (line ? apply(p) : queued.push(p)))
+    void api.getTask(id, { limit: PAGE }).then((hist) => {
+      if (!alive) return
+      line = new Timeline(hist.steps, hist.events, !hist.hasOlder)
+      setTimeline(line)
+      setEntries(blocks(line.items))
+      setH({ ...hist, events: [] })
+      for (const p of queued) apply(p)
+    })
     return () => {
       alive = false
       off()
     }
   }, [api, id])
 
-  const items = useMemo(() => conversation(h?.events ?? [], h?.steps ?? []), [h?.events, h?.steps])
-  const usage = useMemo(() => usageByAgent(h?.events ?? []), [h?.events])
+  const loadOlder = useCallback(() => {
+    const t = timeline
+    if (!t || t.fromStart || loadingOlder.current) return
+    loadingOlder.current = true
+    void api
+      .getTask(id, { beforeEvent: t.firstId, limit: PAGE })
+      .then((older) => {
+        // Events pushed while the page loaded are already in `t`; the refold keeps them (R2.3).
+        const whole = t.prepend(older.events, older.steps, !older.hasOlder)
+        setTimeline(whole)
+        setEntries(blocks(whole.items))
+      })
+      .finally(() => {
+        loadingOlder.current = false
+      })
+  }, [api, id, timeline])
 
-  // Follow the conversation while the user is at its end; leave them where they are when they scrolled up.
-  useEffect(() => {
-    const el = viewport.current
-    if (items.length && el && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight
-  }, [items.length])
+  const items = timeline?.items ?? []
 
-  if (!h) return null
-  const { task } = h
+  if (!h || !timeline) return null
+  const { task, usage } = h
+  const ctx: ToolContext = { steps: h.steps, events: timeline.events, patches: h.patches, run: (stepId) => timeline.run(stepId) }
   const state = h.turn ?? task.state
   const todos = h.steps.filter((s) => s.kind === "todo")
   const delegations = h.steps.filter((s) => s.kind === "delegation")
@@ -139,32 +167,37 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
           </div>
         </header>
 
-        <ScrollArea className="min-h-0 flex-1" viewportRef={viewport}>
-          <div className="mx-auto flex max-w-4xl flex-col gap-4 px-6 py-5">
-            {blocks(items).map((item) => {
-              switch (item.kind) {
-                case "user":
-                  return <UserMessage key={item.id} item={item} />
-                case "agent":
-                  return <AgentMessage key={item.id} item={item} />
-                case "tools":
-                  return <ToolRun key={item.id} items={item.items} steps={h.steps} events={h.events} patches={h.patches} />
-                case "tool":
-                  return <ToolCall key={item.id} item={item} steps={h.steps} events={h.events} patches={h.patches} />
-                case "approval":
-                  return <ApprovalCard key={item.id} item={item} patches={h.patches} onDecide={decide} />
-                case "question":
-                  return <QuestionCard key={item.id} item={item} onAnswer={(a) => answer(item.id, a)} />
-                case "notice":
-                  return <Notice key={item.id} item={item} />
-              }
-            })}
-            {orphans.map((p) => (
-              <PatchReview key={p.id} patch={p} onDecide={async (d) => void (await act(() => api.decidePatch(id, p.id, d)))} />
-            ))}
-            {task.error && <ErrorText>{task.error}</ErrorText>}
-          </div>
-        </ScrollArea>
+        <VirtualTimeline<ChatBlock>
+          entries={entries}
+          onNearTop={loadOlder}
+          top={!timeline.fromStart && <p className="pb-4 text-center text-xs text-muted-foreground">Loading earlier events…</p>}
+          bottom={
+            <>
+              {orphans.map((p) => (
+                <PatchReview key={p.id} patch={p} onDecide={async (d) => void (await act(() => api.decidePatch(id, p.id, d)))} />
+              ))}
+              {task.error && <ErrorText>{task.error}</ErrorText>}
+            </>
+          }
+          render={(item) => {
+            switch (item.kind) {
+              case "user":
+                return <UserMessage item={item} />
+              case "agent":
+                return <AgentMessage item={item} />
+              case "tools":
+                return <ToolRun items={item.items} ctx={ctx} />
+              case "tool":
+                return <ToolCall item={item} ctx={ctx} />
+              case "approval":
+                return <ApprovalCard item={item} patches={h.patches} onDecide={decide} />
+              case "question":
+                return <QuestionCard item={item} onAnswer={(a) => answer(item.id, a)} />
+              case "notice":
+                return <Notice item={item} />
+            }
+          }}
+        />
 
         <div className="px-6">
           <ErrorText>{error}</ErrorText>
@@ -214,7 +247,7 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
               <div className="flex flex-col gap-3">
                 {delegations.length === 0 && <p className="text-sm text-muted-foreground">No delegation yet.</p>}
                 {delegations.map((s) => (
-                  <DelegationCard key={s.id} step={s} events={h.events} patches={h.patches} />
+                  <DelegationCard key={s.id} step={s} events={timeline.events} patches={h.patches} run={timeline.run(s.id)} />
                 ))}
               </div>
             </ScrollArea>
@@ -252,7 +285,7 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
             <p className="mt-2 text-xs text-muted-foreground">The specialist's cost is Claude Code's estimate against your plan, not a charge.</p>
           </TabsContent>
           <TabsContent value="log" className="min-h-0">
-            <EventLogPanel events={h.events} steps={h.steps} />
+            <EventLogPanel events={timeline.events} steps={h.steps} />
           </TabsContent>
         </Tabs>
       </aside>

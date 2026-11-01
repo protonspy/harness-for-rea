@@ -32,7 +32,9 @@ export interface ToolItem {
   input: string
   output?: string
   failed: boolean
-  /** the delegation this call started, for `delegate_to_specialist` */
+  /** the call's id, which pairs its result and the delegation it started (specs/chat-timeline R1.1) */
+  callId?: string
+  /** the delegation this call started, for `delegate_to_specialist`, when it is known from the order of a whole log */
   stepId?: string
 }
 
@@ -76,6 +78,8 @@ const NOTICES: Record<string, NoticeItem["tone"]> = {
   "turn.stopped": "warn",
   "turn.continued": "neutral",
   "question.capped": "warn",
+  // its own state, settled by the user's choice (specs/specialist-lifecycle R2.1)
+  "safeguard.refusal": "warn",
   "task.failed": "bad",
   "task.cancelled": "warn",
   "task.interrupted": "bad",
@@ -86,22 +90,47 @@ const ENDS = new Set(["task.done", "task.failed", "task.cancelled", "task.interr
 
 const str = (v: unknown) => (typeof v === "string" ? v : v === undefined ? "" : JSON.stringify(v, null, 2))
 
-export function conversation(events: EventRow[], steps: StepRow[] = []): ChatItem[] {
-  const items: ChatItem[] = []
-  const open = new Map<string, ToolItem[]>()
-  const calls = new Map<string, GatedCall>()
-  const questions = new Map<string, QuestionItem>()
-  const delegations = steps.filter((s) => s.kind === "delegation").sort((a, b) => a.ord - b.ord)
-  let delegated = 0
-  let users = 0
-  // Tasks run before the chat recorded no messages: their request and answer stand in for them.
-  const legacy = !events.some((e) => e.kind === "message.user")
-  for (const e of events) {
+/**
+  The fold behind `conversation`, kept between calls so new events are folded without the old ones
+  (specs/chat-timeline R3.2). `fromStart` says the first event given is the task's first, so the first
+  message is the opening request; a page that starts mid-task has none.
+*/
+export class ChatFold {
+  readonly items: ChatItem[] = []
+  private readonly open = new Map<string, ToolItem[]>()
+  private readonly byCall = new Map<string, ToolItem>()
+  private readonly calls = new Map<string, GatedCall>()
+  private readonly questions = new Map<string, QuestionItem>()
+  private readonly delegations: StepRow[]
+  private delegated = 0
+  private users: number
+  /** the request of a task run before the chat recorded messages, until a message shows it was not one */
+  private started: UserItem | null = null
+  private sawUser = false
+
+  constructor(steps: StepRow[] = [], fromStart = true) {
+    // Steps that recorded no call id are paired with their calls by order, which only a whole log can do.
+    this.delegations = steps.filter((s) => s.kind === "delegation" && !s.data.callId).sort((a, b) => a.ord - b.ord)
+    this.users = fromStart ? 0 : 1
+  }
+
+  add(events: EventRow[]): this {
+    for (const e of events) this.one(e)
+    return this
+  }
+
+  private one(e: EventRow) {
+    const { items } = this
     const id = `e${e.id}`
     const p = e.payload
     switch (e.kind) {
       case "message.user":
-        items.push({ kind: "user", id, at: e.at, text: str(p.output), read: users++ === 0 })
+        if (this.started && !this.sawUser) {
+          items.splice(items.indexOf(this.started), 1)
+          this.started = null
+        }
+        this.sawUser = true
+        items.push({ kind: "user", id, at: e.at, text: str(p.output), read: this.users++ === 0 })
         break
       case "message.read": {
         const text = str(p.output)
@@ -116,56 +145,71 @@ export function conversation(events: EventRow[], steps: StepRow[] = []): ChatIte
         if (e.agent !== "orchestrator") break
         const name = String(p.tool ?? e.summary)
         const item: ToolItem = { kind: "tool", id, at: e.at, name, input: str(p.input), failed: false }
-        if (name === "delegate_to_specialist") item.stepId = delegations[delegated++]?.id
+        if (typeof p.callId === "string" && p.callId) {
+          item.callId = p.callId
+          this.byCall.set(p.callId, item)
+        } else {
+          if (name === "delegate_to_specialist") item.stepId = this.delegations[this.delegated++]?.id
+          this.open.set(name, [...(this.open.get(name) ?? []), item])
+        }
         items.push(item)
-        open.set(name, [...(open.get(name) ?? []), item])
         break
       }
       case "tool.result":
       case "tool.error": {
-        const name = String(p.tool ?? "")
-        const item = open.get(name)?.shift()
+        const callId = typeof p.callId === "string" ? p.callId : ""
+        const item = callId ? this.byCall.get(callId) : this.open.get(String(p.tool ?? ""))?.shift()
         if (!item) break
+        this.byCall.delete(callId)
         item.output = e.kind === "tool.error" ? str(p.error) : str(p.output)
         item.failed = e.kind === "tool.error" || item.output.startsWith("ERROR:")
         break
       }
       case "approval.requested": {
         const requested = ((p.calls as GatedCall[] | undefined) ?? []).map((c) => ({ callId: c.callId, name: c.name, args: c.args ?? {} }))
-        for (const c of requested) calls.set(c.callId, c)
+        for (const c of requested) this.calls.set(c.callId, c)
         if (requested.length) items.push({ kind: "approval", id, at: e.at, calls: requested })
         break
       }
       case "approval.decided": {
-        const call = calls.get(String(p.callId ?? ""))
+        const call = this.calls.get(String(p.callId ?? ""))
         if (call) Object.assign(call, { decision: p.decision as ToolDecision, origin: p.origin as Origin })
         break
       }
       case "question.asked": {
         const q: QuestionItem = { kind: "question", id: String(p.questionId), at: e.at, agent: e.agent, stepId: e.stepId, question: p.question as Question }
-        questions.set(q.id, q)
+        this.questions.set(q.id, q)
         items.push(q)
         break
       }
       case "question.answered": {
-        const q = questions.get(String(p.questionId ?? ""))
+        const q = this.questions.get(String(p.questionId ?? ""))
         if (q) Object.assign(q, { answer: p.answer as Answer, origin: p.origin as Origin })
         break
       }
       case "task.started":
-        if (legacy && p.input) items.push({ kind: "user", id, at: e.at, text: str(p.input), read: true })
+        // Tasks run before the chat recorded no messages: their request and answer stand in for them.
+        if (p.input && !this.sawUser) {
+          this.started = { kind: "user", id, at: e.at, text: str(p.input), read: true }
+          items.push(this.started)
+        }
         break
       default:
         // A task that ended settles whatever still waited on the user, so no card stays actionable.
         if (ENDS.has(e.kind)) {
-          for (const c of calls.values()) if (!c.decision) Object.assign(c, { decision: { type: "reject" }, origin: "stopped" })
-          for (const q of questions.values()) if (q.origin === undefined) Object.assign(q, { answer: q.question.default, origin: "stopped" })
+          for (const c of this.calls.values()) if (!c.decision) Object.assign(c, { decision: { type: "reject" }, origin: "stopped" })
+          for (const q of this.questions.values()) if (q.origin === undefined) Object.assign(q, { answer: q.question.default, origin: "stopped" })
         }
-        if (legacy && e.kind === "task.done" && typeof p.output === "string" && p.output) items.push({ kind: "agent", id, at: e.at, text: p.output })
+        if (this.started && !this.sawUser && e.kind === "task.done" && typeof p.output === "string" && p.output)
+          items.push({ kind: "agent", id, at: e.at, text: p.output })
         else if (e.kind in NOTICES) items.push({ kind: "notice", id, at: e.at, text: e.summary, tone: NOTICES[e.kind] })
     }
   }
-  return items
+}
+
+/** The task as a conversation: a pure function of the log, so a reopened task renders exactly as it did live. */
+export function conversation(events: EventRow[], steps: StepRow[] = []): ChatItem[] {
+  return new ChatFold(steps).add(events).items
 }
 
 export type ChatBlock = Exclude<ChatItem, ToolItem> | { kind: "tools"; id: string; items: ToolItem[] } | (ToolItem & { delegation: true })
@@ -175,7 +219,7 @@ export function blocks(items: ChatItem[]): ChatBlock[] {
   const out: ChatBlock[] = []
   for (const i of items) {
     if (i.kind !== "tool") out.push(i)
-    else if (i.stepId) out.push({ ...i, delegation: true })
+    else if (i.stepId || i.name === "delegate_to_specialist") out.push({ ...i, delegation: true })
     else {
       const prev = out.at(-1)
       if (prev?.kind === "tools") prev.items.push(i)

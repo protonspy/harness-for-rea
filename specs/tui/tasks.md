@@ -1,25 +1,12 @@
-# Tui — tasks
+# TUI — tasks
 
-<!-- Grammar, per task, all four parts required:
+## 1 · Start
 
-       - [ ] <number> (Unit|TDD) <description> — <requirement ids>
+- [x] 1.1 (Unit) Keep the provider keys in the OS keychain through `Bun.secrets` — R1.3
+- [x] 1.2 (Unit) Start the core on the desktop app's data folder, and print and exit when the desktop app holds it — R1.1, R1.2
 
-     (Unit) writes the code, then a unit test per function, immediately, asserting
-     the requirement rather than the implementation. (TDD) writes the failing test
-     first and watches it fail — mandatory for money, complex algorithms, and
-     hypothesis validation.
+## 2 · Screens
 
-     A task is the right size when it can be verified on its own.
-
-     Every requirement must reach at least one task, and every task must cite a
-     requirement that exists. `scc spec validate` checks both directions.
-     Delete this comment. -->
-
-## 1 · <group name>
-
-- [ ] 1.1 (Unit) <description> — R1.1
-- [ ] 1.2 (TDD) <description> — R1.2, R1.3
-
-## 2 · <group name>
-
-- [ ] 2.1 (Unit) <description> — R1.1
+- [x] 2.1 (Unit) Render the setup steps, projects, tasks, timeline and waiting question as lines — R2.1, R3.1, R3.2, R3.3, R3.4
+- [x] 2.2 (Unit) Drive the setup, projects, project and task screens on OpenTUI, with the input line's commands — R2.1, R2.2, R3.1, R3.2, R3.3, R3.4, R3.5
+- [x] 2.3 (Unit) Run the TUI against the desktop app's data folder in a terminal, and each app refusing while the other runs — R1.1, R1.2, R3.3

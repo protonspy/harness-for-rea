@@ -7,23 +7,26 @@ import {
   checkAnswer,
   GATEABLE_TOOLS,
   QUESTION_CAP,
+  REFUSAL_CHOICES,
   type Answer,
   type GateableTool,
   type Origin,
   type Question,
   type ToolDecision,
 } from "@shared/chat"
+import type { ContextPackage } from "@shared/context"
 import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
 import { baseUrlFor } from "../readiness"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
+import { answerFromPackage, type Answerer, type ModelReply } from "./answer"
 import { makeModel } from "./model"
 import type { TaskSandboxes } from "../sandbox/specialistbox"
 import { RESTARTED } from "../sandbox/taskbox"
 import { SqliteSaver } from "./checkpoint"
-import { APPLY_PATCH, type ToolContext } from "./tools"
+import { APPLY_PATCH, type RefusalChoice, type ToolContext } from "./tools"
 
 /*
   A task's lifecycle (specs/orchestrator R3, specs/chat R1): start a conversation, pause a turn when
@@ -93,9 +96,16 @@ interface Live {
   inbox: string[]
   /** questions either agent waits on, by id (specs/chat R5) */
   questions: Map<string, { question: Question; settle(answer: Answer, origin: Origin): void }>
-  /** questions asked this turn, against the cap (R5.5) */
+  /** questions put to the user this turn, against the cap (R5.5) */
   asked: number
+  /** the task's chat model, which answers the specialist's questions first (specs/specialist-lifecycle R1) */
+  model?: Answerer
+  /** the specialist's questions put to that model this turn, against MODEL_ANSWER_CAP */
+  modelAnswered: number
 }
+
+/** The specialist's questions the orchestrator's model is asked in one turn; each sends the whole context package. */
+export const MODEL_ANSWER_CAP = 10
 
 interface PendingCall {
   callId: string
@@ -107,6 +117,12 @@ interface PendingCall {
 
 type Todo = { content?: string; status?: string }
 type Interrupt = { value?: { actionRequests?: { name: string; args: Record<string, unknown> }[] } }
+
+/** The backend's `execute`, when it runs commands; a plain filesystem backend does not. */
+function runnerOf(backend: AgentBackend): ToolContext["run"] {
+  const b = backend as Partial<{ execute(c: string): Promise<{ output: string; exitCode: number | null; truncated?: boolean }> }>
+  return typeof b.execute === "function" ? (c) => b.execute!.call(backend, c) : undefined
+}
 
 const patchOf = (p: PendingCall) => (p.name === APPLY_PATCH ? String(p.args.patchId ?? "") : null)
 
@@ -215,6 +231,7 @@ export class TaskRunner {
       root: "",
       signal: abort.signal,
       ask: (q, agent, stepId) => this.ask(task.id, q, agent, stepId),
+      refusal: (stepId, message) => this.refusal(task.id, stepId, message),
       projectId: task.projectId,
       specialistEffort: run.specialistEffort,
     }
@@ -231,6 +248,8 @@ export class TaskRunner {
             scratch: ws.scratch,
             sandboxes: ws.sandboxes,
             readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
+            // Commands run where the orchestrator's code is: the task's container (specs/vector-replay R2.1).
+            run: runnerOf(ws.backend),
           }),
           checkpointer: this.checkpointer,
           backend: ws.backend,
@@ -244,23 +263,34 @@ export class TaskRunner {
         }),
       }))
     ready.catch(() => undefined)
-    const names = new Map<string, string>()
+    const names = new Map<string, { name: string; callId: string }>()
     const callbacks = [
       {
-        handleToolStart: (_tool: unknown, toolInput: string, runId: string, _parent?: string, _tags?: string[], _meta?: unknown, runName?: string) => {
+        handleToolStart: (
+          _tool: unknown,
+          toolInput: string,
+          runId: string,
+          _parent?: string,
+          _tags?: string[],
+          _meta?: unknown,
+          runName?: string,
+          toolCallId?: string,
+        ) => {
           const name = runName ?? "tool"
-          names.set(runId, name)
+          // The call's id pairs its result, and the delegation it starts, on a page that begins mid-task (specs/chat-timeline R1.1).
+          const callId = toolCallId ?? ""
+          names.set(runId, { name, callId })
           if (name === "write_todos") return
           log.append({
             taskId: task.id,
             agent: "orchestrator",
             kind: "tool.call",
             summary: name,
-            payload: { tool: name, input: String(toolInput ?? "").slice(0, 4000) },
+            payload: { tool: name, input: String(toolInput ?? "").slice(0, 4000), ...(callId ? { callId } : {}) },
           })
         },
         handleToolEnd: (output: unknown, runId: string) => {
-          const name = names.get(runId) ?? "tool"
+          const { name, callId } = names.get(runId) ?? { name: "tool", callId: "" }
           names.delete(runId)
           if (name === "write_todos") return
           const out = typeof output === "string" ? output : String((output as { content?: unknown })?.content ?? "")
@@ -269,18 +299,18 @@ export class TaskRunner {
             agent: "orchestrator",
             kind: "tool.result",
             summary: `${name} ${out.startsWith("ERROR:") ? "failed" : "returned"}`,
-            payload: { tool: name, output: out.slice(0, 8000) },
+            payload: { tool: name, output: out.slice(0, 8000), ...(callId ? { callId } : {}) },
           })
         },
         handleToolError: (err: unknown, runId: string) => {
-          const name = names.get(runId) ?? "tool"
+          const { name, callId } = names.get(runId) ?? { name: "tool", callId: "" }
           names.delete(runId)
           log.append({
             taskId: task.id,
             agent: "orchestrator",
             kind: "tool.error",
             summary: `${name} failed`,
-            payload: { tool: name, error: String((err as Error)?.message ?? err).slice(0, 2000) },
+            payload: { tool: name, error: String((err as Error)?.message ?? err).slice(0, 2000), ...(callId ? { callId } : {}) },
           })
         },
       },
@@ -288,6 +318,7 @@ export class TaskRunner {
     const live: Live = {
       abort,
       ctx,
+      model: model as unknown as Answerer,
       turnNo: 0,
       ready,
       pending: [],
@@ -299,6 +330,7 @@ export class TaskRunner {
       inbox: [],
       questions: new Map(),
       asked: 0,
+      modelAnswered: 0,
     }
     this.live.set(task.id, live)
     return live
@@ -622,6 +654,7 @@ export class TaskRunner {
   private newTurn(live: Live) {
     live.turnNo++
     live.asked = 0
+    live.modelAnswered = 0
     live.abort = new AbortController()
     live.ctx.signal = live.abort.signal
   }
@@ -697,14 +730,55 @@ export class TaskRunner {
   }
 
   /**
+    A question from either agent (specs/chat R5): the specialist's goes first to the orchestrator's model with the
+    delegation's context package, and to the user only when the model defers (specs/specialist-lifecycle R1).
+  */
+  async ask(taskId: string, question: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }> {
+    const live = this.live.get(taskId)
+    const pkg = agent === "specialist" && stepId ? this.deps.log.getStep(stepId).data.context : undefined
+    // Past the turn's share of model calls, a question goes to the user as any other would.
+    if (!live || !live.model || !pkg || live.modelAnswered >= MODEL_ANSWER_CAP) return this.askUser(taskId, question, agent, stepId)
+    live.modelAnswered++
+    const signal = live.abort.signal
+    let reply: ModelReply
+    try {
+      reply = await answerFromPackage(live.model, pkg as ContextPackage, question, signal)
+    } catch {
+      return { answer: question.default, origin: "stopped" }
+    }
+    if ("defer" in reply) return this.askUser(taskId, question, agent, stepId, { deferred: reply.defer })
+    const { log } = this.deps
+    const questionId = randomUUID()
+    log.append({ taskId, stepId, agent, kind: "question.asked", summary: question.prompt.slice(0, 200), payload: { questionId, question, agent } })
+    log.append({
+      taskId,
+      stepId,
+      agent: "orchestrator",
+      kind: "question.answered",
+      summary: `${String(reply.answer).slice(0, 120)} (orchestrator)`,
+      payload: { questionId, answer: reply.answer, origin: "orchestrator" },
+    })
+    return { answer: reply.answer, origin: "orchestrator" }
+  }
+
+  /**
     Put a question to the user and wait (specs/chat R5.1, R5.4, R5.5): the user's answer, or the
     default once the question times out, the turn is stopped, or the turn has asked its cap.
+    `deferred` is why the orchestrator's model left a specialist's question to the user; an `unbounded` question —
+    the choice after a safeguard refusal — has no timeout and no cap (specs/specialist-lifecycle R2.3).
   */
-  ask(taskId: string, question: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }> {
+  private askUser(
+    taskId: string,
+    question: Question,
+    agent: "orchestrator" | "specialist",
+    stepId?: string,
+    o: { deferred?: string; unbounded?: boolean } = {},
+  ): Promise<{ answer: Answer; origin: Origin }> {
     const live = this.live.get(taskId)
     const { log } = this.deps
+    const { deferred, unbounded } = o
     if (!live || live.abort.signal.aborted) return Promise.resolve({ answer: question.default, origin: "stopped" })
-    if (live.asked >= QUESTION_CAP) {
+    if (!unbounded && live.asked >= QUESTION_CAP) {
       log.append({
         taskId,
         stepId,
@@ -715,10 +789,17 @@ export class TaskRunner {
       })
       return Promise.resolve({ answer: question.default, origin: "cap" })
     }
-    live.asked++
+    if (!unbounded) live.asked++
     const questionId = randomUUID()
     const signal = live.abort.signal
-    log.append({ taskId, stepId, agent, kind: "question.asked", summary: question.prompt.slice(0, 200), payload: { questionId, question, agent } })
+    log.append({
+      taskId,
+      stepId,
+      agent,
+      kind: "question.asked",
+      summary: question.prompt.slice(0, 200),
+      payload: { questionId, question, agent, ...(deferred ? { deferred } : {}), ...(unbounded ? { unbounded } : {}) },
+    })
     log.updateTask(taskId, { state: "waiting" })
     return new Promise((resolve) => {
       const settle = (answer: Answer, origin: Origin) => {
@@ -737,12 +818,56 @@ export class TaskRunner {
           log.updateTask(taskId, { state: "running" })
         resolve({ answer, origin })
       }
-      const timer = setTimeout(() => settle(question.default, "timeout"), this.deps.settings().questionTimeoutMinutes * 60_000)
-      timer.unref?.()
+      const timer = unbounded ? undefined : setTimeout(() => settle(question.default, "timeout"), this.deps.settings().questionTimeoutMinutes * 60_000)
+      timer?.unref?.()
       const stopped = () => settle(question.default, "stopped")
       signal.addEventListener("abort", stopped, { once: true })
       live.questions.set(questionId, { question, settle })
     })
+  }
+
+  /**
+    After a safeguard refusal, wait on the user's choice with no timeout and outside the cap: stop the task, skip
+    the step, or a different technical approach in their own words (specs/specialist-lifecycle R2.2, R2.3, R2.5).
+  */
+  async refusal(taskId: string, stepId: string, message: string): Promise<RefusalChoice> {
+    const [stop, skip] = REFUSAL_CHOICES
+    const choice = await this.askUser(
+      taskId,
+      {
+        prompt: "The specialist declined this step under its usage policy. How should the task go on?",
+        reason: `${message} The request is not reworded or justified to get past it: stop, skip the step, or ask for a different technical approach.`,
+        kind: "choice",
+        choices: [...REFUSAL_CHOICES],
+        default: skip,
+      },
+      "specialist",
+      stepId,
+      { unbounded: true },
+    )
+    if (choice.origin === "stopped") return { choice: "stop" }
+    if (choice.answer === stop) {
+      // The tool is still running: the task is cancelled as a running one, and the stream records it.
+      this.deps.log.updateTask(taskId, { state: "running" })
+      this.cancel(taskId)
+      return { choice: "stop" }
+    }
+    if (choice.answer === skip) return { choice: "skip" }
+    const how = await this.askUser(
+      taskId,
+      {
+        prompt: "Which different technical approach should the specialist take?",
+        reason: "It goes to the orchestrator as you write it, for a new step; the refused request is not reworded.",
+        kind: "text",
+        default: "",
+      },
+      "specialist",
+      stepId,
+      { unbounded: true },
+    )
+    if (how.origin === "stopped") return { choice: "stop" }
+    const approach = String(how.answer).trim()
+    return approach ? { choice: "approach", approach } : { choice: "skip" }
   }
 
   /** The user's answer to a waiting question, checked against its kind (R5.3, R5.4). */

@@ -25,6 +25,8 @@ import {
   projectAnalysesTool,
   READ_ANALYSIS,
   readAnalysisTool,
+  REPLAY_VECTORS,
+  replayVectorsTool,
   type ToolContext,
 } from "./tools"
 
@@ -70,7 +72,7 @@ export function systemPrompt(root: string, scratch?: string, project: { goal?: G
     "   Prepare the scenario so the analysis runs without obstacles: every file the step needs (the binary and what it loads or reads, not only the one in question), the platform, architecture, toolchain and versions you know, what earlier delegations already established with their evidence, the exact questions, and the form you want the answer in. Files you prepared in your scratch — a harness, a script, the code you wrote for the specialist to check against the target — can go in the package too. A missing file or fact costs a whole delegation.",
     `   You set up the scenario each analysis runs in, with full control of the specialist's sandbox. Create one with ${SANDBOX_CREATE}, sized and configured for the task: it has no limits unless you set CPUs, memory, disk or processes, so set them only to hold back a task that should not take the whole machine. Copy in the target and everything it loads with ${SANDBOX_COPY}. Build the scenario with ${SANDBOX_EXEC}, which runs any command as root there: install the toolchain, decompilers and libraries the step needs, unpack archives and installers, lay out the files, set up the environment, and check it is ready. Then ${DELEGATE} with that sandbox, where the specialist finds everything in place and has a root shell of its own. The analysis itself stays with the specialist: do not dump, parse or interpret the target to reach conclusions yourself, and do not hand it conclusions or dumps in place of the files. Several delegations can share a sandbox; call ${SANDBOX_DESTROY} when no step needs it.`,
     "   When you will write code from the analysis, ask for what you need to write it without seeing the target: each function's inputs, outputs and side effects; the algorithm step by step with its constants and tables; the edge cases; test vectors (inputs with the outputs the target produces); and the evidence for each.",
-    "4. Write your code from the specialist's report and test it against its test vectors. When your code must reach the user's files, call propose_patch with the files from your scratch and where each goes in the source, then apply_patch with the patchId it returns. A change the specialist makes comes back from a 'modify' delegation as a patch for apply_patch too. The user approves or rejects every patch; a rejection is final for that patch. You never change the source any other way.",
+    `4. Write your code from the specialist's report and test it against its test vectors with ${REPLAY_VECTORS}, which replays what the specialist observed the target do. When your code must reach the user's files, call propose_patch with the files from your scratch and where each goes in the source, then apply_patch with the patchId it returns. A change the specialist makes comes back from a 'modify' delegation as a patch for apply_patch too. The user approves or rejects every patch; a rejection is final for that patch. You never change the source any other way.`,
     "5. When a specialist's evidence or your test results do not hold, delegate again with what failed — never correct the analysis from your own reading of the target.",
     "6. When a fact only the user knows changes what you do next, call ask_user with the reason and a sensible default. Otherwise do not ask.",
     ...(project.goal
@@ -121,6 +123,7 @@ export const ORCHESTRATOR_TOOLS = new Set([
   SANDBOX_DESTROY,
   PROJECT_ANALYSES,
   READ_ANALYSIS,
+  REPLAY_VECTORS,
 ])
 
 /**
@@ -147,6 +150,43 @@ export function inboxMiddleware(drain: () => string[]) {
     beforeModel: () => {
       const queued = drain()
       return queued.length ? ({ messages: queued.map((m) => new HumanMessage(m)) } as never) : undefined
+    },
+  })
+}
+
+/** Target reads in one turn, without a delegation, after which the orchestrator is reminded (adr:0011's fallback). */
+export const READS_BEFORE_REMINDER = 6
+
+export const DELEGATION_REMINDER = `[Reminder from the app] You have read the target's files yourself ${READS_BEFORE_REMINDER} times this turn without delegating. Deep analysis of the target belongs to the specialist: put what you need into a context package and call ${DELEGATE}, rather than reaching conclusions from your own reading (adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code).`
+
+/**
+  Counts the turn's reads of the target — read_file and grep outside the scratch — and, once they pass
+  READS_BEFORE_REMINDER with no delegation since, reminds the orchestrator once that the analysis is the
+  specialist's. A delegation, or a new turn, starts the count again.
+*/
+export function delegationReminderMiddleware(scratch?: string) {
+  let reads = 0
+  let reminded = false
+  const inScratch = (p: unknown) => typeof p === "string" && !!scratch && (p === scratch || p.startsWith(`${scratch}/`))
+  return createMiddleware({
+    name: "DelegationReminder",
+    beforeAgent: () => {
+      reads = 0
+      reminded = false
+      return undefined
+    },
+    beforeModel: () => {
+      if (reminded || reads <= READS_BEFORE_REMINDER) return undefined
+      reminded = true
+      return { messages: [new HumanMessage(DELEGATION_REMINDER)] } as never
+    },
+    wrapToolCall: (request, handler) => {
+      const { name, args } = request.toolCall as { name: string; args?: Record<string, unknown> }
+      if (name === DELEGATE) {
+        reads = 0
+        reminded = false
+      } else if ((name === "read_file" && !inScratch(args?.file_path)) || (name === "grep" && !inScratch(args?.path))) reads++
+      return handler(request)
     },
   })
 }
@@ -183,8 +223,9 @@ export function buildAgent(o: {
       sandboxDestroyTool(o.ctx),
       projectAnalysesTool(o.ctx),
       readAnalysisTool(o.ctx),
+      replayVectorsTool(o.ctx),
     ],
-    middleware: [todoListMiddleware(), inboxMiddleware(o.inbox ?? (() => [])), toolPolicyMiddleware()],
+    middleware: [todoListMiddleware(), inboxMiddleware(o.inbox ?? (() => [])), toolPolicyMiddleware(), delegationReminderMiddleware(o.scratch)],
     backend: o.backend,
     // A backend that runs commands takes no path rules (DeepAgents refuses them): there the read-only
     // bind and the refused uploads are what keep the source unwritten.

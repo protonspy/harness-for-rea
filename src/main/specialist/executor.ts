@@ -18,7 +18,11 @@ export interface Launch {
   stop?: () => Promise<void>
 }
 
-export type FailureKind = "auth" | "limit" | "failed" | "cancelled" | "timeout"
+/** `refused`: a safeguard refusal under the usage policy, never a failure to retry (specs/specialist-lifecycle R2.1) */
+export type FailureKind = "auth" | "limit" | "refused" | "failed" | "cancelled" | "timeout"
+
+/** What the user and the orchestrator read for a safeguard refusal. */
+export const REFUSED = "The specialist declined this step under its usage policy (a safeguard refusal)."
 
 export class SpecialistError extends Error {
   readonly kind: FailureKind
@@ -106,7 +110,10 @@ export class SpecialistSession {
     const p = this.pending
     if (!r || !p) return
     this.pending = null
-    if (r.error) p.reject(classifyFailure(r.text || r.reason || this.stderr))
+    // A refusal is read from the API's stop reason, or from Claude Code's own error line on a failed turn — never from
+    // anything the specialist could be steered to write.
+    if (r.refused || (r.error && /^API Error:[^\n]*usage policy/i.test(r.text))) p.reject(new SpecialistError("refused", REFUSED))
+    else if (r.error) p.reject(classifyFailure(r.text || r.reason || this.stderr))
     else p.resolve(r)
   }
 

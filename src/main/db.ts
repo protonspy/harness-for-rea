@@ -141,6 +141,23 @@ const MIGRATIONS: string[] = [
   ALTER TABLE sandboxes_v3 RENAME TO sandboxes;
   CREATE INDEX sandboxes_project ON sandboxes(project_id);
   `,
+  // The unknowns ledger: what a project's analyses left open, and which analysis closed it (specs/analysis-contract R2).
+  `
+  CREATE TABLE unknowns (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    probes TEXT NOT NULL DEFAULT '[]',
+    settle TEXT NOT NULL DEFAULT '',
+    raised_by TEXT NOT NULL,
+    closed_by TEXT,
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX unknowns_project ON unknowns(project_id, created_at);
+  `,
 ]
 
 let db: DatabaseSync | null = null

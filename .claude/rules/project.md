@@ -50,8 +50,8 @@ npm run pin-images
 - **Tests** live in `tests/`, run TypeScript sources directly; `electron` is aliased to
   `tests/electron-stub.ts`. The specialist is `tests/fixtures/fake-claude.mjs`, launched through
   a test `Launcher` instead of Docker; OpenRouter is a scripted `globalThis.fetch`.
-- **Coverage** counts `src/main`, `src/shared` and `src/renderer/src/lib`; React views and
-  `src/main/index.ts` are checked by running the app.
+- **Coverage** counts `src/main`, `src/shared` and `src/renderer/src/lib`; React views,
+  `src/main/index.ts` and the wiring in `src/main/core.ts` are checked by running the app.
 - **Anything a new contributor gets wrong on their first try:** `npm install` leaves Electron
   without its binary until `node node_modules/electron/install.js` runs; `.npmrc` carries
   `legacy-peer-deps` for DeepAgents beside `langsmith`.

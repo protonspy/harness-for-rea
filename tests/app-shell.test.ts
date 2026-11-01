@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { stub } from "./electron-stub"
 import { closeDb, getDb, getSetting, openDb, setSetting } from "../src/main/db"
-import { clearKey, CredentialError, initKey, keyStatus, onKey, readKey, saveKey } from "../src/main/credentials"
+import { clearKey, CredentialError, initKey, keyStatus, onKey, readKey, saveKey, useKeyStore } from "../src/main/credentials"
+import { electronKeyStore } from "../src/main/keys-electron"
 import { isAppPage, makeDispatcher } from "../src/main/ipc"
 import { contentSecurityPolicy } from "../src/main/csp"
 import { lockNavigation, webPreferences } from "../src/main/window"
@@ -118,54 +119,57 @@ describe("IPC (R2.1–R2.3)", () => {
 })
 
 describe("credentials (R3.1–R3.3)", () => {
-  beforeAll(() => openDb(":memory:"))
+  beforeAll(() => {
+    openDb(":memory:")
+    useKeyStore(electronKeyStore())
+  })
   afterAll(() => closeDb())
-  beforeEach(() => {
+  beforeEach(async () => {
     stub.encryption = true
-    clearKey()
+    await clearKey()
   })
 
-  it("stores the key only encrypted and reads it back after a restart", () => {
-    saveKey("  sk-or-v1-abcdef1234567890  ")
+  it("stores the key only encrypted and reads it back after a restart", async () => {
+    await saveKey("  sk-or-v1-abcdef1234567890  ")
     const stored = getSetting<string>("openrouter.key", "")
     expect(Buffer.from(stored, "base64").toString()).toBe("enc:sk-or-v1-abcdef1234567890")
-    initKey()
+    await initKey()
     expect(readKey()).toBe("sk-or-v1-abcdef1234567890")
   })
 
-  it("refuses to store the key when encryption is unavailable, writing nothing", () => {
+  it("refuses to store the key when encryption is unavailable, writing nothing", async () => {
     stub.encryption = false
-    expect(() => saveKey("sk-or-v1-abcdef1234567890")).toThrow(CredentialError)
+    await expect(saveKey("sk-or-v1-abcdef1234567890")).rejects.toThrow(CredentialError)
     expect(getDb().prepare("SELECT COUNT(*) AS n FROM settings").get()).toEqual({ n: 0 })
     expect(readKey()).toBeNull()
   })
 
-  it("exposes only whether a key is set and a masked hint", () => {
+  it("exposes only whether a key is set and a masked hint", async () => {
     expect(keyStatus()).toEqual({ set: false, hint: "", encryption: true })
-    const s = saveKey("sk-or-v1-abcdef1234567890")
+    const s = await saveKey("sk-or-v1-abcdef1234567890")
     expect(s.set).toBe(true)
     expect(s.hint).toBe("…7890")
     expect(JSON.stringify(s)).not.toContain("abcdef123456")
   })
 
-  it("hands the key to listeners so it can be redacted", () => {
+  it("hands the key to listeners so it can be redacted", async () => {
     const seen: string[] = []
     onKey((k) => seen.push(k))
-    saveKey("sk-or-v1-zzzzzzzz9999")
+    await saveKey("sk-or-v1-zzzzzzzz9999")
     expect(seen).toContain("sk-or-v1-zzzzzzzz9999")
   })
 
-  it("keeps one key per provider, OpenRouter's in its original slot", () => {
-    saveKey("sk-or-v1-abcdef1234567890")
-    saveKey("sk-deepseek-1234567890", "deepseek")
+  it("keeps one key per provider, OpenRouter's in its original slot", async () => {
+    await saveKey("sk-or-v1-abcdef1234567890")
+    await saveKey("sk-deepseek-1234567890", "deepseek")
     expect(getSetting<string>("openrouter.key", "")).not.toBe("")
     expect(getSetting<string>("deepseek.key", "")).not.toBe("")
-    initKey()
+    await initKey()
     expect(readKey()).toBe("sk-or-v1-abcdef1234567890")
     expect(readKey("deepseek")).toBe("sk-deepseek-1234567890")
     expect(readKey("custom")).toBeNull()
     expect(keyStatus("deepseek").hint).toBe("…7890")
-    clearKey("deepseek")
+    await clearKey("deepseek")
     expect(readKey("deepseek")).toBeNull()
     expect(readKey()).toBe("sk-or-v1-abcdef1234567890")
     const seen: string[] = []
@@ -173,14 +177,14 @@ describe("credentials (R3.1–R3.3)", () => {
     expect(seen).toEqual(["sk-or-v1-abcdef1234567890"])
   })
 
-  it("forgets the key when cleared, and treats a corrupt record as no key", () => {
-    saveKey("sk-or-v1-abcdef1234567890")
-    clearKey()
-    initKey()
+  it("forgets the key when cleared, and treats a corrupt record as no key", async () => {
+    await saveKey("sk-or-v1-abcdef1234567890")
+    await clearKey()
+    await initKey()
     expect(readKey()).toBeNull()
     setSetting("openrouter.key", "!!!")
     stub.encryption = false
-    initKey()
+    await initKey()
     expect(readKey()).toBeNull()
   })
 })

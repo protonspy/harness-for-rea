@@ -2,7 +2,9 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 4f92f99d1b374c9766f4bf5b075c778ec97d6989107d6e716f143af9482653a3
+pr: per-plan
+merge: manual
+checksum: 76ccfa9414d64af7e02c3ca38c83a74a9894b3ee2e4f268999b3acad95feac67
 ---
 
 # Finish the harness
@@ -54,21 +56,27 @@ replayable test vectors.
 
 ## Tasks
 
-- [ ] 1.1 (Unit) Write `README.md`: what the harness is, how the orchestrator and the sandboxed specialist split the work, requirements (Docker, a Claude plan, an OpenAI-compatible key), install and first-run setup, projects and tasks, development commands from `.claude/rules/project.md`, and links to the ADRs
-- [ ] 1.2 (TDD) Prove with a Docker test (`HFR_DOCKER=1`) that a `CLAUDE.md` or settings planted in `/work` by an earlier delegation in a shared sandbox are not loaded by the specialist's Claude Code — settings and hooks are already kept out by `--setting-sources ""` (adr:0018-make-rea-native-to-the-specialist) — asserting "not loaded" and watching it fail first
-- [ ] 1.3 (Unit) If 1.2 shows anything still loads, record an ADR amending adr:0018-make-rea-native-to-the-specialist, stop it in `claudeArgs` or `containerEnv` with the matching `tests/sandbox.test.ts` cases, and keep 1.2 as the regression check; if nothing loads, strike this task with 1.2's result as its reason
+- [x] 1.1 (Unit) Write `README.md`: what the harness is, how the orchestrator and the sandboxed specialist split the work, requirements (Docker, a Claude plan, an OpenAI-compatible key), install and first-run setup, projects and tasks, development commands from `.claude/rules/project.md`, and links to the ADRs
+- [x] 1.2 (TDD) Prove with a Docker test (`HFR_DOCKER=1`) that a `CLAUDE.md` or settings planted in `/work` by an earlier delegation in a shared sandbox are not loaded by the specialist's Claude Code — settings and hooks are already kept out by `--setting-sources ""` (adr:0018-make-rea-native-to-the-specialist) — asserting "not loaded" and watching it fail first
+- [ ] 1.3 (Unit) If 1.2 shows anything still loads, record an ADR amending
+      adr:0018-make-rea-native-to-the-specialist, stop it in `claudeArgs` or
+      `containerEnv` with the matching `tests/sandbox.test.ts` cases, and keep 1.2 as
+      the regression check; if nothing loads, strike this task with 1.2's result as its
+      reason
   _Depends 1.2_
-- [ ] 1.4 (Unit) Remind the orchestrator, when a turn has read target files itself more than a fixed number of times without delegating, that deep analysis belongs to the specialist — the fallback adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code names — with the number a tested constant
-- [ ] 1.5 (Unit) Update `README.md` with the TUI, the npm install and the release downloads with the macOS first-run workaround, after the release spec is delivered
+  _Status removed_
+  _Reason 1.2 showed nothing planted in /work loads: --setting-sources "" and --restricted each keep CLAUDE.md out, and with both removed the Docker test fails_
+- [x] 1.4 (Unit) Remind the orchestrator, when a turn has read target files itself more than a fixed number of times without delegating, that deep analysis belongs to the specialist — the fallback adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code names — with the number a tested constant
+- [x] 1.5 (Unit) Update `README.md` with the TUI, the npm install and the release downloads with the macOS first-run workaround, after the release spec is delivered
   _Depends 1.1_
   _Priority 3_
-- [ ] 1.6 (Unit) Record as an ADR the specialist question and refusal behaviour — the orchestrator's model answers first, a refusal waits on the user's choice of stop, skip or a different technical approach — superseding the user-first part of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel and the re-delegation sentence of plans/specialist-rea.md, and add the matching deltas to R5.2, R5.4 and R5.5 of the chat spec
+- [x] 1.6 (Unit) Record as an ADR the specialist question and refusal behaviour — the orchestrator's model answers first, a refusal waits on the user's choice of stop, skip or a different technical approach — superseding the user-first part of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel and the re-delegation sentence of plans/specialist-rea.md, and add the matching deltas to R5.2, R5.4 and R5.5 of the chat spec
   _Priority 1_
-- [ ] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
+- [x] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
   _Priority 2_
-- [ ] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
+- [x] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
   _Depends 1.7_
-- [ ] 1.9 (Unit) Guard the data folder with a lock both apps take at start, so the second one says which app holds it and exits, and `log.recover()` never interrupts a live task
+- [x] 1.9 (Unit) Guard the data folder with a lock both apps take at start, so the second one says which app holds it and exits, and `log.recover()` never interrupts a live task
   _Depends 1.8_
 
 ## Done when

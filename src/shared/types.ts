@@ -2,8 +2,11 @@
 
 import type { ProviderId } from "./providers"
 
-/** `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn (specs/chat R1.4, R3.1). */
-export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted"] as const
+/**
+  `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
+  (specs/chat R1.4, R3.1); `refused`: a delegation step the specialist declined under its usage policy (specs/specialist-lifecycle R2.1).
+*/
+export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted", "refused"] as const
 export type TaskState = (typeof TASK_STATES)[number]
 
 export type Agent = "orchestrator" | "specialist" | "sandbox" | "app"
@@ -45,6 +48,25 @@ export interface TargetInfo {
   label: string
   /** what the specialist works on it with */
   engines: string[]
+}
+
+/** One item of a project's unknowns ledger (specs/analysis-contract R2). */
+export interface UnknownRow {
+  id: string
+  projectId: string
+  question: string
+  severity: "low" | "medium" | "high"
+  /** what was tried */
+  probes: string[]
+  /** what would settle it */
+  settle: string
+  /** the analysis (delegation step) that raised it */
+  raisedBy: string
+  /** the analysis that closed it, or null while it is open */
+  closedBy: string | null
+  resolution: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface ProjectRow {
@@ -148,6 +170,16 @@ export interface PatchView {
   createdAt: number
 }
 
+export interface AgentUsage {
+  agent: Agent | string
+  calls: number
+  tokensIn: number
+  tokensOut: number
+  costUsd: number
+  /** the cost is Claude Code's estimate against the plan, not a charge */
+  estimate: boolean
+}
+
 export interface TaskHistory {
   task: TaskRow
   steps: StepRow[]
@@ -155,6 +187,10 @@ export interface TaskHistory {
   patches: PatchView[]
   /** more events exist after the last one returned */
   hasMore: boolean
+  /** more events exist before the first one returned (specs/chat-timeline R2.1) */
+  hasOlder: boolean
+  /** each agent's usage over the whole task, not only the page (specs/chat-timeline R3.3) */
+  usage: AgentUsage[]
   /** where the conversation stands, from the live run's checkpoint; absent when the task has no run in this process */
   turn?: TaskState
 }

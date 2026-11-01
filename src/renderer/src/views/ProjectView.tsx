@@ -1,6 +1,6 @@
 import { Bug, Code2, FileSearch, Lightbulb, Map as MapIcon, Play, Plug, Trash2, type LucideIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import type { AnalysisSummary, Goal, ProjectRow, TaskRow } from "@shared/types"
+import type { AnalysisSummary, Goal, ProjectRow, TaskRow, UnknownRow } from "@shared/types"
 import { ErrorText, Mono } from "@/components/common"
 import { message } from "@/components/setup/panels"
 import { Badge } from "@/components/ui/badge"
@@ -12,14 +12,15 @@ import { goalCard } from "@/lib/projects"
 
 /*
   A project (specs/projects R4.3): its target, kind, goal and model; a request to start a task from, with ideas that fit
-  the goal; its tasks; and the analyses the specialist left for it, which every new task can read.
+  the goal; its tasks; the analyses the specialist left for it, which every new task can read; and the unknowns those
+  analyses left open or closed (specs/analysis-contract R2.5).
 */
 
 const GOAL_ICONS: Record<Goal, LucideIcon> = { understand: MapIcon, reimplement: Code2, integrate: Plug, debug: Bug }
 
 export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenTask(taskId: string): void; onDeleted(): void }) {
   const api = window.hfr.api
-  const [data, setData] = useState<{ project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[] } | null>(null)
+  const [data, setData] = useState<{ project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[]; unknowns: UnknownRow[] } | null>(null)
   const [request, setRequest] = useState("")
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -48,7 +49,7 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
   }
 
   if (!data) return <ErrorText>{error}</ErrorText>
-  const { project, tasks, analyses } = data
+  const { project, tasks, analyses, unknowns } = data
   const card = goalCard(project.goal)
   const GoalIcon = GOAL_ICONS[project.goal]
   return (
@@ -147,6 +148,35 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
           </ul>
         </Card>
       </div>
+      {unknowns.length > 0 && <Unknowns items={unknowns} />}
     </div>
+  )
+}
+
+const SEVERITY = { high: "bad", medium: "warn", low: "neutral" } as const
+
+/** The project's unknowns ledger: open ones first, each with what would settle it; closed ones with their resolution. */
+function Unknowns({ items }: { items: UnknownRow[] }) {
+  const open = items.filter((u) => !u.closedBy).length
+  return (
+    <Card className="flex flex-col p-0">
+      <h2 className="border-b border-border px-4 py-3 font-semibold">
+        Unknowns <span className="text-sm font-normal text-muted-foreground">{open} open</span>
+      </h2>
+      <ul className="flex flex-col divide-y divide-border">
+        {items.map((u) => (
+          <li key={u.id} className="flex flex-col gap-1 px-4 py-2.5">
+            <span className="flex items-start gap-2 text-sm">
+              <Badge variant={u.closedBy ? "ok" : SEVERITY[u.severity]}>{u.closedBy ? "closed" : u.severity}</Badge>
+              <span className={u.closedBy ? "text-muted-foreground line-through" : ""}>{u.question}</span>
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              <Mono>{u.id}</Mono>
+              {u.closedBy ? ` · ${u.resolution}` : u.settle ? ` · would be settled by: ${u.settle}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import type { Agent, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
+import type { Agent, AgentUsage, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 import { getDb } from "../db"
 import { removeTree } from "../sandbox/paths"
 import { redact, redactValue } from "./redact"
@@ -326,18 +326,56 @@ export class EventLog {
 
   /* ---------- history and recovery ---------- */
 
-  history(taskId: string, o: { afterEvent?: number; limit?: number } = {}): TaskHistory {
+  /**
+    A page of a task's events, oldest first within it (specs/chat-timeline R2.1): after `afterEvent`, before
+    `beforeEvent`, or the newest page when neither is given. `hasMore` says newer events follow the page,
+    `hasOlder` that older ones precede it. Steps, patches and usage are the whole task's (R3.3).
+  */
+  history(taskId: string, o: { afterEvent?: number; beforeEvent?: number; limit?: number } = {}): TaskHistory {
     const limit = o.limit ?? 2000
-    const rows = getDb()
-      .prepare("SELECT * FROM events WHERE task_id = ? AND id > ? ORDER BY id LIMIT ?")
-      .all(taskId, o.afterEvent ?? 0, limit + 1) as Row[]
+    const db = getDb()
+    let rows: Row[]
+    if (o.afterEvent !== undefined) {
+      rows = db.prepare("SELECT * FROM events WHERE task_id = ? AND id > ? ORDER BY id LIMIT ?").all(taskId, o.afterEvent, limit + 1) as Row[]
+    } else {
+      const before = o.beforeEvent ?? Number.MAX_SAFE_INTEGER
+      rows = (db.prepare("SELECT * FROM events WHERE task_id = ? AND id < ? ORDER BY id DESC LIMIT ?").all(taskId, before, limit + 1) as Row[]).reverse()
+    }
+    const forward = o.afterEvent !== undefined
+    const page = forward ? rows.slice(0, limit) : rows.slice(-limit)
+    const exists = (sql: string, id: number) => db.prepare(`SELECT 1 FROM events WHERE task_id = ? AND ${sql} LIMIT 1`).get(taskId, id) !== undefined
     return {
       task: this.getTask(taskId),
       steps: this.steps(taskId),
-      events: rows.slice(0, limit).map(eventRow),
-      patches: (getDb().prepare("SELECT * FROM patches WHERE task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map(patchRow),
-      hasMore: rows.length > limit,
+      events: page.map(eventRow),
+      patches: (db.prepare("SELECT * FROM patches WHERE task_id = ? ORDER BY created_at, rowid").all(taskId) as Row[]).map(patchRow),
+      hasMore: forward ? rows.length > limit : o.beforeEvent !== undefined && exists("id >= ?", o.beforeEvent),
+      hasOlder: forward ? exists("id <= ?", o.afterEvent!) : rows.length > limit,
+      usage: this.usage(taskId),
     }
+  }
+
+  /** Each agent's model calls, tokens and cost over the whole task, summed where they are stored (specs/chat-timeline R3.3). */
+  usage(taskId: string): AgentUsage[] {
+    const rows = getDb()
+      .prepare(
+        `SELECT agent, COUNT(*) AS calls,
+           SUM(COALESCE(json_extract(payload, '$.tokensIn'), 0) + COALESCE(json_extract(payload, '$.cacheTokens'), 0)) AS tokens_in,
+           SUM(COALESCE(json_extract(payload, '$.tokensOut'), 0)) AS tokens_out,
+           SUM(COALESCE(json_extract(payload, '$.costUsd'), 0)) AS cost,
+           MAX(COALESCE(json_extract(payload, '$.estimate'), 0)) AS estimate
+         FROM events WHERE task_id = ? AND kind IN ('model.call', 'specialist.result')
+         GROUP BY agent ORDER BY MIN(id)`,
+      )
+      .all(taskId) as Row[]
+    return rows.map((r) => ({
+      agent: String(r.agent),
+      calls: Number(r.calls),
+      tokensIn: Number(r.tokens_in),
+      tokensOut: Number(r.tokens_out),
+      costUsd: Number(r.cost),
+      estimate: Number(r.estimate) === 1,
+    }))
   }
 
   /**

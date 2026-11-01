@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import { closeDb, getDb, openDb } from "../src/main/db"
 import { delegate, DelegationRefused, dockerLauncher, type Launcher } from "../src/main/delegation"
 import { EventLog } from "../src/main/events/log"
-import { claudeArgs, execArgs, stopArgs } from "../src/main/sandbox/docker"
+import { claudeArgs, containerName, execArgs, SPECIALIST_MODEL, stopArgs } from "../src/main/sandbox/docker"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import type { BufferResult, ExecBuffer } from "../src/main/sandbox/taskbox"
 import { askDir, readManifest, sha256 } from "../src/main/sandbox/workspace"
@@ -158,6 +158,21 @@ describe("patches from a sandbox (R4.5)", () => {
     expect(second.patch?.diff).toContain("-export const a = 1 // fixed")
     expect(second.patch?.diff).toContain("+export const a = 1 // fixed // fixed")
     await s.removeAll()
+  })
+})
+
+describe("a delegation's own container (specs/specialist-lifecycle R3)", () => {
+  it("runs the pinned Opus by its full id, in a container Docker removes when the CLI exits, and kills it on a stop", async () => {
+    const calls: string[][] = []
+    const l = dockerLauncher(async (args) => (calls.push(args), { code: 0, stdout: "", stderr: "" }))
+    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", out: "o", files: [] }, "read", {})
+    // answered, failed or refused: the CLI exits and `--rm` takes the container with it
+    expect(launch.args.slice(0, launch.args.indexOf("claude"))).toContain("--rm")
+    expect(launch.args[launch.args.indexOf("--model") + 1]).toBe(SPECIALIST_MODEL)
+    expect(SPECIALIST_MODEL).toMatch(/^claude-opus-\d+-\d+$/)
+    // cancelled or timed out: the session stops the launch, which kills the container by name
+    await launch.stop!()
+    expect(calls).toEqual([["kill", containerName("i")]])
   })
 })
 

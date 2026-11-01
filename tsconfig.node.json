@@ -12,7 +12,10 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "paths": { "@shared/*": ["./src/shared/*"] }
+    "paths": {
+      "@shared/*": ["./src/shared/*"]
+    }
   },
-  "include": ["electron.vite.config.ts", "vitest.config.mts", "src/main", "src/preload", "src/shared", "tests"]
+  "include": ["electron.vite.config.ts", "vitest.config.mts", "src/main", "src/preload", "src/shared", "tests"],
+  "exclude": ["tests/fixtures/bun-*.ts"]
 }

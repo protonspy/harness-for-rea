@@ -44,6 +44,8 @@
   _Reason The orchestrator prepares the scenario for the analysis, harnesses and its own code included_
 - [x] 10.1 (Unit) Run every tool call of every task without asking — R4.1
   _Reason Approving each call by hand blocked the user's real runs_
+- [x] 11.1 (TDD) Answer a specialist's question from the orchestrator's model first, and put it to the user only when the model defers — R5.2, R5.4, R5.5, R5.6
+  _Reason adr:0021 moves the specialist's questions to the orchestrator first_
 
 ## Done when
 

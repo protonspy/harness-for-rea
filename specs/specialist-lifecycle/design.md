@@ -1,40 +1,37 @@
 # Specialist lifecycle — design
 
-<!-- The design must fit the decision being made. Every heading below except
-     "What changes" is OPTIONAL: delete the ones this change does not decide.
-
-     A heading filled with "N/A", or with prose written to satisfy the heading, is
-     worse than an absent heading — the next session reads invented architecture as
-     a decision somebody made, and honors it. Filler becomes binding.
-
-     Delete this comment too. -->
-
 ## What changes
 
-Serves R1.1.
+Serves R1.1–R3.2, under adr:0021-answer-the-specialist-from-the-orchestrator-and-let-the-user-decide-a-refusal.
 
-<!-- Required. What changes, where, and why. For a change that decides nothing
-     structural, this section is the whole design and that is the correct outcome.
+- `src/main/orchestrator/answer.ts` (new) — `answerFromPackage(model, pkg, question)`: one call of
+  the task's chat model with a system prompt that holds the context package and the question, asking
+  for JSON `{"answer": …}` or `{"defer": "…why…"}`. The reply is parsed and checked with
+  `checkAnswer`; anything else is a deferral (R1.1, R1.3).
+- `src/main/orchestrator/runner.ts` — `ask` for the specialist tries `answerFromPackage` first with
+  the step's stored `context`. A model answer is recorded as `question.asked` and `question.answered`
+  with origin `orchestrator` and does not count against the cap; a deferral goes to the user as
+  before (R1.2, R1.3). `refusal(taskId, stepId, message)` records the choice the user must make as a
+  `question.asked` of kind choice — so the chat's question card shows it — with no timeout and no cap,
+  then, for a different approach, a text question the same way (R2.2, R2.3). Stopping cancels the
+  task through `cancel` (R2.5).
+- `src/main/specialist/stream.ts`, `executor.ts` — a refusal is recognised from an assistant message
+  whose `stop_reason` is `refusal`, or a result whose text says the request violates the usage
+  policy. `FailureKind` gains `refused` (R2.1).
+- `src/main/delegation.ts` — a `refused` run is logged as `safeguard.refusal` with step state
+  `refused`, and `delegate` throws `SafeguardRefusal` carrying the step (R2.1).
+- `src/main/orchestrator/tools.ts` — `delegate_to_specialist` catches `SafeguardRefusal`, asks the
+  runner for the user's choice through the tool context, and returns the refusal and the choice as
+  text naming it a safeguard refusal and forbidding a reworded or justified re-delegation (R2.4,
+  R2.6).
+- `src/main/sandbox/docker.ts` — `SPECIALIST_MODEL` is the full Opus id passed to `--model` (R3.2);
+  the container's `--rm` and the kill on every end were already there and gain a test per ending
+  (R3.1).
+- `src/shared/` — `Origin` gains `orchestrator`, `TaskState` gains `refused` for steps.
+- Renderer — the notice and the step badge for `safeguard.refusal` and `refused`; the question card
+  already renders the choice.
 
-     Keep the "Serves" line above and make it real: the design has to name the
-     requirements it answers, or the trace from what to how is unreadable — and
-     `scc spec validate` says so. -->
+## Alternatives considered
 
-## Boundaries and contracts <!-- optional -->
-
-<!-- Only if this change moves a boundary or an external contract, and only for the
-     parts that actually move. -->
-
-## Data <!-- optional -->
-
-<!-- Only if a data shape changes. -->
-
-## Alternatives considered <!-- optional -->
-
-<!-- Only where there were real alternatives with trade-offs. Say which won and why.
-     If the decision is hard to reverse, write an ADR under docs/adr/ and cite it
-     here instead of arguing it twice. -->
-
-## Risks <!-- optional -->
-
-<!-- What could go wrong that the task list does not already cover. -->
+- A separate IPC method and card for the refusal choice: the question card already does choice and
+  text with the user's answer recorded; a second surface would duplicate it.

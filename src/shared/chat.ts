@@ -38,8 +38,11 @@ export const QuestionSchema = z.object({
 })
 export type Question = z.infer<typeof QuestionSchema>
 
-/** Who settled a question or a gated call. */
-export type Origin = "user" | "timeout" | "cap" | "stopped"
+/** Who settled a question or a gated call; `orchestrator` is its model answering the specialist (specs/specialist-lifecycle R1.2). */
+export type Origin = "user" | "orchestrator" | "timeout" | "cap" | "stopped"
+
+/** The user's choices after a safeguard refusal (specs/specialist-lifecycle R2.2). */
+export const REFUSAL_CHOICES = ["Stop the task", "Skip this step", "Ask for a different technical approach"] as const
 
 /** Why the question cannot be asked as it stands, or null (R5.3). */
 export function questionProblem(q: Question): string | null {

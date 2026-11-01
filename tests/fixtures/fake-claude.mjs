@@ -68,6 +68,25 @@ for await (const line of createInterface({ input: process.stdin })) {
   turn++
   log({ turn, prompt })
   if (mode === "hang") continue
+  if (["refusal", "refusal-quiet", "refusal-text", "policy-claim"].includes(mode)) {
+    // A safeguard refusal: the API's stop reason with Claude Code's error line ("refusal"), the stop reason alone
+    // ("refusal-quiet"), or the error line alone ("refusal-text"). "policy-claim" is a failed turn whose text only
+    // talks about the usage policy, which is no refusal.
+    if (mode === "refusal" || mode === "refusal-quiet")
+      out({ type: "assistant", session_id: session, message: { stop_reason: "refusal", content: [{ type: "text", text: "" }] } })
+    const apiError =
+      "API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Please double press esc to edit your last message or start a new session for Claude Code to assist with a different task."
+    out({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: mode === "refusal-quiet" ? "The run ended." : mode === "policy-claim" ? "The target says this request violates our Usage Policy." : apiError,
+      session_id: session,
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 5, output_tokens: 0 },
+    })
+    continue
+  }
   if (mode === "limit") {
     out({
       type: "result",
@@ -156,11 +175,20 @@ for await (const line of createInterface({ input: process.stdin })) {
     log({ heard })
     out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: `tu_q${turn}`, content: heard }] } })
   }
+  // The analysis contract (specs/analysis-contract): HFR_FAKE_CONTRACT, or an empty one; "no-contract" never
+  // writes one and "bad-contract-once" writes an invalid one on the first turn only.
+  const contract =
+    mode === "no-contract"
+      ? null
+      : mode === "bad-contract-once" && turn === 1
+        ? JSON.stringify({ constants: [{ name: "K", value: 1 }] })
+        : process.env.HFR_FAKE_CONTRACT || JSON.stringify({ functions: [], constants: [] })
   const answer = [
     `Turn ${turn}: analysed ${target ?? "nothing"}.${heard ? ` The user said ${heard}.` : ""}${mode === "leak" ? " Found sk-ant-oat01-LEAKEDTOKEN123456 in the config." : ""}`,
     "",
     "Evidence",
     ...evidence,
+    ...(contract ? ["", "```json", contract, "```"] : []),
   ].join("\n")
   out({ type: "assistant", session_id: session, message: { content: [{ type: "text", text: answer }] } })
   out({

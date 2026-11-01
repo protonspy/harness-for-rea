@@ -1,40 +1,28 @@
 # Release — design
 
-<!-- The design must fit the decision being made. Every heading below except
-     "What changes" is OPTIONAL: delete the ones this change does not decide.
-
-     A heading filled with "N/A", or with prose written to satisfy the heading, is
-     worse than an absent heading — the next session reads invented architecture as
-     a decision somebody made, and honors it. Filler becomes binding.
-
-     Delete this comment too. -->
-
 ## What changes
 
-Serves R1.1.
+Serves R1.1–R2.4, under adr:0022-run-the-tui-on-bun-with-opentui.
 
-<!-- Required. What changes, where, and why. For a change that decides nothing
-     structural, this section is the whole design and that is the correct outcome.
+- `.github/workflows/release.yml` — `workflow_dispatch` only, every job guarded by
+  `github.ref == 'refs/heads/main'` (R1.1). A `check` job reads the version from `package.json` and
+  fails when `v<version>` is a tag or `harness-for-rea@<version>` is on npm (R2.1). A `windows`
+  job (windows-latest) and a `macos` job (macos-latest, arm64) build the desktop app with
+  electron-builder, unsigned (R1.2), and the CLI with `bun build --compile` for their platforms —
+  macOS x64 cross-compiled with OpenTUI's x64 library installed for it — each archived with
+  `sandbox/specialist` (R1.3), and run the native binary with `--version` (R1.4). A `publish` job
+  creates the release with `gh release create` and the artifacts (R2.2), then `npm publish` of
+  `tui/` with `NODE_AUTH_TOKEN` from `NPM_TOKEN` (R2.3).
+- `electron-builder.yml` — `mac` targets `dmg` for arm64 and x64 with `identity: null`.
+- `tui/package.json`, `tui/bin/harness-for-rea.mjs`, `scripts/build-cli.mjs` — the npm package
+  `harness-for-rea`: the TUI bundled by `bun build --target bun` with `@opentui/core` left to npm
+  for its per-platform library, `sandbox/specialist` copied in, the version taken from the root
+  `package.json`. The bin is a Node shim that runs the bundle on the `bun` dependency's binary, or
+  on its `@oven/bun-*` platform package when npm skipped `bun`'s install script (R2.4).
+- `tui/src/main.ts` — `--version` and `--help` answer before the core starts; the sandbox sources
+  are found from `HFR_SANDBOX_DIR`, next to a compiled binary, or in the repository.
 
-     Keep the "Serves" line above and make it real: the design has to name the
-     requirements it answers, or the trace from what to how is unreadable — and
-     `scc spec validate` says so. -->
+## Data
 
-## Boundaries and contracts <!-- optional -->
-
-<!-- Only if this change moves a boundary or an external contract, and only for the
-     parts that actually move. -->
-
-## Data <!-- optional -->
-
-<!-- Only if a data shape changes. -->
-
-## Alternatives considered <!-- optional -->
-
-<!-- Only where there were real alternatives with trade-offs. Say which won and why.
-     If the decision is hard to reverse, write an ADR under docs/adr/ and cite it
-     here instead of arguing it twice. -->
-
-## Risks <!-- optional -->
-
-<!-- What could go wrong that the task list does not already cover. -->
+The CLI archive per platform: `harness-for-rea-cli-<version>-<windows-x64|macos-arm64|macos-x64>`
+holding the binary (`harness-for-rea` or `.exe`) and `sandbox/specialist/`.

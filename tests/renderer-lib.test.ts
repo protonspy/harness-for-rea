@@ -50,7 +50,7 @@ const event = (id: number, over: Partial<EventRow> = {}): EventRow => ({
   ...over,
 })
 const patch = (id: string, createdAt: number): PatchView => ({ id, taskId: "t", stepId: "s", state: "proposed", files: [], diff: "", conflicts: [], createdAt })
-const history = (): TaskHistory => ({ task: task("t"), steps: [], events: [], patches: [], hasMore: false })
+const history = (): TaskHistory => ({ task: task("t"), steps: [], events: [], patches: [], hasMore: false, hasOlder: false, usage: [] })
 
 describe("fold (R2.2)", () => {
   it("applies messages for the open task and ignores others", () => {
@@ -174,7 +174,7 @@ describe("format", () => {
       "neutral",
     ])
     // the chat's states: your turn reads as settled, a stopped turn as needing you (specs/chat R7.5)
-    expect([tone("awaiting-user"), tone("stopped")]).toEqual(["ok", "warn"])
+    expect([tone("awaiting-user"), tone("stopped"), tone("refused")]).toEqual(["ok", "warn", "warn"])
   })
 
   it("classifies diff lines", () => {

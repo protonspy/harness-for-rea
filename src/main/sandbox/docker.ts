@@ -216,7 +216,10 @@ export function mcpConfig(): string {
 }
 
 /** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools and a shell. */
-export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort = "default"): string[] {
+/** The specialist's model, by its full id so an alias moving to a newer model never changes it (specs/specialist-lifecycle R3.2). */
+export const SPECIALIST_MODEL = "claude-opus-5-5"
+
+export function claudeArgs(mode: Mode, model = SPECIALIST_MODEL, effort: SpecialistEffort = "default"): string[] {
   const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : []), ...SHELL_TOOLS].join(",")
   return [
     "claude",

@@ -15,8 +15,9 @@ import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
 import { listModels } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
-import { systemPrompt } from "../src/main/orchestrator/agent"
+import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { UnknownsLedger } from "../src/main/unknowns"
 import { ProjectStore, type NewProject } from "../src/main/projects"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import { RESTARTED, SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
@@ -109,6 +110,7 @@ let log: EventLog
 let settings: Settings
 let fakeMode = "answer"
 let fakeQuestion = ""
+let fakeContract = ""
 let refusal: string | null = null
 
 function launcher(): Launcher {
@@ -123,6 +125,7 @@ function launcher(): Launcher {
         HFR_FAKE_LOG: fakeLog,
         HFR_RUN: ws.runDir,
         HFR_FAKE_QUESTION: fakeQuestion,
+        HFR_FAKE_CONTRACT: fakeContract,
         PATH: process.env.PATH ?? "",
         SYSTEMROOT: process.env.SYSTEMROOT ?? "",
       },
@@ -171,6 +174,7 @@ beforeEach(() => {
   seen = []
   status = 200
   fakeMode = "answer"
+  fakeContract = ""
   fakeQuestion = JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
   disposed = 0
   workspaceFails = ""
@@ -257,6 +261,15 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     const files = log.history(task.id).events.flatMap((e) => (e.payload.files ?? []).map((f) => `${f.op}:${f.path}`))
     expect(files).toEqual(expect.arrayContaining(["copy:src/a.ts", "read:src/a.ts", "write:src/a.ts", "apply:src/a.ts"]))
     expect(files).not.toContain("copy:src/b.ts")
+
+    // the delegation and its result carry the call's id (specs/chat-timeline R1.1)
+    const events = log.history(task.id).events
+    const call = events.find((e) => e.kind === "tool.call" && e.payload.tool === "delegate_to_specialist")!
+    const result = events.find((e) => e.kind === "tool.result" && e.payload.tool === "delegate_to_specialist")!
+    const step = log.history(task.id).steps.find((s) => s.kind === "delegation")!
+    expect(call.payload.callId).toMatch(/\S/)
+    expect(result.payload.callId).toBe(call.payload.callId)
+    expect(step.data.callId).toBe(call.payload.callId)
 
     // steps, usage and cost
     const steps = log.steps(task.id)
@@ -1164,9 +1177,47 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
       .map((l) => JSON.parse(l))
       .find((l) => l.heard)?.heard
 
+  const defer = { content: '{"defer": "Only the user knows the input."}' }
+
+  it("answers the question from the orchestrator's model with the context package, without asking the user (specs/specialist-lifecycle R1.1, R1.2)", async () => {
+    fakeMode = "ask"
+    let sent = ""
+    script = [
+      read,
+      (body) => {
+        sent = JSON.stringify(body)
+        return { content: '{"answer": true}' }
+      },
+      (body) => ({ content: lastTool(body) }),
+    ]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(sent).toContain("Is the input UTF-8?")
+    expect(sent).toContain("Find why parse drops the last token")
+    expect(JSON.parse(heard())).toEqual({ answer: true, origin: "orchestrator" })
+    const events = log.history(task.id).events
+    expect(events.find((e) => e.kind === "question.answered")?.payload).toMatchObject({ answer: true, origin: "orchestrator" })
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+  })
+
+  it("puts the question to the user when the model defers, and counts only those against the cap (R1.3, specs/chat R5.5)", async () => {
+    fakeMode = "ask"
+    script = [read, defer, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 200 && !asked(task.id).some((e) => e.payload.origin === undefined && e.agent === "specialist"); i++)
+      await new Promise((res) => setTimeout(res, 20))
+    expect(log.getTask(task.id).state).toBe("waiting")
+    const [q] = asked(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), false)
+    await r.settled(task.id)
+    expect(JSON.parse(heard())).toEqual({ answer: false, origin: "user" })
+  })
+
   it("carries the question from the delegation to the chat and the user's answer back into the sandbox", async () => {
     fakeMode = "ask"
-    script = [read, (body) => ({ content: lastTool(body) })]
+    script = [read, defer, (body) => ({ content: lastTool(body) })]
     const r = runner()
     const task = r.start({ request: REQUEST, sourceRoot: root })
     for (let i = 0; i < 200 && !asked(task.id).length; i++) await new Promise((res) => setTimeout(res, 20))
@@ -1205,11 +1256,244 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
   it("answers with the default when the question times out", async () => {
     fakeMode = "ask"
     settings = { ...settings, questionTimeoutMinutes: 0.001 }
-    script = [read, { content: "ok" }]
+    script = [read, defer, { content: "ok" }]
     const r = runner()
     const task = r.start({ request: REQUEST, sourceRoot: root })
     await r.settled(task.id)
     expect(JSON.parse(heard())).toEqual({ answer: false, origin: "timeout" })
+  })
+})
+
+describe("the analysis contract (specs/analysis-contract R1.3–R1.5)", () => {
+  const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+  const turns = () =>
+    readFileSync(fakeLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.turn)
+
+  it("gives the orchestrator the validated contract beside the report, without the block", async () => {
+    fakeContract = JSON.stringify({ constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }] })
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const told = JSON.parse(log.getTask(task.id).result)
+    expect(told.contract).toEqual({ functions: [], constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }], unknowns: [], closes: [], vectors: [] })
+    expect(told.report).not.toContain("```json")
+    expect(told.contractProblems).toBeUndefined()
+    expect(turns()).toHaveLength(1)
+  })
+
+  it("returns a failing contract to the specialist in the same session and takes the corrected one", async () => {
+    fakeMode = "bad-contract-once"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const [, second] = turns()
+    expect(second.prompt).toMatch(/contract did not validate/)
+    expect(second.prompt).toMatch(/constants\.0: needs a source/)
+    expect(kinds(task.id).filter((k) => k === "contract.rejected")).toHaveLength(1)
+    expect(JSON.parse(log.getTask(task.id).result).contract).toMatchObject({ constants: [] })
+  })
+
+  it("asks at most twice, then keeps the last report and records the contract's failure (R1.4)", async () => {
+    fakeMode = "no-contract"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(turns()).toHaveLength(3)
+    expect(kinds(task.id).filter((k) => k === "contract.rejected")).toHaveLength(2)
+    expect(kinds(task.id)).toContain("contract.failed")
+    const told = JSON.parse(log.getTask(task.id).result)
+    expect(told.contract).toBeNull()
+    expect(told.contractProblems).toEqual([expect.stringContaining("does not end with a contract")])
+    expect(told.report).toContain("Turn 3")
+    const step = log.steps(task.id).find((s) => s.kind === "delegation")!
+    expect(step).toMatchObject({ state: "done", data: { contract: null, contractProblems: [expect.any(String)] } })
+    // every turn's spending is counted
+    expect(log.getTask(task.id).specialistCostUsd).toBeCloseTo(0.42 * 3, 5)
+  })
+})
+
+describe("replaying test vectors (specs/vector-replay R2)", () => {
+  it("runs each vector of an analysis against the orchestrator's command in its sandbox, returns the outcomes and records the counts", async () => {
+    fakeContract = JSON.stringify({
+      vectors: [
+        { name: "two", args: ["a b"], stdout: "a\nb\n", source: "./parse 'a b'" },
+        { name: "empty", stdout: "", exitCode: 1, source: "./parse" },
+      ],
+    })
+    const ran: string[] = []
+    class Box extends FilesystemBackend {
+      async execute(command: string) {
+        ran.push(command)
+        return ran.length === 1 ? { output: "a\nb\n", exitCode: 0 } : { output: "", exitCode: 0 }
+      }
+    }
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({ backend: new Box({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+    })
+    let taskId = ""
+    const delegation = () => log.steps(taskId).find((s) => s.kind === "delegation")!.id
+    const results: string[] = []
+    script = [
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      () => ({ tool_calls: [{ name: "replay_vectors", args: { analysis: delegation(), command: "python3 /scratch/impl.py" } }] }),
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "replay_vectors", args: { analysis: "00000000-0000-4000-8000-000000000009", command: "x" } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "checked" }
+      },
+    ]
+    taskId = r.start({ request: REQUEST, sourceRoot: root }).id
+    await r.settled(taskId)
+    expect(ran).toHaveLength(2)
+    expect(ran[0]).toContain("| base64 -d | python3 /scratch/impl.py ")
+    const replay = JSON.parse(results[0])
+    expect(replay).toMatchObject({
+      passed: 1,
+      failed: 1,
+      outcomes: [
+        { name: "two", pass: true },
+        { name: "empty", pass: false, exitCode: { expected: 1, got: 0 } },
+      ],
+    })
+    expect(log.history(taskId).events.find((e) => e.kind === "vectors.replayed")?.payload).toMatchObject({ passed: 1, failed: 1 })
+    expect(results[1]).toMatch(/^ERROR: there is no analysis .* in this task or its project/)
+  })
+
+  it("refuses an analysis that recorded no vectors (R2.4)", async () => {
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({
+        backend: Object.assign(new FilesystemBackend({ rootDir: root, virtualMode: true }), { execute: async () => ({ output: "", exitCode: 0 }) }),
+        root: "/",
+        dispose: async () => undefined,
+      }),
+    })
+    let taskId = ""
+    const results: string[] = []
+    script = [
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      () => ({ tool_calls: [{ name: "replay_vectors", args: { analysis: log.steps(taskId).find((s) => s.kind === "delegation")!.id, command: "x" } }] }),
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "ok" }
+      },
+    ]
+    taskId = r.start({ request: REQUEST, sourceRoot: root }).id
+    await r.settled(taskId)
+    expect(results[0]).toMatch(/^ERROR: analysis .* recorded no test vectors/)
+  })
+})
+
+describe("a safeguard refusal (specs/specialist-lifecycle R2)", () => {
+  const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+  const waitingQuestion = async (taskId: string, n = 1) => {
+    for (let i = 0; i < 300; i++) {
+      const open = log.history(taskId).events.filter((e) => e.kind === "question.asked")
+      if (open.length >= n) return open[n - 1]
+      await new Promise((res) => setTimeout(res, 20))
+    }
+    throw new Error("no question")
+  }
+
+  it("records the refusal as its own event and step state and waits on the user's choice with no timeout (R2.1–R2.3)", async () => {
+    fakeMode = "refusal"
+    settings = { ...settings, questionTimeoutMinutes: 0.001 }
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    expect(q.payload.question).toMatchObject({ kind: "choice", choices: ["Stop the task", "Skip this step", "Ask for a different technical approach"] })
+    await new Promise((res) => setTimeout(res, 300))
+    expect(log.getTask(task.id).state).toBe("waiting")
+    const logged = kinds(task.id)
+    expect(logged).toContain("safeguard.refusal")
+    expect(logged).not.toContain("sandbox.refused")
+    expect(logged).not.toContain("delegation.failed")
+    expect(log.steps(task.id).find((s) => s.kind === "delegation")?.state).toBe("refused")
+
+    r.answerQuestion(task.id, String(q.payload.questionId), "Skip this step")
+    await r.settled(task.id)
+    const told = log.getTask(task.id).result
+    expect(told).toMatch(/safeguard refusal/i)
+    expect(told).toMatch(/skip/i)
+    expect(told).toMatch(/do not delegate it again/i)
+  })
+
+  it("tells the orchestrator the different technical approach in the user's own words, never a purpose (R2.4, R2.6)", async () => {
+    fakeMode = "refusal"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), "Ask for a different technical approach")
+    const how = await waitingQuestion(task.id, 2)
+    expect(how.payload.question).toMatchObject({ kind: "text" })
+    r.answerQuestion(task.id, String(how.payload.questionId), "Map only the string table, statically")
+    await r.settled(task.id)
+    const told = log.getTask(task.id).result
+    expect(told).toContain("Map only the string table, statically")
+    expect(told).toMatch(/never reword the refused request or add a purpose or an authorization/i)
+  })
+
+  it("cancels the task when the user stops it (R2.5)", async () => {
+    fakeMode = "refusal-quiet"
+    script = [read, { content: "unreachable" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), "Stop the task")
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("cancelled")
+  })
+})
+
+describe("the reminder to delegate (adr:0011)", () => {
+  const readA = { tool_calls: [{ name: "read_file", args: { file_path: "/src/a.ts" } }] }
+  const said = () => requests.map((b) => JSON.stringify(b.messages)).map((m) => m.includes("[Reminder from the app]"))
+
+  it(`reminds the orchestrator once when a turn reads the target more than ${READS_BEFORE_REMINDER} times without delegating`, async () => {
+    script = [...Array.from({ length: READS_BEFORE_REMINDER + 2 }, () => readA), { content: "done" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const flags = said()
+    // the call after the (READS_BEFORE_REMINDER + 1)th read is the first to carry it, and it stays in the history once
+    expect(flags.indexOf(true)).toBe(READS_BEFORE_REMINDER + 1)
+    expect(JSON.stringify(requests.at(-1)!.messages).split("[Reminder from the app]")).toHaveLength(2)
+  })
+
+  it("does not remind a turn that delegates, nor one that stays under the count", async () => {
+    script = [
+      ...Array.from({ length: READS_BEFORE_REMINDER }, () => readA),
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      ...Array.from({ length: READS_BEFORE_REMINDER }, () => readA),
+      { content: "done" },
+    ]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(said().some(Boolean)).toBe(false)
   })
 })
 
@@ -1945,5 +2229,35 @@ describe("tasks in a project (specs/projects R2)", () => {
     await r.settled(third.id)
     expect(reads[0]).toMatch(/^ERROR: there is no analysis .* in this project/)
     expect(JSON.stringify(requests[0].messages[0].content)).not.toContain("Earlier tasks of this project")
+  })
+
+  it("keeps what an analysis leaves open in the project's ledger and hands it to the next task's delegation (specs/analysis-contract R2.1, R2.2, R2.4)", async () => {
+    const store = new ProjectStore(data)
+    const p = await newProject(store)
+    const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+    fakeContract = JSON.stringify({ unknowns: [{ question: "Is the separator configurable?", severity: "medium", settle: "the CLI flags" }] })
+    script = [read, { content: "Found it." }]
+    const r = projectRunner(store)
+    const first = r.start({ projectId: p.id, request: REQUEST, auto: true })
+    await r.settled(first.id)
+    const ledger = new UnknownsLedger()
+    const [open] = ledger.open(p.id)
+    expect(open).toMatchObject({ question: "Is the separator configurable?", raisedBy: log.steps(first.id).find((s) => s.kind === "delegation")!.id })
+    expect(kinds(first.id)).toContain("unknowns.recorded")
+
+    // the next task's delegation is given it, and closes it
+    writeFileSync(fakeLog, "")
+    fakeContract = JSON.stringify({ closes: [{ id: open.id, resolution: "No: it is hard-coded.", source: "src/a.ts:1-1" }] })
+    script = [read, { content: "Done." }]
+    const second = r.start({ projectId: p.id, request: "Now the flags.", auto: true })
+    await r.settled(second.id)
+    const prompt = readFileSync(fakeLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((l) => l.turn === 1).prompt
+    expect(prompt).toContain(`- ${open.id} [medium] Is the separator configurable? — would be settled by: the CLI flags`)
+    expect(ledger.open(p.id)).toEqual([])
+    expect(ledger.list(p.id)[0]).toMatchObject({ id: open.id, resolution: "No: it is hard-coded. (src/a.ts:1-1)" })
   })
 })

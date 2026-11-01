@@ -50,10 +50,11 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 ## R5 · Asking the user
 
 - **R5.1** The chat shall give the orchestrator a tool to ask the user a question, pausing the turn until the user answers and returning the answer to the agent.
-- **R5.2** The chat shall give the specialist a tool to ask the user a question from inside its sandbox, returning the answer across the sandbox boundary to the delegation without granting it any other channel out.
+- **R5.2** (MODIFIED) When the specialist asks a question from inside its sandbox, the chat shall put it first to one call of the orchestrator's model with the delegation's context package, and shall return that answer across the sandbox boundary to the delegation without granting the specialist any other channel out (adr:0021-answer-the-specialist-from-the-orchestrator-and-let-the-user-decide-a-refusal).
+- **R5.6** (ADDED) If the orchestrator's model judges that a specialist's question needs a fact only the user has, or it cannot answer it, then the chat shall put the question to the user.
 - **R5.3** The chat shall require each question to carry a prompt, a reason, a kind — choice, yes/no, number or free text — and a default, and shall present the input the kind calls for.
-- **R5.4** When the user answers a question, the chat shall return the answer and record its origin as the user; if the question is unanswered within its timeout, then the chat shall return the default and record the origin as the timeout.
-- **R5.5** The chat shall cap the number of questions an agent may ask within one turn and return the default once the cap is reached.
+- **R5.4** (MODIFIED) When a question is answered, the chat shall return the answer and record its origin as the orchestrator or the user who answered it; if a question put to the user is unanswered within its timeout, then the chat shall return the default and record the origin as the timeout.
+- **R5.5** (MODIFIED) The chat shall cap the number of questions an agent may put to the user within one turn and return the default once the cap is reached, counting neither the questions the orchestrator's model answers nor the choice a safeguard refusal waits on.
 
 ## R6 · The division of labour
 

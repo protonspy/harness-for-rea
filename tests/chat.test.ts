@@ -107,6 +107,10 @@ describe("the conversation the chat renders (R7.1–R7.5)", () => {
       [step("s1", 1)],
     )
     expect(items.map((i) => i.kind)).toEqual(["user", "agent", "tool", "user", "tool", "approval", "question", "notice"])
+    // specs/specialist-lifecycle R2.1: a safeguard refusal is a notice of its own
+    expect(conversation([ev("safeguard.refusal", { error: "declined" }, { agent: "sandbox", stepId: "s1", summary: "declined" })])).toEqual([
+      expect.objectContaining({ kind: "notice", text: "declined", tone: "warn" }),
+    ])
     const [first, , read, later, delegate, approval, question, notice] = items as [
       UserItem,
       AgentItem,

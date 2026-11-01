@@ -1,25 +1,13 @@
 # Chat timeline — tasks
 
-<!-- Grammar, per task, all four parts required:
+## 1 · Reading the log in pages
 
-       - [ ] <number> (Unit|TDD) <description> — <requirement ids>
+- [x] 1.1 (Unit) Page `history` before or after an event id, newest page by default, with `hasOlder` and the whole task's usage per agent — R2.1, R3.3
+- [x] 1.2 (Unit) Carry the tool call id on the orchestrator's tool events and on the delegation step it starts — R1.1
 
-     (Unit) writes the code, then a unit test per function, immediately, asserting
-     the requirement rather than the implementation. (TDD) writes the failing test
-     first and watches it fail — mandatory for money, complex algorithms, and
-     hypothesis validation.
+## 2 · The timeline
 
-     A task is the right size when it can be verified on its own.
-
-     Every requirement must reach at least one task, and every task must cite a
-     requirement that exists. `scc spec validate` checks both directions.
-     Delete this comment. -->
-
-## 1 · <group name>
-
-- [ ] 1.1 (Unit) <description> — R1.1
-- [ ] 1.2 (TDD) <description> — R1.2, R1.3
-
-## 2 · <group name>
-
-- [ ] 2.1 (Unit) <description> — R1.1
+- [x] 2.1 (Unit) Fold events into timeline entries incrementally, specialist events nested under their delegation, calls paired by id — R1.1, R1.3, R3.2
+- [x] 2.2 (Unit) Compute the rendered window and the prepend scroll correction from measured heights — R2.3, R3.1
+- [x] 2.3 (Unit) Render the task view through the window: newest page first, older pages on scroll, payloads collapsed, usage and steps from the main process — R1.2, R2.2, R2.3, R3.3
+- [x] 2.4 (Unit) Measure a 10,000-event task in the running app: open time and scroll frame times — R3.4

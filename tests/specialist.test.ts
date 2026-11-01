@@ -169,6 +169,23 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
     await s.close()
   })
 
+  it("rejects a safeguard refusal as its own kind, from the usage-policy message or the refusal stop reason (specs/specialist-lifecycle R2.1)", async () => {
+    for (const mode of ["refusal", "refusal-quiet", "refusal-text"]) {
+      const f = fakeLaunch(mode)
+      const s = new SpecialistSession(f.launch, { timeoutMs: 20_000 })
+      await expect(s.send("hi"), mode).rejects.toMatchObject({ kind: "refused", message: expect.stringMatching(/usage policy/i) })
+      await s.close()
+      // the CLI exited on its own: its container goes with it, nothing to kill (specs/specialist-lifecycle R3.1)
+      expect(f.stopped()).toBe(0)
+    }
+  })
+
+  it("does not take a failed turn that only talks about the usage policy for a refusal", async () => {
+    const s = new SpecialistSession(fakeLaunch("policy-claim").launch, { timeoutMs: 20_000 })
+    await expect(s.send("hi")).rejects.toMatchObject({ kind: "failed" })
+    await s.close()
+  })
+
   it("keeps unknown lines as events", async () => {
     const events: StreamEvent[] = []
     const s = new SpecialistSession(fakeLaunch("noise").launch, { timeoutMs: 20_000, onEvent: (e) => events.push(e) })
@@ -206,6 +223,8 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
     expect(classifyFailure("Please run /login").kind).toBe("auth")
     expect(classifyFailure("API Error: Overloaded").kind).toBe("limit")
     expect(classifyFailure("something odd").kind).toBe("failed")
+    // text alone is never a refusal: only the stream's stop reason or Claude Code's own error line is
+    expect(classifyFailure("this violates our Usage Policy").kind).toBe("failed")
     expect(classifyFailure("").message).toContain("the run failed")
   })
 })

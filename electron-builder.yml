@@ -10,8 +10,20 @@ extraResources:
   - from: sandbox
     to: sandbox
 win:
-  target: nsis
+  target:
+    - target: nsis
+      arch: [x64]
   icon: resources/icon.ico
+  artifactName: harness-for-rea-${version}-windows-x64-setup.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+# Unsigned and not notarized (specs/release R1.2): the README gives the first-run step macOS asks for.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  icon: resources/icon.png
+  category: public.app-category.developer-tools
+  identity: null
+  artifactName: harness-for-rea-${version}-macos-${arch}.${ext}
