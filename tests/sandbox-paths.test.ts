@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { beforeAll, describe, expect, it } from "vitest"
-import { PathRejected, resolveRequested, resolveTarget } from "../src/main/sandbox/paths"
+import { PathRejected, removeTree, resolveRequested, resolveTarget } from "../src/main/sandbox/paths"
+import { dockerExecBuffer } from "../src/main/sandbox/taskbox"
+import { SPECIALIST_IMAGE } from "../src/main/sandbox/docker"
 
 /* specs/task-sandbox R1.3: a requested path never leaves the source root. */
 
@@ -81,4 +83,45 @@ describe("resolveTarget", () => {
     rejected(() => resolveTarget(root, "junction/new.txt"))
     rejected(() => resolveTarget(root, "../x"))
   })
+})
+
+describe("removing a folder a container wrote into (specs/task-persistence R4.1)", () => {
+  it("removes every entry and never follows a link out of it", () => {
+    const top = mkdtempSync(join(tmpdir(), "hfr-rm-"))
+    const elsewhere = join(top, "elsewhere")
+    mkdirSync(elsewhere)
+    writeFileSync(join(elsewhere, "keep.txt"), "keep")
+    const dir = join(top, "task")
+    mkdirSync(join(dir, "scratch", "lib"), { recursive: true })
+    writeFileSync(join(dir, "scratch", "lib", "a"), "x")
+    // a junction needs no privilege on Windows; elsewhere a directory link
+    symlinkSync(elsewhere, join(dir, "scratch", "escape"), process.platform === "win32" ? "junction" : "dir")
+    removeTree(dir)
+    expect(existsSync(dir)).toBe(false)
+    expect(readFileSync(join(elsewhere, "keep.txt"), "utf8")).toBe("keep")
+    // a folder already gone is nothing to do
+    expect(() => removeTree(dir)).not.toThrow()
+  })
+})
+
+/* Against the real Docker: HFR_DOCKER=1 npx vitest run tests/sandbox-paths.test.ts */
+describe.skipIf(!process.env.HFR_DOCKER)("removing what a container made on a bind", () => {
+  it("removes links and FIFOs a root container left, which a recursive rmSync cannot", async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "hfr-rm-")), "scratch")
+    mkdirSync(dir)
+    const r = await dockerExecBuffer([
+      "run",
+      "--rm",
+      "--mount",
+      `type=bind,source=${dir},target=/t`,
+      "--entrypoint",
+      "sh",
+      SPECIALIST_IMAGE,
+      "-c",
+      "mkdir /t/lib && echo x > /t/lib/f && ln -s lib /t/lib64 && ln -s /etc/passwd /t/abs && ln -s ../../ /t/up && mkfifo /t/pipe",
+    ])
+    expect(r.code).toBe(0)
+    removeTree(dir)
+    expect(existsSync(dir)).toBe(false)
+  }, 60_000)
 })

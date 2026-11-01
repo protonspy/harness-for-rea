@@ -3,7 +3,7 @@ autonomy: auto
 ci: wait
 branch: feat/chat-hitl
 delivery: in-review
-pr: 2
+pr: 4
 ---
 
 # Chat — requirements
@@ -41,7 +41,7 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 
 ## R4 · Approving tool calls
 
-- **R4.1** The chat shall let the user choose, per task, which of the orchestrator's gated tools pause for a decision before they run, with `apply_patch` always gated.
+- **R4.1** (MODIFIED) The chat shall start every task with no tool gated, running each of the orchestrator's tool calls, `apply_patch` included, without pausing for a decision; a task retried keeps running without asking unless it was started with gates.
 - **R4.2** When a gated tool is about to run, the chat shall interrupt the turn, record the call with its arguments, and wait for the user's decision.
 - **R4.3** The chat shall accept one of approve, edit or reject for a gated call: edit carries replacement arguments the agent runs instead, and reject carries a message returned to the agent in place of the result.
 - **R4.4** When the user decides every pending call, the chat shall resume the turn from the checkpointer with those decisions.
@@ -75,6 +75,6 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 
 ## Out of scope
 
-- Resuming a run's exact checkpoint after the app restarts; a continued turn resumes only while the app has kept the task's container (specs/orchestrator out of scope).
+- Resuming a Claude Code session cut off mid-delegation (specs/task-persistence out of scope).
 - Several tasks sharing one conversation; a thread is one task.
 - Streaming the model's tokens as they generate; the UI advances on node updates and recorded events (specs/desktop-ui R2.2).

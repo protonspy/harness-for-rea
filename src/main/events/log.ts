@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Agent, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 import { getDb } from "../db"
+import { removeTree } from "../sandbox/paths"
 import { redact, redactValue } from "./redact"
 
 /*
@@ -263,6 +264,21 @@ export class EventLog {
     return p
   }
 
+  /**
+    Remove a task's folder and its patches' stored files (specs/task-persistence R4.1); throws, keeping the task, when
+    any entry cannot be removed, so nothing is reported deleted that is still on disk.
+  */
+  deleteTaskFiles(id: string) {
+    for (const r of getDb().prepare("SELECT id FROM patches WHERE task_id = ?").all(id) as Row[]) removeTree(join(this.dataDir, "patches", String(r.id)))
+    removeTree(this.taskDir(id))
+  }
+
+  /** Remove a task's records, its files already gone; its steps, events, patches and sandboxes go with the task row. */
+  deleteTask(id: string) {
+    getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id)
+    this.push({ type: "taskDeleted", id })
+  }
+
   /* ---------- history and recovery ---------- */
 
   history(taskId: string, o: { afterEvent?: number; limit?: number } = {}): TaskHistory {
@@ -280,17 +296,11 @@ export class EventLog {
   }
 
   /**
-    At startup: every task and step left running, waiting or stopped is interrupted, and says so; a
-    conversation that waited for the user is closed, its answer kept. Returns how many were interrupted.
+    At startup: every task and step left running, waiting or stopped is interrupted, and says so; a conversation
+    that waited for the user stays open, to be continued from its checkpoint (specs/task-persistence R2.3).
+    Returns how many were interrupted.
   */
   recover(): number {
-    const at0 = this.now()
-    for (const r of getDb().prepare("SELECT id FROM tasks WHERE state = 'awaiting-user'").all() as Row[]) {
-      const id = String(r.id)
-      getDb().prepare("UPDATE tasks SET state = 'done', updated_at = ? WHERE id = ?").run(at0, id)
-      this.append({ taskId: id, agent: "app", kind: "task.done", state: "done", summary: "The app restarted; this conversation is closed." })
-      this.emitTask(id)
-    }
     const marks = LIVE.map(() => "?").join(", ")
     const tasks = (
       getDb()
@@ -308,7 +318,7 @@ export class EventLog {
         agent: "app",
         kind: "task.interrupted",
         state: "interrupted",
-        summary: "The app stopped while this task was running; retry it to start over.",
+        summary: "The app stopped while this task was running; continue it to pick up where it stopped.",
       })
       this.emitTask(id)
     }

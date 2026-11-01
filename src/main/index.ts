@@ -12,6 +12,7 @@ import { listModels } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
+import { SpecialistBoxes } from "./sandbox/specialistbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
@@ -35,7 +36,16 @@ function sandboxDir(): string {
   return app.isPackaged ? join(process.resourcesPath, "sandbox") : join(app.getAppPath(), "sandbox")
 }
 
+// One instance at a time: a second would sweep the first's task containers as orphans at start.
+const primary = app.requestSingleInstanceLock()
+if (!primary) app.quit()
+app.on("second-instance", () => {
+  if (win?.isMinimized()) win.restore()
+  win?.focus()
+})
+
 app.whenReady().then(async () => {
+  if (!primary) return
   const dataDir = app.getPath("userData")
   openDb(join(dataDir, "hfr.db"))
   onKey(registerSecret)
@@ -45,6 +55,8 @@ app.whenReady().then(async () => {
   log.recover()
   // Task containers a crash left running belong to tasks recover() just marked interrupted.
   void TaskBox.sweep(dockerExecBuffer).catch(() => undefined)
+  // So do the specialist's sandboxes (specs/specialist-sandbox R2.7).
+  void SpecialistBoxes.sweep(dockerExecBuffer).catch(() => undefined)
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
   const runner = new TaskRunner({
     ...deps,
@@ -53,8 +65,23 @@ app.whenReady().then(async () => {
     workspace: async (task) => {
       const blocked = await preflight(dockerExec)
       if (blocked) throw new Error(blocked)
-      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, getSettings())
-      return { backend: box, root: WORKSPACE, scratch: SCRATCH, dispose: () => box.dispose() }
+      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, join(log.taskDir(task.id), "scratch"))
+      // The specialist's sandboxes the orchestrator creates, those an earlier run recorded included (specs/task-persistence R3.6).
+      const sandboxes = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id })
+      return {
+        backend: box,
+        root: WORKSPACE,
+        scratch: SCRATCH,
+        sandboxes,
+        created: box.created,
+        // Stopped and kept for when the task reopens (specs/task-persistence R3.4).
+        dispose: async () => void (await Promise.allSettled([box.dispose(), sandboxes.stopAll()])),
+      }
+    },
+    // Only deleting the task removes its containers (specs/task-persistence R4.1).
+    removeContainers: async (task) => {
+      await TaskBox.remove(dockerExecBuffer, task.id)
+      await new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id }).removeAll()
     },
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
@@ -97,7 +124,8 @@ app.whenReady().then(async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory"] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
     },
-    startTask: (input) => runner.start(input),
+    // Every task runs its tool calls without asking, patches included (specs/chat R4.1).
+    startTask: (input) => runner.start({ ...input, auto: true }),
     listTasks: ({ limit }) => log.listTasks(limit),
     getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
     cancelTask: (id) => runner.cancel(id),
@@ -114,7 +142,9 @@ app.whenReady().then(async () => {
     sendMessage: (id, message) => runner.sendMessage(id, message),
     closeTask: (id) => runner.close(id),
     stopTurn: (id) => runner.stopTurn(id),
-    continueTurn: (id) => runner.continueTurn(id),
+    // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
+    continueTurn: (id) => runner.continueTask(id),
+    deleteTask: async (id) => (await runner.remove(id), true),
     decideTool: (id, callId, decision) => runner.decideTool(id, callId, decision),
     answerQuestion: (id, questionId, answer) => runner.answerQuestion(id, questionId, answer),
   }

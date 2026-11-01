@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync } from "node:fs"
+import { lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 
 /*
@@ -82,4 +82,27 @@ export function resolveTarget(root: string, requested: string): Resolved {
   const existing = walk(base, parts, requested)
   if (existing === parts.length && !lstatSync(abs).isFile()) throw new PathRejected(requested, "is not a regular file")
   return { rel: parts.join("/"), abs }
+}
+
+/**
+  Remove a folder a container wrote into, entry by entry, never through a link: a container's symlinks and FIFOs on
+  a Windows bind defeat a recursive `rmSync`, while `unlink` removes each one (specs/task-persistence R4.1). Throws
+  when an entry stays.
+*/
+export function removeTree(dir: string) {
+  let st
+  try {
+    st = lstatSync(dir)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return
+    // A FIFO or device node the container made: not even lstat may read it, but unlink removes it.
+    unlinkSync(dir)
+    return
+  }
+  if (!st.isDirectory() || st.isSymbolicLink()) {
+    unlinkSync(dir)
+    return
+  }
+  for (const name of readdirSync(dir)) removeTree(`${dir}/${name}`)
+  rmdirSync(dir)
 }

@@ -115,10 +115,6 @@ export interface Settings {
   baseUrl: string
   model: string
   timeoutMinutes: number
-  memoryMb: number
-  cpus: number
-  pidsLimit: number
-  discardOnCompletion: boolean
   /** `reasoning.effort` for the orchestrator (OpenRouter's, or `reasoning_effort` on other providers); "default" sends none */
   orchestratorEffort: OrchestratorEffort
   /** Claude Code's `--effort` for the specialist; "default" passes none */
@@ -165,6 +161,7 @@ export type Push =
   | { type: "event"; event: EventRow }
   | { type: "step"; step: StepRow }
   | { type: "task"; task: TaskRow }
+  | { type: "taskDeleted"; id: string }
   | { type: "patch"; patch: PatchView }
   | { type: "sandbox"; status: SandboxStatus }
   | { type: "login"; status: LoginStatus }

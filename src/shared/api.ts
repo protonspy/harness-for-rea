@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ALWAYS_GATED, AnswerSchema, DecisionSchema, GATEABLE_TOOLS } from "./chat"
+import { AnswerSchema, DecisionSchema } from "./chat"
 import { PROVIDER_IDS } from "./providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
@@ -35,10 +35,6 @@ const SettingsPatch = z
       .trim()
       .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
     timeoutMinutes: z.number().int().min(1).max(240),
-    memoryMb: z.number().int().min(256).max(65_536),
-    cpus: z.number().min(0.5).max(64),
-    pidsLimit: z.number().int().min(32).max(32_768),
-    discardOnCompletion: z.boolean(),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
@@ -68,8 +64,6 @@ export const API_SCHEMAS = {
       .object({
         request: z.string().trim().min(1).max(20_000),
         sourceRoot: z.string().trim().min(1).max(1000),
-        /** the tools that pause for the user's decision; apply_patch is gated whatever this says */
-        gated: z.array(z.enum(GATEABLE_TOOLS)).max(GATEABLE_TOOLS.length).default([ALWAYS_GATED]),
       })
       .strict(),
   ]),
@@ -82,6 +76,7 @@ export const API_SCHEMAS = {
   stopTurn: z.tuple([id]),
   continueTurn: z.tuple([id]),
   closeTask: z.tuple([id]),
+  deleteTask: z.tuple([id]),
   decideTool: z.tuple([id, id, DecisionSchema]),
   answerQuestion: z.tuple([id, id, AnswerSchema]),
 } as const
@@ -115,6 +110,7 @@ export interface ApiResults {
   stopTurn: TaskRow
   continueTurn: TaskRow
   closeTask: TaskRow
+  deleteTask: boolean
   decideTool: TaskRow
   answerQuestion: TaskRow
 }

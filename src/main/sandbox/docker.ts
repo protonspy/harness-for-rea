@@ -17,15 +17,20 @@ export const BASE_IMAGE = pins.specialistBase.ref
 export const LEGACY = { proxy: "hfr-egress", image: "hfr-egress:1", network: "hfr-sandbox" }
 export const CONFIG_VOLUME = "hfr-claude-config"
 const CONFIG_DIR = "/home/agent/.claude-config"
-/** The non-root user the specialist image creates. */
+/** The non-root user the specialist image creates, which the login container runs as. */
 const AGENT_UID = 1000
+/** The capabilities a root sandbox keeps, enough to install packages (adr:0015-run-the-task-container-as-root). */
+export const INSTALL_CAPS = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"]
+/** Where the specialist's wrapper records the CLI's process id, so a stop can reach it inside a sandbox that outlives it. */
+export const CLAUDE_PID_FILE = "/tmp/hfr-claude.pid"
 
 export type Mode = "read" | "modify"
 
+/** Resource limits of a container; one left out is no limit (adr:0016-let-the-orchestrator-run-the-specialists-sandbox). */
 export interface Limits {
-  memoryMb: number
-  cpus: number
-  pidsLimit: number
+  memoryMb?: number
+  cpus?: number
+  pidsLimit?: number
 }
 
 export interface RunSpec {
@@ -33,7 +38,15 @@ export interface RunSpec {
   workspace: string
   runDir: string
   mode: Mode
-  limits: Limits
+}
+
+/** The `docker run` flags for the limits that are set, and none for one left out. */
+export function limitArgs(limits: Limits): string[] {
+  return [
+    ...(limits.memoryMb === undefined ? [] : ["--memory", `${limits.memoryMb}m`]),
+    ...(limits.cpus === undefined ? [] : ["--cpus", String(limits.cpus)]),
+    ...(limits.pidsLimit === undefined ? [] : ["--pids-limit", String(limits.pidsLimit)]),
+  ]
 }
 
 export function containerName(id: string): string {
@@ -57,10 +70,24 @@ export function containerEnv(): Record<string, string> {
 }
 
 /**
-  Isolation shared by every container the app starts: user, capabilities, root filesystem, login volume. The
-  network is Docker's default, with full internet access (adr:0013-give-the-sandboxes-full-internet-access).
+  The user, capabilities and root filesystem of a container: a specialist's sandbox runs as root with only the
+  capabilities installing packages needs and a writable root (adr:0016-let-the-orchestrator-run-the-specialists-sandbox);
+  the login container stays the non-root user on a read-only root.
 */
-function confined(name: string, limits: Limits): string[] {
+export function identity(root: boolean): string[] {
+  const caps = ["--cap-drop", "ALL", ...(root ? INSTALL_CAPS.flatMap((c) => ["--cap-add", c]) : [])]
+  return root
+    ? ["--user", "0:0", ...caps, "--security-opt", "no-new-privileges"]
+    : ["--user", `${AGENT_UID}:${AGENT_UID}`, ...caps, "--security-opt", "no-new-privileges", "--read-only"]
+}
+
+/**
+  Isolation shared by the containers the app runs per call: identity, limits, login volume. The network is
+  Docker's default, with full internet access (adr:0013-give-the-sandboxes-full-internet-access). A root
+  sandbox writes to its own root filesystem and has no limit; the login container, on a read-only root, gets
+  small tmpfs mounts and the limits it is given.
+*/
+function confined(name: string, limits: Limits, root: boolean): string[] {
   return [
     "run",
     "--rm",
@@ -69,27 +96,18 @@ function confined(name: string, limits: Limits): string[] {
     name,
     "--hostname",
     "sandbox",
-    "--user",
-    `${AGENT_UID}:${AGENT_UID}`,
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--read-only",
-    "--tmpfs",
-    "/tmp:rw,nosuid,nodev,size=256m",
-    "--tmpfs",
-    `/home/agent:rw,nosuid,nodev,size=256m,uid=${AGENT_UID},gid=${AGENT_UID},mode=0700`,
-    "--memory",
-    `${limits.memoryMb}m`,
-    "--cpus",
-    String(limits.cpus),
-    "--pids-limit",
-    String(limits.pidsLimit),
-    "--mount",
-    `type=volume,source=${CONFIG_VOLUME},target=${CONFIG_DIR}`,
-    ...Object.entries(containerEnv()).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
+    ...identity(root),
+    ...(root
+      ? []
+      : ["--tmpfs", "/tmp:rw,nosuid,nodev,size=256m", "--tmpfs", `/home/agent:rw,nosuid,nodev,size=256m,uid=${AGENT_UID},gid=${AGENT_UID},mode=0700`]),
+    ...limitArgs(limits),
+    ...loginVolume(),
   ]
+}
+
+/** The shared login volume and the only environment a container gets. */
+export function loginVolume(): string[] {
+  return ["--mount", `type=volume,source=${CONFIG_VOLUME},target=${CONFIG_DIR}`, ...Object.entries(containerEnv()).flatMap(([k, v]) => ["-e", `${k}=${v}`])]
 }
 
 /** A bind source goes into a comma-separated `--mount` value, so a comma or quote in it would add options. */
@@ -105,7 +123,7 @@ export function mountSource(path: string): string {
 */
 export function dockerRunArgs(spec: RunSpec): string[] {
   return [
-    ...confined(containerName(spec.id), spec.limits),
+    ...confined(containerName(spec.id), {}, true),
     "--mount",
     `type=bind,source=${mountSource(spec.workspace)},target=/work${spec.mode === "read" ? ",readonly" : ""}`,
     "--mount",
@@ -118,6 +136,38 @@ export function dockerRunArgs(spec: RunSpec): string[] {
   ]
 }
 
+/**
+  The CLI run through `sh`, so its process id is on record for a stop, and the login volume is handed back to the
+  login container's user once it ends: a root CLI writes it as root (specs/specialist-sandbox R4.4, R4.6). The CLI
+  gets the wrapper's stdin through descriptor 3: a non-interactive shell points a background job's stdin at
+  /dev/null before its own redirections, so `<&0` alone would hand it /dev/null.
+*/
+export function specialistCommand(cli: string[]): string[] {
+  const script = [
+    `rm -f ${CLAUDE_PID_FILE}`,
+    "exec 3<&0",
+    `"$@" <&3 3<&- & pid=$!`,
+    "exec 3<&-",
+    `echo "$pid" > ${CLAUDE_PID_FILE}`,
+    `wait "$pid"; status=$?`,
+    `rm -f ${CLAUDE_PID_FILE}`,
+    `chown -R ${AGENT_UID}:${AGENT_UID} ${CONFIG_DIR} 2>/dev/null`,
+    `exit "$status"`,
+  ].join("\n")
+  return ["sh", "-c", script, "sh", ...cli]
+}
+
+/** `docker exec` of the specialist into a sandbox the orchestrator created (specs/specialist-sandbox R4.1). */
+export function execArgs(box: string, cli: string[]): string[] {
+  return ["exec", "-i", "-w", "/work", box, ...specialistCommand(cli)]
+}
+
+/** Stops the specialist's CLI inside a sandbox and leaves the sandbox running (specs/specialist-sandbox R4.4). */
+export function stopArgs(box: string): string[] {
+  return ["exec", box, "sh", "-c", `kill "$(cat ${CLAUDE_PID_FILE})" 2>/dev/null; true`]
+}
+
+export const SHELL_TOOLS = ["Bash"]
 export const READ_TOOLS = ["Read", "Grep", "Glob"]
 export const WRITE_TOOLS = ["Edit", "Write"]
 /** Where the ask channel is mounted in the specialist's container. */
@@ -130,9 +180,9 @@ export function mcpConfig(): string {
   return JSON.stringify({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] } } })
 }
 
-/** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools only. */
+/** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools and a shell. */
 export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort = "default"): string[] {
-  const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : [])].join(",")
+  const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : []), ...SHELL_TOOLS].join(",")
   return [
     "claude",
     "-p",
@@ -141,7 +191,7 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
     "--strict-mcp-config",
     "--mcp-config",
     mcpConfig(),
-    // File tools confined to the working directory, no command-running tool, nothing that would prompt.
+    // File tools confined to the working directory, Bash the one command-running tool, nothing that would prompt.
     "--restricted",
     "--permission-prompts",
     "none",
@@ -158,7 +208,8 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
     tools,
     "--allowedTools",
     `${tools},${ASK_USER_TOOL}`,
-    // The login volume under the home directory holds the plan's token: no file tool may reach it.
+    // The login volume under the home directory holds the plan's token: no file tool may reach it. The shell
+    // can, as root; adr:0016-let-the-orchestrator-run-the-specialists-sandbox accepts that exposure.
     "--disallowedTools",
     "Read(//home/agent/**),Edit(//home/agent/**)",
     "--system-prompt-file",
@@ -169,7 +220,7 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
 
 /** `docker` arguments for `claude auth …` on the login volume, with no workspace. */
 export function authArgs(sub: string[], id: string): string[] {
-  return [...confined(`hfr-auth-${id}`, { memoryMb: 1024, cpus: 1, pidsLimit: 128 }), "-w", "/tmp", SPECIALIST_IMAGE, "claude", "auth", ...sub]
+  return [...confined(`hfr-auth-${id}`, { memoryMb: 1024, cpus: 1, pidsLimit: 128 }, false), "-w", "/tmp", SPECIALIST_IMAGE, "claude", "auth", ...sub]
 }
 
 /* ---------- running docker ---------- */
