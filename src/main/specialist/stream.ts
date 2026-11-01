@@ -59,6 +59,8 @@ export interface StreamResult {
   model: string
   /** the error subtype or API status when it failed */
   reason?: string
+  /** the model stopped with a safeguard refusal (specs/specialist-lifecycle R2.1) */
+  refused?: boolean
 }
 
 interface Block {
@@ -83,6 +85,8 @@ export class StreamReader {
   model = ""
   /** the last result; a multi-turn session has one per turn */
   result: StreamResult | null = null
+  /** an assistant message of this turn stopped with `stop_reason: "refusal"` */
+  private refused = false
   private readonly subagents = new Map<string, string>()
   private readonly tools = new Map<string, string>()
 
@@ -124,6 +128,7 @@ export class StreamReader {
 
   private assistant(e: Record<string, unknown>): StreamEvent[] {
     const out: StreamEvent[] = []
+    if (isObj(e.message) && e.message.stop_reason === "refusal") this.refused = true
     const who = this.agentOf(e.parent_tool_use_id)
     for (const b of this.blocks(e)) {
       if (b.type === "thinking" && b.thinking?.trim()) {
@@ -204,7 +209,9 @@ export class StreamReader {
       cacheTokens: num(u.cache_creation_input_tokens) + num(u.cache_read_input_tokens),
       model: this.model || models[0] || "claude",
       reason: error ? clean(e.api_error_status ?? e.subtype ?? "") || undefined : undefined,
+      ...(this.refused ? { refused: true } : {}),
     }
+    this.refused = false
     this.result = r
     const t = cap(r.text, TEXT_CAP)
     return {

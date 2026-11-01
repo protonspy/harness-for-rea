@@ -78,6 +78,8 @@ const NOTICES: Record<string, NoticeItem["tone"]> = {
   "turn.stopped": "warn",
   "turn.continued": "neutral",
   "question.capped": "warn",
+  // its own state, settled by the user's choice (specs/specialist-lifecycle R2.1)
+  "safeguard.refusal": "warn",
   "task.failed": "bad",
   "task.cancelled": "warn",
   "task.interrupted": "bad",

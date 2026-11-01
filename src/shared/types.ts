@@ -2,8 +2,11 @@
 
 import type { ProviderId } from "./providers"
 
-/** `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn (specs/chat R1.4, R3.1). */
-export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted"] as const
+/**
+  `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
+  (specs/chat R1.4, R3.1); `refused`: a delegation step the specialist declined under its usage policy (specs/specialist-lifecycle R2.1).
+*/
+export const TASK_STATES = ["pending", "running", "waiting", "awaiting-user", "stopped", "done", "failed", "cancelled", "interrupted", "refused"] as const
 export type TaskState = (typeof TASK_STATES)[number]
 
 export type Agent = "orchestrator" | "specialist" | "sandbox" | "app"

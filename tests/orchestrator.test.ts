@@ -1173,9 +1173,47 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
       .map((l) => JSON.parse(l))
       .find((l) => l.heard)?.heard
 
+  const defer = { content: '{"defer": "Only the user knows the input."}' }
+
+  it("answers the question from the orchestrator's model with the context package, without asking the user (specs/specialist-lifecycle R1.1, R1.2)", async () => {
+    fakeMode = "ask"
+    let sent = ""
+    script = [
+      read,
+      (body) => {
+        sent = JSON.stringify(body)
+        return { content: '{"answer": true}' }
+      },
+      (body) => ({ content: lastTool(body) }),
+    ]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(sent).toContain("Is the input UTF-8?")
+    expect(sent).toContain("Find why parse drops the last token")
+    expect(JSON.parse(heard())).toEqual({ answer: true, origin: "orchestrator" })
+    const events = log.history(task.id).events
+    expect(events.find((e) => e.kind === "question.answered")?.payload).toMatchObject({ answer: true, origin: "orchestrator" })
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+  })
+
+  it("puts the question to the user when the model defers, and counts only those against the cap (R1.3, specs/chat R5.5)", async () => {
+    fakeMode = "ask"
+    script = [read, defer, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 200 && !asked(task.id).some((e) => e.payload.origin === undefined && e.agent === "specialist"); i++)
+      await new Promise((res) => setTimeout(res, 20))
+    expect(log.getTask(task.id).state).toBe("waiting")
+    const [q] = asked(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), false)
+    await r.settled(task.id)
+    expect(JSON.parse(heard())).toEqual({ answer: false, origin: "user" })
+  })
+
   it("carries the question from the delegation to the chat and the user's answer back into the sandbox", async () => {
     fakeMode = "ask"
-    script = [read, (body) => ({ content: lastTool(body) })]
+    script = [read, defer, (body) => ({ content: lastTool(body) })]
     const r = runner()
     const task = r.start({ request: REQUEST, sourceRoot: root })
     for (let i = 0; i < 200 && !asked(task.id).length; i++) await new Promise((res) => setTimeout(res, 20))
@@ -1214,11 +1252,74 @@ describe("the specialist asks the user (specs/chat R5.2)", () => {
   it("answers with the default when the question times out", async () => {
     fakeMode = "ask"
     settings = { ...settings, questionTimeoutMinutes: 0.001 }
-    script = [read, { content: "ok" }]
+    script = [read, defer, { content: "ok" }]
     const r = runner()
     const task = r.start({ request: REQUEST, sourceRoot: root })
     await r.settled(task.id)
     expect(JSON.parse(heard())).toEqual({ answer: false, origin: "timeout" })
+  })
+})
+
+describe("a safeguard refusal (specs/specialist-lifecycle R2)", () => {
+  const read = { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }
+  const waitingQuestion = async (taskId: string, n = 1) => {
+    for (let i = 0; i < 300; i++) {
+      const open = log.history(taskId).events.filter((e) => e.kind === "question.asked")
+      if (open.length >= n) return open[n - 1]
+      await new Promise((res) => setTimeout(res, 20))
+    }
+    throw new Error("no question")
+  }
+
+  it("records the refusal as its own event and step state and waits on the user's choice with no timeout (R2.1–R2.3)", async () => {
+    fakeMode = "refusal"
+    settings = { ...settings, questionTimeoutMinutes: 0.001 }
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    expect(q.payload.question).toMatchObject({ kind: "choice", choices: ["Stop the task", "Skip this step", "Ask for a different technical approach"] })
+    await new Promise((res) => setTimeout(res, 300))
+    expect(log.getTask(task.id).state).toBe("waiting")
+    const logged = kinds(task.id)
+    expect(logged).toContain("safeguard.refusal")
+    expect(logged).not.toContain("sandbox.refused")
+    expect(logged).not.toContain("delegation.failed")
+    expect(log.steps(task.id).find((s) => s.kind === "delegation")?.state).toBe("refused")
+
+    r.answerQuestion(task.id, String(q.payload.questionId), "Skip this step")
+    await r.settled(task.id)
+    const told = log.getTask(task.id).result
+    expect(told).toMatch(/safeguard refusal/i)
+    expect(told).toMatch(/skip/i)
+    expect(told).toMatch(/do not delegate it again/i)
+  })
+
+  it("tells the orchestrator the different technical approach in the user's own words, never a purpose (R2.4, R2.6)", async () => {
+    fakeMode = "refusal"
+    script = [read, (body) => ({ content: lastTool(body) })]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), "Ask for a different technical approach")
+    const how = await waitingQuestion(task.id, 2)
+    expect(how.payload.question).toMatchObject({ kind: "text" })
+    r.answerQuestion(task.id, String(how.payload.questionId), "Map only the string table, statically")
+    await r.settled(task.id)
+    const told = log.getTask(task.id).result
+    expect(told).toContain("Map only the string table, statically")
+    expect(told).toMatch(/never reword the refused request or add a purpose or an authorization/i)
+  })
+
+  it("cancels the task when the user stops it (R2.5)", async () => {
+    fakeMode = "refusal-quiet"
+    script = [read, { content: "unreachable" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    const q = await waitingQuestion(task.id)
+    r.answerQuestion(task.id, String(q.payload.questionId), "Stop the task")
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("cancelled")
   })
 })
 

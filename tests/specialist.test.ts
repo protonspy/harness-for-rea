@@ -169,6 +169,17 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
     await s.close()
   })
 
+  it("rejects a safeguard refusal as its own kind, from the usage-policy message or the refusal stop reason (specs/specialist-lifecycle R2.1)", async () => {
+    for (const mode of ["refusal", "refusal-quiet"]) {
+      const f = fakeLaunch(mode)
+      const s = new SpecialistSession(f.launch, { timeoutMs: 20_000 })
+      await expect(s.send("hi"), mode).rejects.toMatchObject({ kind: "refused", message: expect.stringMatching(/usage policy/i) })
+      await s.close()
+      // the CLI exited on its own: its container goes with it, nothing to kill (specs/specialist-lifecycle R3.1)
+      expect(f.stopped()).toBe(0)
+    }
+  })
+
   it("keeps unknown lines as events", async () => {
     const events: StreamEvent[] = []
     const s = new SpecialistSession(fakeLaunch("noise").launch, { timeoutMs: 20_000, onEvent: (e) => events.push(e) })
@@ -206,6 +217,7 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
     expect(classifyFailure("Please run /login").kind).toBe("auth")
     expect(classifyFailure("API Error: Overloaded").kind).toBe("limit")
     expect(classifyFailure("something odd").kind).toBe("failed")
+    expect(classifyFailure("API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy").kind).toBe("refused")
     expect(classifyFailure("").message).toContain("the run failed")
   })
 })

@@ -34,7 +34,7 @@ export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string
     `You run as root in a Linux container with full internet access and a shell (Bash): unpack, extract, disassemble, decompile, build and run whatever the analysis needs, yourself. Install the tools you need with apt-get (run apt-get update first), pip or npm. Keep everything you extract, build or download in ${OWN_OUTPUT} or /tmp, never in /work.`,
     edit,
     "Back every claim with evidence: a path relative to /work and a line range you actually read.",
-    "When a fact only the user knows would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",
+    "When a fact you were not given would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. The orchestrator that wrote this prompt answers first, and passes to the user only what they alone know. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",
     "",
     // The same guide the image carries at /opt/hfr/AGENTS.md (specs/rea-native R2.3).
     operatingGuide.trim(),

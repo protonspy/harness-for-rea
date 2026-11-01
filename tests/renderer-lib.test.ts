@@ -174,7 +174,7 @@ describe("format", () => {
       "neutral",
     ])
     // the chat's states: your turn reads as settled, a stopped turn as needing you (specs/chat R7.5)
-    expect([tone("awaiting-user"), tone("stopped")]).toEqual(["ok", "warn"])
+    expect([tone("awaiting-user"), tone("stopped"), tone("refused")]).toEqual(["ok", "warn", "warn"])
   })
 
   it("classifies diff lines", () => {

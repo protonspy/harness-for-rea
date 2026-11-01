@@ -15,6 +15,7 @@ import {
   execArgs,
   INSTALL_CAPS,
   specialistCommand,
+  SPECIALIST_MODEL,
   stopArgs,
   dockerState,
   killContainer,
@@ -231,13 +232,13 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(read).toContain("--restricted")
     expect(after(read, "--permission-prompts")).toEqual(["none"])
     expect(after(read, "--tools")).toEqual(["Read,Grep,Glob,Bash"])
-    expect(after(read, "--model")).toEqual(["opus"])
+    expect(after(read, "--model")).toEqual([SPECIALIST_MODEL])
     expect(after(read, "--input-format")).toEqual(["stream-json"])
     expect(after(read, "--system-prompt-file")).toEqual(["/run/hfr/system.md"])
     expect(after(claudeArgs("modify"), "--tools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash"])
     expect(claudeArgs("read").join(" ")).not.toMatch(/dangerously|add-dir|bypassPermissions/)
     expect(claudeArgs("read")).not.toContain("--effort")
-    expect(after(claudeArgs("read", "opus", "max"), "--effort")).toEqual(["max"])
+    expect(after(claudeArgs("read", undefined, "max"), "--effort")).toEqual(["max"])
   })
 
   it("registers the ask-user and REA MCP servers and nothing else, and allows their tools (specs/chat R5.2, specs/rea-native R2.1)", () => {

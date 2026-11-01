@@ -18,7 +18,11 @@ export interface Launch {
   stop?: () => Promise<void>
 }
 
-export type FailureKind = "auth" | "limit" | "failed" | "cancelled" | "timeout"
+/** `refused`: a safeguard refusal under the usage policy, never a failure to retry (specs/specialist-lifecycle R2.1) */
+export type FailureKind = "auth" | "limit" | "refused" | "failed" | "cancelled" | "timeout"
+
+/** What the user and the orchestrator read for a safeguard refusal. */
+export const REFUSED = "The specialist declined this step under its usage policy (a safeguard refusal)."
 
 export class SpecialistError extends Error {
   readonly kind: FailureKind
@@ -32,6 +36,7 @@ export class SpecialistError extends Error {
 
 /** Turn what Claude Code reported into something the user can act on (R1.4). */
 export function classifyFailure(text: string): SpecialistError {
+  if (/violates? (our|the) usage policy|usage policy violation/i.test(text)) return new SpecialistError("refused", REFUSED)
   if (/invalid api key|please run \/login|not logged in|oauth token|authentication/i.test(text))
     return new SpecialistError("auth", "The specialist is not signed in to Claude. Sign in again in Settings.")
   if (/usage limit|hit your limit|rate.?limit|limit reached|overloaded/i.test(text)) {
@@ -106,7 +111,8 @@ export class SpecialistSession {
     const p = this.pending
     if (!r || !p) return
     this.pending = null
-    if (r.error) p.reject(classifyFailure(r.text || r.reason || this.stderr))
+    if (r.refused) p.reject(new SpecialistError("refused", REFUSED))
+    else if (r.error) p.reject(classifyFailure(r.text || r.reason || this.stderr))
     else p.resolve(r)
   }
 

@@ -68,6 +68,23 @@ for await (const line of createInterface({ input: process.stdin })) {
   turn++
   log({ turn, prompt })
   if (mode === "hang") continue
+  if (mode === "refusal" || mode === "refusal-quiet") {
+    // A safeguard refusal: the API's stop_reason, and Claude Code's message about the usage policy unless quiet.
+    out({ type: "assistant", session_id: session, message: { stop_reason: "refusal", content: [{ type: "text", text: "" }] } })
+    out({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result:
+        mode === "refusal"
+          ? "API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Please double press esc to edit your last message or start a new session for Claude Code to assist with a different task."
+          : "The run ended.",
+      session_id: session,
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 5, output_tokens: 0 },
+    })
+    continue
+  }
   if (mode === "limit") {
     out({
       type: "result",

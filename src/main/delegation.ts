@@ -115,7 +115,7 @@ export function dockerLauncher(exec: Exec = dockerExec): Launcher {
   return {
     preflight: () => preflight(exec),
     launch: (ws, mode, o, box) => {
-      const cli = claudeArgs(mode, "opus", o.specialistEffort)
+      const cli = claudeArgs(mode, undefined, o.specialistEffort)
       // In a sandbox the stop ends the CLI and leaves the sandbox up (specs/specialist-sandbox R4.4).
       if (box) return { command: "docker", args: execArgs(box, cli), stop: async () => void (await exec(stopArgs(box))) }
       return {
@@ -138,6 +138,17 @@ export class DelegationRefused extends Error {
   constructor(message: string) {
     super(message)
     this.name = "DelegationRefused"
+  }
+}
+
+/** The specialist declined the step under its usage policy (specs/specialist-lifecycle R2.1). */
+export class SafeguardRefusal extends Error {
+  constructor(
+    readonly stepId: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = "SafeguardRefusal"
   }
 }
 
@@ -272,6 +283,12 @@ export async function delegate(
     // A sandbox stopped at its disk limit ends the run inside it; the reason is the sandbox's, not the CLI's.
     if (held) await held.release()
     if (held?.box.stopped && e instanceof Error) e.message += ` (sandbox ${held.box.id} was stopped: ${held.box.stopped})`
+    // A safeguard refusal is its own state, never a failure to retry (specs/specialist-lifecycle R2.1).
+    if (kind === "refused") {
+      ev("safeguard.refusal", (e as Error).message, { error: (e as Error).message }, "refused")
+      log.updateStep(step.id, { state: "refused", data: { error: (e as Error).message } })
+      throw new SafeguardRefusal(step.id, (e as Error).message)
+    }
     ev(`delegation.${kind}`, (e as Error).message, { error: (e as Error).message }, state)
     log.updateStep(step.id, { state, data: { error: (e as Error).message } })
     throw e

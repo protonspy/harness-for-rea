@@ -34,6 +34,7 @@ export function tone(state: TaskState | ""): Tone {
       return "info"
     case "waiting":
     case "stopped":
+    case "refused":
       return "warn"
     case "done":
     case "awaiting-user":

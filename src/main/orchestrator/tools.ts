@@ -4,7 +4,7 @@ import { z } from "zod"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { ContextPackageSchema } from "@shared/context"
 import type { SpecialistEffort } from "@shared/types"
-import { approvePatch, delegate, DelegationRefused, type DelegationDeps } from "../delegation"
+import { approvePatch, delegate, DelegationRefused, SafeguardRefusal, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
 import { PathRejected } from "../sandbox/paths"
@@ -42,6 +42,8 @@ export interface ToolContext {
   signal: AbortSignal
   /** puts a question to the user and settles with the answer, or the default and why; a specialist's names its delegation step */
   ask?(q: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }>
+  /** the user's choice after a safeguard refusal, waited on with no timeout; a stop has cancelled the task (specs/specialist-lifecycle R2.2) */
+  refusal?(stepId: string, message: string): Promise<RefusalChoice>
   /** the agent's writable scratch in its sandbox, when it has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
   /** the task runs its calls without asking, so nobody approves a patch it applies (specs/chat R4.1) */
@@ -83,6 +85,20 @@ function splitFiles(ctx: ToolContext, files: string[]) {
   const scratch = files.filter((f) => inScratch(f, ctx.scratch))
   const name = (p: string) => (inScratch(p, ctx.scratch) ? `${PREPARED}/${posix.normalize(p).slice(ctx.scratch!.length + 1)}` : relativeTo(ctx.root, p))
   return { scratch, name, source: files.filter((f) => !inScratch(f, ctx.scratch)).map(name) }
+}
+
+export type RefusalChoice = { choice: "stop" } | { choice: "skip" } | { choice: "approach"; approach: string }
+
+/**
+  What the orchestrator reads after a safeguard refusal (specs/specialist-lifecycle R2.4, R2.6): that it was one,
+  and the user's choice — never a cue to reword the request or justify it.
+*/
+export function refusalReport(message: string, c: RefusalChoice | null): string {
+  const head = `ERROR: SAFEGUARD REFUSAL. ${message} This is not a failure to retry: never reword the refused request or add a purpose or an authorization to a brief so that it passes.`
+  if (!c) return `${head} Tell the user it was refused and ask how to go on.`
+  if (c.choice === "approach")
+    return `${head} The user asks for a different technical approach, in their words: ${JSON.stringify(c.approach)}. Delegate a step that takes that approach, scoped and technical as always.`
+  return `${head} The user chose to skip this step: continue the task without it, and do not delegate it again.`
 }
 
 export function delegateTool(ctx: ToolContext) {
@@ -128,6 +144,11 @@ export function delegateTool(ctx: ToolContext) {
         })
       } catch (e) {
         if (e instanceof SpecialistError && e.kind === "cancelled") throw e
+        if (e instanceof SafeguardRefusal) {
+          const choice = ctx.refusal ? await ctx.refusal(e.stepId, e.message) : null
+          if (choice?.choice === "stop") throw new SpecialistError("cancelled", "Cancelled.")
+          return refusalReport(e.message, choice)
+        }
         if (e instanceof DelegationRefused || e instanceof SpecialistError) return `ERROR: ${e.message}`
         throw e
       }

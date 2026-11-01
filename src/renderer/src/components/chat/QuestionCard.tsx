@@ -47,8 +47,9 @@ export function QuestionCard({ item, onAnswer }: { item: QuestionItem; onAnswer(
       <div className="ml-10 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <MessageCircleQuestion size={13} />
         <span className="text-foreground">{q.prompt}</span>
-        <Badge variant={item.origin === "user" ? "ok" : "neutral"}>{show(item.answer!)}</Badge>
-        {item.origin !== "user" && <span>(default, {item.origin})</span>}
+        <Badge variant={item.origin === "user" || item.origin === "orchestrator" ? "ok" : "neutral"}>{show(item.answer!)}</Badge>
+        {item.origin === "orchestrator" && <span>(answered by the orchestrator)</span>}
+        {item.origin !== "user" && item.origin !== "orchestrator" && <span>(default, {item.origin})</span>}
       </div>
     )
 
