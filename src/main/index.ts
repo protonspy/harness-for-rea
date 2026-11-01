@@ -11,6 +11,7 @@ import { makeDispatcher } from "./ipc"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
+import { SpecialistBoxes } from "./sandbox/specialistbox"
 import { getSettings, saveSettings } from "./settings"
 import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
@@ -53,6 +54,8 @@ app.whenReady().then(async () => {
   log.recover()
   // Task containers a crash left running belong to tasks recover() just marked interrupted.
   void TaskBox.sweep(dockerExecBuffer).catch(() => undefined)
+  // So do the specialist's sandboxes (specs/specialist-sandbox R2.7).
+  void SpecialistBoxes.sweep(dockerExecBuffer).catch(() => undefined)
   const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
   const runner = new TaskRunner({
     ...deps,
@@ -61,8 +64,23 @@ app.whenReady().then(async () => {
     workspace: async (task) => {
       const blocked = await preflight(dockerExec)
       if (blocked) throw new Error(blocked)
-      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, getSettings())
-      return { backend: box, root: WORKSPACE, scratch: SCRATCH, dispose: () => box.dispose() }
+      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot)
+      // The specialist's sandboxes the orchestrator creates go with the task (specs/specialist-sandbox R2.6).
+      const sandboxes = new SpecialistBoxes({
+        exec: dockerExecBuffer,
+        log,
+        dataDir,
+        sourceRoot: task.sourceRoot,
+        taskId: task.id,
+        discard: () => getSettings().discardOnCompletion,
+      })
+      return {
+        backend: box,
+        root: WORKSPACE,
+        scratch: SCRATCH,
+        sandboxes,
+        dispose: async () => void (await Promise.allSettled([box.dispose(), sandboxes.disposeAll()])),
+      }
     },
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))

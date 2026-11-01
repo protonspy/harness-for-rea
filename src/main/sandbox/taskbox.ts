@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { posix } from "node:path"
 import { BaseSandbox } from "deepagents"
-import { mountSource, SPECIALIST_IMAGE, type Limits } from "./docker"
+import { identity, mountSource, SPECIALIST_IMAGE } from "./docker"
 
 /*
   The orchestrator's container for one task (adr:0007-run-the-orchestrators-tools-in-a-task-container):
@@ -67,9 +67,6 @@ export const dockerExecBuffer: ExecBuffer = (args, timeoutMs = EXEC_TIMEOUT_MS, 
     })
   })
 
-/** The capabilities the task container keeps as root, enough to install packages (adr:0014-run-the-task-container-as-root). */
-export const INSTALL_CAPS = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"]
-
 export function taskBoxName(taskId: string): string {
   return `hfr-orch-${taskId}`
 }
@@ -77,9 +74,11 @@ export function taskBoxName(taskId: string): string {
 /**
   `docker run` for a task's container: the source read-only at /workspace, full internet access, and root
   with a writable root filesystem so the orchestrator can install what its code needs
-  (adr:0014-run-the-task-container-as-root); never privileged, never a host path but the source.
+  (adr:0014-run-the-task-container-as-root); never privileged, never a host path but the source. No memory, CPU,
+  process or size limit: /scratch and /tmp are folders on the writable root, on Docker's disk rather than in memory
+  (specs/specialist-sandbox R6.1, R6.2).
 */
-export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits): string[] {
+export function taskBoxArgs(taskId: string, sourceRoot: string): string[] {
   return [
     "run",
     "-d",
@@ -88,32 +87,17 @@ export function taskBoxArgs(taskId: string, sourceRoot: string, limits: Limits):
     taskBoxName(taskId),
     "--hostname",
     "workspace",
-    "--user",
-    "0:0",
-    // What apt, dpkg, pip and npm need as root, and nothing else: no NET_RAW, MKNOD or SYS_CHROOT.
-    "--cap-drop",
-    "ALL",
-    ...INSTALL_CAPS.flatMap((c) => ["--cap-add", c]),
-    "--security-opt",
-    "no-new-privileges",
-    "--tmpfs",
-    "/tmp:rw,nosuid,nodev,size=256m",
-    "--tmpfs",
-    `${SCRATCH}:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700`,
-    "--memory",
-    `${limits.memoryMb}m`,
-    "--cpus",
-    String(limits.cpus),
-    "--pids-limit",
-    String(limits.pidsLimit),
+    // Root with what apt, dpkg, pip and npm need, and nothing else: no NET_RAW, MKNOD or SYS_CHROOT.
+    ...identity(true),
     "--mount",
     `type=bind,source=${mountSource(sourceRoot)},target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`,
     "-w",
     WORKSPACE,
     "--entrypoint",
-    "sleep",
+    "sh",
     SPECIALIST_IMAGE,
-    "infinity",
+    "-c",
+    `mkdir -p ${SCRATCH} && exec sleep infinity`,
   ]
 }
 
@@ -135,8 +119,8 @@ export class TaskBox extends BaseSandbox {
   }
 
   /** Start the task's container; throws with Docker's reason when it cannot. A container that goes away later is started again. */
-  static async start(exec: ExecBuffer, taskId: string, sourceRoot: string, limits: Limits): Promise<TaskBox> {
-    const run = () => exec(taskBoxArgs(taskId, sourceRoot, limits))
+  static async start(exec: ExecBuffer, taskId: string, sourceRoot: string): Promise<TaskBox> {
+    const run = () => exec(taskBoxArgs(taskId, sourceRoot))
     const r = await run()
     if (r.code !== 0) throw new Error(`The task's sandbox did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
     return new TaskBox(exec, taskId, async () => (await run()).code === 0)

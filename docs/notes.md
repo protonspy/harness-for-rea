@@ -47,3 +47,5 @@ over this file answers with the example above as well as with the notes. -->
 - n-0007 2026-10-28 #gotcha @src/main/orchestrator/agent.ts — langchain HITL resumes a rejection with jumpTo model, past every beforeModel hook: queued user messages ride on the rejection message
 - n-0008 2026-10-30 #ceiling @src/main/index.ts — the runner still gates tools when started with gated and auto false; the app always starts auto, so decideTool and the approval card are unreachable from the UI until gating returns or is removed
 - n-0009 2026-10-30 #ceiling @src/main/sandbox/taskbox.ts — the task container's writable layer has no size cap, so a runaway install fills Docker's disk until the task ends; --storage-opt size= or tmpfs on the apt paths would bound it
+- n-0010 2026-11-01 #gotcha @src/main/sandbox/docker.ts — a background job in non-interactive sh gets /dev/null as stdin before its own redirections, so the specialist wrapper passes stdin through fd 3, not <&0
+- n-0011 2026-11-01 #gotcha @src/main/sandbox/specialistbox.ts — Docker Desktop's containerd snapshotter accepts --storage-opt size= and ignores it; disk is enforced by watching SizeRw plus the workspace

@@ -26,10 +26,8 @@ import { SPECIALIST_IMAGE } from "../src/main/sandbox/docker"
   (specs/task-sandbox R3.1, R3.2).
 */
 
-const limits = { memoryMb: 1024, cpus: 1, pidsLimit: 128 }
-
 describe("task container arguments (R2.2)", () => {
-  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo", limits)
+  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo")
   const after = (flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
   it("binds the whole source folder read-only at /workspace and nothing else", () => {
@@ -38,7 +36,7 @@ describe("task container arguments (R2.2)", () => {
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
-  it("has Docker's default network, root with a writable root to install software, and limits (specs/sandbox-images R4.1, R2.8)", () => {
+  it("has Docker's default network, root with a writable root to install software, and no limit (specs/sandbox-images R4.1, specs/specialist-sandbox R6.1)", () => {
     expect(args).not.toContain("--network")
     expect(after("--user")).toEqual(["0:0"])
     expect(after("--cap-drop")).toEqual(["ALL"])
@@ -47,18 +45,19 @@ describe("task container arguments (R2.2)", () => {
     expect(args).not.toContain("--privileged")
     expect(after("--security-opt")).toEqual(["no-new-privileges"])
     expect(args.join(" ")).not.toMatch(/docker\.sock/)
-    expect(after("--memory")).toEqual(["1024m"])
+    for (const flag of ["--memory", "--memory-swap", "--cpus", "--pids-limit", "--storage-opt"]) expect(args).not.toContain(flag)
     expect(after("--name")).toEqual([taskBoxName("t1")])
-    expect(args.slice(-2)).toEqual([SPECIALIST_IMAGE, "infinity"])
+    expect(args.slice(-3)).toEqual([SPECIALIST_IMAGE, "-c", `mkdir -p ${SCRATCH} && exec sleep infinity`])
+    expect(after("--entrypoint")).toEqual(["sh"])
     expect(args.join(" ")).not.toMatch(/ -e |--env/)
   })
 
   it("refuses a source path that would add mount options", () => {
-    expect(() => taskBoxArgs("t", "C:/a,b", limits)).toThrow(/comma or quote/)
+    expect(() => taskBoxArgs("t", "C:/a,b")).toThrow(/comma or quote/)
   })
 
-  it("gives the orchestrator a writable, executable /scratch apart from the read-only source (specs/chat R6.3)", () => {
-    expect(after("--tmpfs")).toEqual(["/tmp:rw,nosuid,nodev,size=256m", `${SCRATCH}:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700`])
+  it("gives the orchestrator a writable /scratch on disk apart from the read-only source, with no size cap (specs/chat R6.3, specs/specialist-sandbox R6.2)", () => {
+    expect(args).not.toContain("--tmpfs")
     expect(SCRATCH).toBe("/scratch")
     expect(after("--mount")).toHaveLength(1)
     expect(after("--mount")[0]).toContain(",readonly")
@@ -156,12 +155,12 @@ describe("TaskBox", () => {
 
   it("starts the container or says why it could not, and removes it", async () => {
     const ok = fake(() => ({}))
-    const box = await TaskBox.start(ok.exec, "t1", "C:/repo", limits)
+    const box = await TaskBox.start(ok.exec, "t1", "C:/repo")
     expect(ok.calls[0].slice(0, 2)).toEqual(["run", "-d"])
     await box.dispose()
     expect(ok.calls.at(-1)).toEqual(["rm", "-f", "hfr-orch-t1"])
     await expect(
-      TaskBox.start(fake(() => ({ code: 125, stderr: "docker: Error response from daemon: invalid mount\n" })).exec, "t2", "C:/repo", limits),
+      TaskBox.start(fake(() => ({ code: 125, stderr: "docker: Error response from daemon: invalid mount\n" })).exec, "t2", "C:/repo"),
     ).rejects.toThrow(/invalid mount/)
   })
 
@@ -172,7 +171,7 @@ describe("TaskBox", () => {
       if (a[0] === "exec" && !alive) return { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" }
       return { stdout: Buffer.from("ok\n") }
     })
-    const box = await TaskBox.start(f.exec, "t1", "C:/repo", limits)
+    const box = await TaskBox.start(f.exec, "t1", "C:/repo")
     alive = false
     const r = await box.execute("echo ok")
     expect(r).toMatchObject({ exitCode: 0 })
@@ -252,7 +251,7 @@ describe.skipIf(!process.env.HFR_DOCKER)("TaskBox on Docker", () => {
     mkdirSync(join(src, "src"))
     writeFileSync(join(src, "src", "a.js"), "one\ntwo\n")
     const id = `smoke-${Date.now()}`
-    const box = await TaskBox.start(dockerExecBuffer, id, src, limits)
+    const box = await TaskBox.start(dockerExecBuffer, id, src)
     try {
       expect((await box.read("/workspace/src/a.js")).error).toBeUndefined()
       expect(JSON.stringify(await box.read("/workspace/src/a.js"))).toContain("two")

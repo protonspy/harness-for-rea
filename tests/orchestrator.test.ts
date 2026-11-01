@@ -13,6 +13,7 @@ import { friendlyError } from "../src/main/orchestrator/errors"
 import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
+import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import { SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
 import { FilesystemBackend } from "deepagents"
 
@@ -571,14 +572,11 @@ describe("model and errors (R1.1–R1.4)", () => {
 
   it("builds the production launcher on docker only", () => {
     const l = dockerLauncher(async () => ({ code: 0, stdout: "", stderr: "" }))
-    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", { memoryMb: 1, cpus: 1, pidsLimit: 32 })
+    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {})
     expect(launch.command).toBe("docker")
     expect(launch.args[0]).toBe("run")
     expect(launch.args).toContain("claude")
     const high = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {
-      memoryMb: 1,
-      cpus: 1,
-      pidsLimit: 32,
       specialistEffort: "high",
     })
     expect(high.args.slice(high.args.indexOf("--effort"), high.args.indexOf("--effort") + 2)).toEqual(["--effort", "high"])
@@ -1254,5 +1252,176 @@ describe("the orchestrator's own patch (specs/chat R6.6)", () => {
     expect(results[8]).toMatch(/named twice/)
     expect(log.history(task.id).patches).toEqual([])
     expect(existsSync(join(base, "evil.ts"))).toBe(false)
+  })
+})
+
+describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () => {
+  /** every docker call the sandbox service made, and what a command in the sandbox prints */
+  let dockerCalls: string[][] = []
+  let commandOutput = ""
+  const sandboxRunner = () => {
+    const exec = async (args: string[]) => {
+      dockerCalls.push(args)
+      const out = args[0] === "exec" ? commandOutput : args[0] === "container" ? "0" : ""
+      return { code: 0, stdout: Buffer.from(out), stderr: "" }
+    }
+    let sandboxes: SpecialistBoxes
+    return new TaskRunner({
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async (task) => {
+        sandboxes = new SpecialistBoxes({ exec, log, dataDir: data, sourceRoot: root, taskId: task.id, discard: () => true, everyMs: 60_000 })
+        return {
+          backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
+          root: "/",
+          sandboxes,
+          dispose: () => sandboxes.disposeAll(),
+        }
+      },
+    })
+  }
+  beforeEach(() => {
+    dockerCalls = []
+    commandOutput = ""
+  })
+  const idOf = (body: Body) => JSON.parse(lastTool(body)).sandbox as string
+
+  it("offers the four sandbox tools and a sandbox on delegate_to_specialist (R5.1)", async () => {
+    script = [{ content: "ok" }]
+    const r = sandboxRunner()
+    await r.settled(r.start({ request: "x", sourceRoot: root }).id)
+    const tools = requests[0].tools!
+    expect(tools.map((t) => t.function.name)).toEqual(expect.arrayContaining(["sandbox_create", "sandbox_copy", "sandbox_exec", "sandbox_destroy"]))
+    const delegateParams = JSON.stringify(tools.find((t) => t.function.name === "delegate_to_specialist")!.function)
+    expect(delegateParams).toContain('"sandbox"')
+  })
+
+  it("creates a sandbox with the limits it chose, copies, installs, delegates into it and destroys it", async () => {
+    const results: string[] = []
+    let id = ""
+    script = [
+      { tool_calls: [{ name: "sandbox_create", args: { cpus: 6, memoryMb: 12_288, diskMb: 40_960 } }] },
+      (body) => {
+        id = idOf(body)
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "sandbox_copy", args: { sandbox: id, files: ["/src/a.ts"] } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "sandbox_exec", args: { sandbox: id, command: "apt-get update && apt-get install -y binutils", timeoutSeconds: 900 } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return {
+          tool_calls: [
+            {
+              name: "delegate_to_specialist",
+              args: { brief: "The user's own parser.", objective: "Look at /work/src/a.ts", files: ["/src/a.ts"], sandbox: id },
+            },
+          ],
+        }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "sandbox_destroy", args: { sandbox: id } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "done" }
+      },
+    ]
+    commandOutput = "Setting up binutils\n"
+    const r = sandboxRunner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    const run = dockerCalls.find((c) => c[0] === "run")!
+    expect(run[run.indexOf("--cpus") + 1]).toBe("6")
+    expect(run[run.indexOf("--memory") + 1]).toBe("12288m")
+    // the process limit the orchestrator left out is no limit
+    expect(run).not.toContain("--pids-limit")
+    expect(JSON.parse(results[0]).limits).toEqual({ cpus: 6, memoryMb: 12_288, diskMb: 40_960 })
+    expect(JSON.parse(results[1]).copied).toEqual([{ path: "/work/src/a.ts", size: readFileSync(join(root, "src", "a.ts")).length }])
+    expect(JSON.parse(results[2])).toMatchObject({ exitCode: 0, output: "Setting up binutils\n" })
+    expect(dockerCalls.find((c) => c[0] === "exec")).toEqual(
+      expect.arrayContaining(["timeout", "-s", "KILL", "900", "sh", "-c", "apt-get update && apt-get install -y binutils"]),
+    )
+    expect(JSON.parse(results[3]).report).toContain("analysed src/a.ts")
+    expect(results[4]).toBe(`Destroyed sandbox ${id}.`)
+    expect(kinds(task.id)).toEqual(expect.arrayContaining(["sandbox.created", "sandbox.copy", "sandbox.exec", "sandbox.destroyed"]))
+  })
+
+  it("creates a sandbox with no limit at all when the orchestrator sets none (R1.5)", async () => {
+    script = [{ tool_calls: [{ name: "sandbox_create", args: {} }] }, { content: "done" }]
+    const r = sandboxRunner()
+    await r.settled(r.start({ request: "x", sourceRoot: root }).id)
+    const run = dockerCalls.find((c) => c[0] === "run")!
+    for (const flag of ["--memory", "--cpus", "--pids-limit", "--storage-opt"]) expect(run).not.toContain(flag)
+  })
+
+  it("refuses a sandbox it does not have and a copy from outside the source, as tool errors", async () => {
+    const results: string[] = []
+    let id = ""
+    script = [
+      { tool_calls: [{ name: "sandbox_exec", args: { sandbox: "00000000-0000-4000-8000-000000000000", command: "ls" } }] },
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "sandbox_create", args: { cpus: 1, memoryMb: 512, diskMb: 100 } }] }
+      },
+      (body) => {
+        id = idOf(body)
+        return { tool_calls: [{ name: "sandbox_copy", args: { sandbox: id, files: ["/src/a.ts", "/../outside.txt"] } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "done" }
+      },
+    ]
+    const r = sandboxRunner()
+    await r.settled(r.start({ request: "x", sourceRoot: root }).id)
+    expect(results[0]).toMatch(/^ERROR: There is no sandbox 00000000-0000-4000-8000-000000000000 in this task/)
+    expect(results[1]).toMatch(/^ERROR: .*outside\.txt cannot be copied/)
+    expect(existsSync(join(data, "workspace", id, "src", "a.ts"))).toBe(false)
+  })
+
+  it("keeps a secret printed in the sandbox from reaching OpenRouter", async () => {
+    commandOutput = "token sk-ant-oat01-LEAKEDTOKEN123456 found\n"
+    let id = ""
+    script = [
+      { tool_calls: [{ name: "sandbox_create", args: { cpus: 1, memoryMb: 512, diskMb: 100 } }] },
+      (body) => {
+        id = idOf(body)
+        return { tool_calls: [{ name: "sandbox_exec", args: { sandbox: id, command: "cat /home/agent/.claude-config/.credentials.json" } }] }
+      },
+      { content: "done" },
+    ]
+    const r = sandboxRunner()
+    await r.settled(r.start({ request: "x", sourceRoot: root }).id)
+    expect(JSON.stringify(requests.at(-1)!.messages)).not.toContain("LEAKEDTOKEN123456")
+  })
+
+  it("removes every sandbox when the task ends (R2.6)", async () => {
+    script = [{ tool_calls: [{ name: "sandbox_create", args: { cpus: 1, memoryMb: 512, diskMb: 100 } }] }, { content: "done" }]
+    const r = sandboxRunner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    await r.settled(task.id)
+    r.close(task.id)
+    // the workspace and its sandboxes go down after the close returns
+    await new Promise((res) => setTimeout(res, 50))
+    const name = dockerCalls.find((c) => c[0] === "run")![dockerCalls.find((c) => c[0] === "run")!.indexOf("--name") + 1]
+    expect(dockerCalls).toContainEqual(["rm", "-f", name])
+  })
+
+  it("instructs the orchestrator to prepare sandboxes and leave extraction and analysis to the specialist (R5.2)", () => {
+    const p = systemPrompt("/workspace", "/scratch")
+    expect(p).toMatch(/You set up the scenario each analysis runs in, with full control of the specialist's sandbox/)
+    expect(p).toMatch(/sandbox_create, sized and configured for the task: it has no limits unless you set CPUs, memory, disk or processes/)
+    expect(p).toMatch(
+      /sandbox_exec, which runs any command as root there: install the toolchain.*unpack archives and installers, lay out the files, set up the environment/,
+    )
+    expect(p).toMatch(/The analysis itself stays with the specialist: do not dump, parse or interpret the target to reach conclusions yourself/)
+    expect(p).toContain("sandbox_destroy")
   })
 })

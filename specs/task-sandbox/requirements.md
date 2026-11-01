@@ -25,9 +25,9 @@ only through an approved patch.
 
 ## R2 · Container
 
-- **R2.1** The sandbox shall run the specialist in a new container whose only bind mounts are the workspace at `/work`, as the working directory, and the run's rendered system prompt, read-only, outside `/work`.
+- **R2.1** Where a delegation names no sandbox of specs/specialist-sandbox, the sandbox shall run the specialist in a new container whose only bind mounts are the workspace at `/work`, as the working directory, and the run's rendered system prompt, read-only, outside `/work`.
 - **R2.2** While the step is in read mode, the sandbox shall mount `/work` read-only.
-- **R2.3** The sandbox shall run the container as a non-root user with all capabilities dropped, `no-new-privileges`, a read-only root filesystem, and memory, CPU and process limits.
+- **R2.3** The sandbox shall run the container as root with every capability dropped but those installing packages needs, `no-new-privileges`, a writable root filesystem, and no memory, CPU, process or size limit (adr:0015-let-the-orchestrator-run-the-specialists-sandbox).
 - **R2.4** The sandbox shall give the container full internet access on Docker's default network, through no proxy (adr:0013-give-the-sandboxes-full-internet-access).
 - **R2.5** When a delegation is cancelled or exceeds its timeout, the sandbox shall kill its container and record the delegation as cancelled or timed out.
 - **R2.6** If Docker is unavailable or the sandbox image fails verification, then the sandbox shall refuse the delegation and report the reason, without running the specialist on the host.
@@ -38,7 +38,7 @@ only through an approved patch.
 - **R3.2** The sandbox shall not pass to the container the orchestrator's conversation, other tasks' data, host paths or host environment variables, and shall replace host and `/workspace` paths in the package's text with `/work`.
 - **R3.3** The sandbox shall start Claude Code with `--setting-sources ""`, `--strict-mcp-config` and a configuration directory on the sandbox's own volume, so no host settings, memory or instructions load.
 - **R3.4** The sandbox shall state in the specialist's system prompt that the artifacts in `/work` are owned by the user or authorized for analysis.
-- **R3.5** The sandbox shall start Claude Code restricted to its working directory, with no command-running tool, every permission prompt denied, and file tools denied under the home directory that holds the login volume.
+- **R3.5** The sandbox shall start Claude Code restricted to its working directory, with `Bash` as its one command-running tool, every permission prompt denied, and file tools denied under the home directory that holds the login volume.
 
 ## R4 · Changes and audit
 
@@ -50,5 +50,4 @@ only through an approved patch.
 
 ## Out of scope
 
-- Running commands other than the Claude Code CLI inside the container.
 - Linux and macOS hosts.

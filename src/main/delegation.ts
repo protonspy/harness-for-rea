@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, renameSync, writeFileSync } from "node:fs"
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
-import { claudeArgs, dockerExec, dockerRunArgs, killContainer, preflight, type Exec, type Limits, type Mode } from "./sandbox/docker"
+import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflight, specialistCommand, stopArgs, type Exec, type Mode } from "./sandbox/docker"
 import { applyPatch, discardPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
 import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
-import { askDir, discardWorkspace, prepareWorkspace, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
+import { SandboxError, type Box, type SpecialistBoxes } from "./sandbox/specialistbox"
+import { askDir, discardWorkspace, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
 import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
 
 /*
@@ -106,17 +107,23 @@ function askFromSandbox(body: unknown, ask: AskUser | undefined, stepId: string)
 export interface Launcher {
   /** the reason to refuse, or null */
   preflight(): Promise<string | null>
-  launch(ws: Workspace, mode: Mode, limits: Limits & { specialistEffort?: SpecialistEffort }): Launch
+  /** `box` names the orchestrator's sandbox to run in; without it the run gets a container of its own */
+  launch(ws: Workspace, mode: Mode, o: { specialistEffort?: SpecialistEffort }, box?: string): Launch
 }
 
 export function dockerLauncher(exec: Exec = dockerExec): Launcher {
   return {
     preflight: () => preflight(exec),
-    launch: (ws, mode, limits) => ({
-      command: "docker",
-      args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, mode, limits }), ...claudeArgs(mode, "opus", limits.specialistEffort)],
-      stop: () => killContainer(exec, ws.id),
-    }),
+    launch: (ws, mode, o, box) => {
+      const cli = claudeArgs(mode, "opus", o.specialistEffort)
+      // In a sandbox the stop ends the CLI and leaves the sandbox up (specs/specialist-sandbox R4.4).
+      if (box) return { command: "docker", args: execArgs(box, cli), stop: async () => void (await exec(stopArgs(box))) }
+      return {
+        command: "docker",
+        args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, mode }), ...specialistCommand(cli)],
+        stop: () => killContainer(exec, ws.id),
+      }
+    },
   }
 }
 
@@ -141,9 +148,24 @@ export interface DelegationResult {
   patch: PatchView | null
 }
 
+/** Empty a sandbox's ask channel, so an earlier delegation's questions are not answered again (specs/specialist-sandbox R4.8). */
+function clearAskChannel(ws: Workspace) {
+  const dir = askDir(ws.runDir)
+  for (const name of existsSync(dir) ? readdirSync(dir) : []) rmSync(join(dir, name), { recursive: true, force: true })
+}
+
 export async function delegate(
   deps: DelegationDeps,
-  o: { taskId: string; sourceRoot: string; pkg: ContextPackage; signal?: AbortSignal; ask?: AskUser; prepared?: PreparedFile[] },
+  o: {
+    taskId: string
+    sourceRoot: string
+    pkg: ContextPackage
+    signal?: AbortSignal
+    ask?: AskUser
+    prepared?: PreparedFile[]
+    /** the orchestrator's sandbox to run in, instead of a container of the delegation's own (specs/specialist-sandbox R4) */
+    sandbox?: { boxes: SpecialistBoxes; id: string }
+  },
 ): Promise<DelegationResult> {
   const { log } = deps
   const settings = deps.settings()
@@ -167,23 +189,36 @@ export async function delegate(
   if (blocked) refuse(blocked)
 
   let ws: Workspace
+  let held: { box: Box; release: () => Promise<void> } | null = null
   try {
-    ws = prepareWorkspace(deps.dataDir, o.sourceRoot, o.pkg.files, o.prepared)
+    if (o.sandbox) {
+      held = o.sandbox.boxes.hold(o.sandbox.id)
+      ws = held.box.ws
+      // The package's files the sandbox lacks come in now; what the orchestrator prepared, always as it is now.
+      const missing = o.pkg.files.filter((f) => !f.startsWith(`.orchestrator/`) && !ws.files.some((c) => c.path === f))
+      await o.sandbox.boxes.copy(o.sandbox.id, missing, o.prepared ?? [])
+      if (held.box.stopped) throw new SandboxError(`Sandbox ${o.sandbox.id} was stopped: ${held.box.stopped}.`)
+      clearAskChannel(ws)
+    } else {
+      ws = prepareWorkspace(deps.dataDir, o.sourceRoot, o.pkg.files, o.prepared)
+      ev("sandbox.copy", `Copied ${ws.files.length} file(s) into workspace ${ws.id}`, {
+        workspace: ws.id,
+        mode: o.pkg.mode,
+        files: ws.files.map((f) => ({ path: f.path, op: "copy" })),
+        sha256: Object.fromEntries(ws.files.map((f) => [f.path, f.sha256])),
+      })
+    }
   } catch (e) {
+    await held?.release()
     if (e instanceof PathRejected) return refuse(`${e.path} cannot be delegated: ${e.message}`, { rejectedPath: e.path })
+    if (e instanceof SandboxError) return refuse(e.message, { sandbox: o.sandbox?.id })
     throw e
   }
-  ev("sandbox.copy", `Copied ${ws.files.length} file(s) into workspace ${ws.id}`, {
-    workspace: ws.id,
-    mode: o.pkg.mode,
-    files: ws.files.map((f) => ({ path: f.path, op: "copy" })),
-    sha256: Object.fromEntries(ws.files.map((f) => [f.path, f.sha256])),
-  })
 
   try {
     const pkg = scrubPaths(o.pkg, o.sourceRoot)
-    writeSystemPrompt(ws, renderSystemPrompt(pkg))
-    const session = new SpecialistSession(deps.launcher.launch(ws, o.pkg.mode, settings), {
+    writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null))
+    const session = new SpecialistSession(deps.launcher.launch(ws, o.pkg.mode, settings, held?.box.name), {
       timeoutMs: settings.timeoutMinutes * 60_000,
       signal: o.signal,
       onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
@@ -211,6 +246,8 @@ export async function delegate(
       if (p?.skipped.length)
         ev("sandbox.skipped", `Left out of the patch: ${p.skipped.join(", ")}`, { files: p.skipped.map((path) => ({ path, op: "write" })) })
       if (p) {
+        // The sandbox goes on: its next patch is made against what this one proposed (specs/specialist-sandbox R4.5).
+        if (held) rebaseSnapshot(ws, p.changes)
         patch = log.savePatch({ id: p.id, taskId: o.taskId, stepId: step.id, files: p.files, diff: p.diff })
         ev("patch.proposed", `Patch proposed for ${p.files.length} file(s)`, {
           patchId: p.id,
@@ -224,11 +261,16 @@ export async function delegate(
   } catch (e) {
     const kind = e instanceof SpecialistError ? e.kind : "failed"
     const state = kind === "cancelled" ? "cancelled" : "failed"
+    // A sandbox stopped at its disk limit ends the run inside it; the reason is the sandbox's, not the CLI's.
+    if (held) await held.release()
+    if (held?.box.stopped && e instanceof Error) e.message += ` (sandbox ${held.box.id} was stopped: ${held.box.stopped})`
     ev(`delegation.${kind}`, (e as Error).message, { error: (e as Error).message }, state)
     log.updateStep(step.id, { state, data: { error: (e as Error).message } })
     throw e
   } finally {
-    if (settings.discardOnCompletion) {
+    // A sandbox outlives the delegation; the orchestrator or the task's end removes it.
+    if (held) await held.release()
+    else if (settings.discardOnCompletion) {
       discardWorkspace(deps.dataDir, ws.id)
       ev("sandbox.discarded", `Discarded workspace ${ws.id}`, { workspace: ws.id })
     }

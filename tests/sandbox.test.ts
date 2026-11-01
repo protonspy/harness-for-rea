@@ -12,6 +12,10 @@ import {
   containerEnv,
   containerName,
   dockerRunArgs,
+  execArgs,
+  INSTALL_CAPS,
+  specialistCommand,
+  stopArgs,
   dockerState,
   killContainer,
   preflight,
@@ -23,7 +27,17 @@ import {
 } from "../src/main/sandbox/docker"
 import { PathRejected } from "../src/main/sandbox/paths"
 import { renderPrompt, renderSystemPrompt, workPath } from "../src/main/sandbox/prompt"
-import { askDir, discardWorkspace, prepareWorkspace, readManifest, sha256, WORKSPACE_CAP, writeSystemPrompt } from "../src/main/sandbox/workspace"
+import {
+  addFiles,
+  askDir,
+  createWorkspace,
+  discardWorkspace,
+  prepareWorkspace,
+  readManifest,
+  rebaseSnapshot,
+  sha256,
+  writeSystemPrompt,
+} from "../src/main/sandbox/workspace"
 
 /* specs/task-sandbox: workspace, container arguments, Docker checks and context isolation. */
 
@@ -71,9 +85,12 @@ describe("workspace (R1.1, R1.2, R1.4)", () => {
     expect(existsSync(join(data, "workspace"))).toBe(false)
   })
 
-  it("rejects files beyond the workspace size limit", () => {
-    writeFileSync(join(root, "big.bin"), Buffer.alloc(WORKSPACE_CAP + 1))
-    expect(() => prepareWorkspace(data, root, ["big.bin"])).toThrow(/workspace limit/)
+  it("copies a file of any size: a delegation's workspace has no size cap (adr:0015-let-the-orchestrator-run-the-specialists-sandbox)", () => {
+    // past the 100 MB the first rounds refused
+    writeFileSync(join(root, "big.apk"), Buffer.alloc(101 * 1024 * 1024))
+    const ws = prepareWorkspace(data, root, ["big.apk"])
+    expect(ws.files).toEqual([expect.objectContaining({ path: "big.apk", size: 101 * 1024 * 1024 })])
+    discardWorkspace(data, ws.id)
   })
 
   it("writes the system prompt outside the workspace and discards all three directories", () => {
@@ -84,13 +101,54 @@ describe("workspace (R1.1, R1.2, R1.4)", () => {
   })
 })
 
+describe("a sandbox's workspace (specs/specialist-sandbox R2.1–R2.3, R4.5)", () => {
+  it("starts empty under the id it is given, with its ask channel", () => {
+    const ws = createWorkspace(data, "box-1")
+    expect(ws.workspace).toBe(join(data, "workspace", "box-1"))
+    expect(readManifest(ws.snapshot)).toEqual({})
+    expect(existsSync(askDir(ws.runDir))).toBe(true)
+  })
+
+  it("adds source files with their SHA-256 and scratch files under .orchestrator/, keeping what was there", () => {
+    const ws = createWorkspace(data, "box-2")
+    addFiles(ws, root, ["src/a.ts"], [], 1024, "limit")
+    const added = addFiles(ws, root, ["src/b.ts"], [{ path: "tools/run.sh", content: Buffer.from("echo hi\n") }], 1024, "limit")
+    expect(added.map((f) => f.path)).toEqual(["src/b.ts", ".orchestrator/tools/run.sh"])
+    expect(readManifest(ws.snapshot)).toEqual({ "src/a.ts": sha256("export const a = 1\n"), "src/b.ts": sha256("export const b = 2\n") })
+    expect(readFileSync(join(ws.workspace, ".orchestrator", "tools", "run.sh"), "utf8")).toBe("echo hi\n")
+    expect(ws.files.map((f) => f.path)).toEqual(["src/a.ts", "src/b.ts", ".orchestrator/tools/run.sh"])
+  })
+
+  it("copies nothing of a call with a path outside the source, or past the cap", () => {
+    const ws = createWorkspace(data, "box-3")
+    expect(() => addFiles(ws, root, ["src/a.ts", "../x"], [], 1024, "limit")).toThrow(PathRejected)
+    expect(() => addFiles(ws, root, ["src/a.ts", "src/b.ts"], [], 20, "2 KB disk limit")).toThrow(/2 KB disk limit/)
+    expect(existsSync(join(ws.workspace, "src", "a.ts"))).toBe(false)
+    expect(readManifest(ws.snapshot)).toEqual({})
+  })
+
+  it("takes the workspace as the snapshot for the files a patch changed", () => {
+    const ws = createWorkspace(data, "box-4")
+    addFiles(ws, root, ["src/a.ts", "src/b.ts"], [], 1024, "limit")
+    writeFileSync(join(ws.workspace, "src", "a.ts"), "export const a = 9\n")
+    writeFileSync(join(ws.workspace, "src", "c.ts"), "new\n")
+    rebaseSnapshot(ws, [
+      { path: "src/a.ts", status: "modified" },
+      { path: "src/c.ts", status: "added" },
+      { path: "src/b.ts", status: "deleted" },
+    ])
+    expect(readManifest(ws.snapshot)).toEqual({ "src/a.ts": sha256("export const a = 9\n"), "src/c.ts": sha256("new\n") })
+    expect(readFileSync(join(ws.snapshot, "files", "src", "c.ts"), "utf8")).toBe("new\n")
+    expect(existsSync(join(ws.snapshot, "files", "src", "b.ts"))).toBe(false)
+  })
+})
+
 describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
   const spec = {
     id: "1234",
     workspace: "C:\\data\\workspace\\1234",
     runDir: "C:\\data\\runs\\1234",
     mode: "read" as const,
-    limits: { memoryMb: 2048, cpus: 2, pidsLimit: 256 },
   }
   const after = (args: string[], flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
@@ -117,15 +175,19 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(dockerRunArgs({ ...spec, mode: "modify" })).toContain("type=bind,source=C:\\data\\workspace\\1234,target=/work")
   })
 
-  it("runs as a non-root user with every capability dropped, a read-only root and limits", () => {
+  it("runs as root with only the install capabilities, a writable root and limits (adr:0015-let-the-orchestrator-run-the-specialists-sandbox)", () => {
     const args = dockerRunArgs(spec)
-    expect(after(args, "--user")).toEqual(["1000:1000"])
+    expect(after(args, "--user")).toEqual(["0:0"])
     expect(after(args, "--cap-drop")).toEqual(["ALL"])
+    expect(after(args, "--cap-add")).toEqual(INSTALL_CAPS)
+    expect(INSTALL_CAPS).not.toContain("NET_RAW")
+    expect(INSTALL_CAPS).not.toContain("SYS_ADMIN")
     expect(after(args, "--security-opt")).toEqual(["no-new-privileges"])
-    expect(args).toContain("--read-only")
-    expect(after(args, "--memory")).toEqual(["2048m"])
-    expect(after(args, "--cpus")).toEqual(["2"])
-    expect(after(args, "--pids-limit")).toEqual(["256"])
+    expect(args).not.toContain("--read-only")
+    expect(args).not.toContain("--privileged")
+    expect(args.join(" ")).not.toMatch(/docker\.sock/)
+    // no limit, and no tmpfs: the root filesystem is writable
+    for (const flag of ["--memory", "--cpus", "--pids-limit", "--tmpfs", "--storage-opt"]) expect(args).not.toContain(flag)
   })
 
   it("leaves the container on Docker's default network, through no proxy (specs/sandbox-images R4.1)", () => {
@@ -140,19 +202,19 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     for (const e of env) expect(e).not.toMatch(/ANTHROPIC|OPENROUTER|USERPROFILE|PATH=|C:\\/i)
   })
 
-  it("starts Claude Code with no setting source, strict MCP and file tools by mode", () => {
+  it("starts Claude Code with no setting source, strict MCP, file tools by mode and Bash", () => {
     const read = claudeArgs("read")
     expect(read.slice(0, 2)).toEqual(["claude", "-p"])
     expect(after(read, "--setting-sources")).toEqual([""])
     expect(read).toContain("--strict-mcp-config")
     expect(read).toContain("--restricted")
     expect(after(read, "--permission-prompts")).toEqual(["none"])
-    expect(after(read, "--tools")).toEqual(["Read,Grep,Glob"])
+    expect(after(read, "--tools")).toEqual(["Read,Grep,Glob,Bash"])
     expect(after(read, "--model")).toEqual(["opus"])
     expect(after(read, "--input-format")).toEqual(["stream-json"])
     expect(after(read, "--system-prompt-file")).toEqual(["/run/hfr/system.md"])
-    expect(after(claudeArgs("modify"), "--tools")).toEqual(["Read,Grep,Glob,Edit,Write"])
-    expect(claudeArgs("read").join(" ")).not.toMatch(/Bash|dangerously|add-dir/)
+    expect(after(claudeArgs("modify"), "--tools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash"])
+    expect(claudeArgs("read").join(" ")).not.toMatch(/dangerously|add-dir|bypassPermissions/)
     expect(claudeArgs("read")).not.toContain("--effort")
     expect(after(claudeArgs("read", "opus", "max"), "--effort")).toEqual(["max"])
   })
@@ -162,9 +224,30 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(read).toContain("--strict-mcp-config")
     const config = JSON.parse(after(read, "--mcp-config")[0])
     expect(config).toEqual({ mcpServers: { hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", "/run/hfr-ask"] } } })
-    expect(after(read, "--allowedTools")).toEqual(["Read,Grep,Glob,mcp__hfr__ask_user"])
-    expect(after(read, "--tools")).toEqual(["Read,Grep,Glob"])
-    expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,mcp__hfr__ask_user"])
+    expect(after(read, "--allowedTools")).toEqual(["Read,Grep,Glob,Bash,mcp__hfr__ask_user"])
+    expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash,mcp__hfr__ask_user"])
+  })
+
+  it("wraps the CLI so its process id is on record and the login volume goes back to the login user (specs/specialist-sandbox R4.4, R4.6)", () => {
+    const cli = claudeArgs("read")
+    const cmd = specialistCommand(cli)
+    expect(cmd.slice(0, 2)).toEqual(["sh", "-c"])
+    expect(cmd.slice(3)).toEqual(["sh", ...cli])
+    // stdin through a saved descriptor: a background job's own `<&0` would already be /dev/null
+    expect(cmd[2]).toContain('exec 3<&0\n"$@" <&3 3<&- &')
+    expect(cmd[2]).toContain("/tmp/hfr-claude.pid")
+    expect(cmd[2]).toContain("chown -R 1000:1000 /home/agent/.claude-config")
+    expect(cmd[2]).toMatch(/exit "\$status"$/)
+  })
+
+  it("runs the specialist in a sandbox with docker exec, and stops only its CLI there (specs/specialist-sandbox R4.1, R4.4)", () => {
+    const cli = claudeArgs("modify")
+    expect(execArgs("hfr-sbx-1", cli)).toEqual(["exec", "-i", "-w", "/work", "hfr-sbx-1", ...specialistCommand(cli)])
+    const stop = stopArgs("hfr-sbx-1")
+    expect(stop.slice(0, 2)).toEqual(["exec", "hfr-sbx-1"])
+    expect(stop.join(" ")).toContain("kill")
+    expect(stop.join(" ")).toContain("/tmp/hfr-claude.pid")
+    expect(stop.join(" ")).not.toMatch(/\brm\b|docker kill/)
   })
 
   it("bakes the MCP server into the base image on a Node base, with no Claude Code (specs/sandbox-images R1.1)", () => {
@@ -189,6 +272,10 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(args.slice(-4)).toEqual(["claude", "auth", "status", "--json"])
     expect(args.join(" ")).not.toContain("/work")
     expect(args).toContain("type=volume,source=hfr-claude-config,target=/home/agent/.claude-config")
+    // the login container is no sandbox: it stays the non-root user on a read-only root
+    expect(args[args.indexOf("--user") + 1]).toBe("1000:1000")
+    expect(args).toContain("--read-only")
+    expect(args).not.toContain("--cap-add")
   })
 })
 
@@ -302,6 +389,19 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
     expect(renderSystemPrompt(pkg)).toContain("Evidence")
   })
 
+  it("tells the specialist it has a root shell and the internet, and keeps its own output out of /work (specs/specialist-sandbox R4.7)", () => {
+    for (const sys of [renderSystemPrompt(pkg), renderSystemPrompt(pkg, true), renderSystemPrompt({ ...pkg, mode: "modify" }, true)]) {
+      expect(sys).toMatch(/root/)
+      expect(sys).toContain("Bash")
+      expect(sys).toContain("full internet access")
+      expect(sys).toMatch(/apt-get/)
+      expect(sys).toMatch(/\/root\/out or \/tmp, never in \/work/)
+    }
+    // a sandbox's /work is writable, so read mode asks the files be left as they are rather than calling it read-only
+    expect(renderSystemPrompt(pkg, true)).not.toContain("/work is read-only")
+    expect(renderSystemPrompt(pkg, true)).toContain("Leave the files in /work as they are")
+  })
+
   it("offers the ask-user tool with a reason and a default, never to ask for authorization (specs/chat R5.2)", () => {
     const sys = renderSystemPrompt(pkg)
     expect(sys).toContain("mcp__hfr__ask_user")
@@ -319,7 +419,7 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
     const run = [
       renderSystemPrompt(pkg),
       renderPrompt(pkg),
-      ...dockerRunArgs({ id: ws.id, workspace: "<ws>", runDir: "<run>", mode: "read", limits: { memoryMb: 1, cpus: 1, pidsLimit: 32 } }),
+      ...dockerRunArgs({ id: ws.id, workspace: "<ws>", runDir: "<run>", mode: "read" }),
       ...claudeArgs("read"),
     ].join("\n")
     expect(run).not.toContain(root)

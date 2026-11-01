@@ -18,6 +18,7 @@ import { rejectPatch, type DelegationDeps } from "../delegation"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
+import type { SpecialistBoxes } from "../sandbox/specialistbox"
 import { APPLY_PATCH, type ToolContext } from "./tools"
 
 /*
@@ -34,6 +35,8 @@ export interface TaskWorkspace {
   root: string
   /** the writable place for the agent's own code, when the backend has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
+  /** the sandboxes the orchestrator creates for the specialist, removed with the workspace (specs/specialist-sandbox R2.6) */
+  sandboxes?: SpecialistBoxes
   dispose(): Promise<void>
 }
 
@@ -157,6 +160,7 @@ export class TaskRunner {
         ctx: Object.assign(ctx, {
           root: ws.root,
           scratch: ws.scratch,
+          sandboxes: ws.sandboxes,
           readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
         }),
         checkpointer: this.checkpointer,

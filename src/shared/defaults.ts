@@ -8,9 +8,6 @@ export const MODEL_PRESETS = [DEFAULT_MODEL, PRESET_MODEL] as const
 export const DEFAULT_SETTINGS: Settings = {
   model: DEFAULT_MODEL,
   timeoutMinutes: 20,
-  memoryMb: 2048,
-  cpus: 2,
-  pidsLimit: 256,
   discardOnCompletion: true,
   orchestratorEffort: "default",
   specialistEffort: "default",

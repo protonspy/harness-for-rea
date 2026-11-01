@@ -28,7 +28,7 @@ themselves. -->
 - **delegation** — handing one step from the orchestrator to the specialist with a context package. Avoid: handoff
 - **context package** — what a delegation carries: the orchestrator's brief, objective, files and excerpts, environment facts, questions, constraints, and the expected report format. Avoid: context bundle
 - **brief** — the orchestrator's own prompt to the specialist inside a context package: the background and real purpose of one step, never an invented authorization. Avoid: narrative, pretext
-- **sandbox** — the container a delegation runs in, with `workspace/<uuid>/` holding copies of only the files its context package names mounted at `/work`
+- **sandbox** — the container the specialist runs in, with `workspace/<uuid>/` holding copies of only the files it was given mounted at `/work`: one the orchestrator created and prepared (`hfr-sbx-<id>`), or a delegation's own
 - **evidence** — a claim in a report tied to a file and line range, or to a captured tool output, that the orchestrator can check
 - **event** — one normalized, redacted record of an agent action, stored in SQLite and shown in the UI
 - **patch approval** — the user's explicit decision to apply a change produced in the sandbox to the original files

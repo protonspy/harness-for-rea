@@ -17,9 +17,6 @@ const SettingsPatch = z
       .trim()
       .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
     timeoutMinutes: z.number().int().min(1).max(240),
-    memoryMb: z.number().int().min(256).max(65_536),
-    cpus: z.number().min(0.5).max(64),
-    pidsLimit: z.number().int().min(32).max(32_768),
     discardOnCompletion: z.boolean(),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),

@@ -109,9 +109,6 @@ export interface TaskHistory {
 export interface Settings {
   model: string
   timeoutMinutes: number
-  memoryMb: number
-  cpus: number
-  pidsLimit: number
   discardOnCompletion: boolean
   /** OpenRouter's `reasoning.effort` for the orchestrator; "default" sends none */
   orchestratorEffort: OrchestratorEffort
