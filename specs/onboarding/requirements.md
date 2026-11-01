@@ -1,6 +1,9 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/projects
+delivery: in-review
+pr: 11
 ---
 
 # Onboarding — requirements
