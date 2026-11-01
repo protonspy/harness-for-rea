@@ -25,6 +25,8 @@
   _Reason The orchestrator's code could not apt-get the tools it needed_
 - [x] 2.7 (Unit) Start a task container that went away again — R2.9
   _Reason A sweep removed a live task's container and every call failed after_
+- [x] 2.8 (Unit) Keep the brief technical and every field of the context package in English, answering the user in theirs — R2.7, R2.10
+  _Reason The user ruled the specialist's prompt technical and in English (adr:0019-keep-the-specialists-brief-technical)_
 
 ## 3 · Lifecycle
 

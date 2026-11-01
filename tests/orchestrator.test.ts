@@ -1212,6 +1212,10 @@ describe("the division of labour (specs/chat R6.1, R6.2)", () => {
     expect(p).toMatch(/I have file X and need to map Y/)
     expect(p).toMatch(/Never mention the user, their request, who they are, what they intend or why the work is done/)
     expect(p).not.toMatch(/real purpose|who owns it/)
+    // R2.10: the package in English, the answer in the user's language
+    expect(p).toMatch(
+      /Write the whole package in English — brief, objective, excerpt notes, environment facts, questions, constraints and report format — whatever language the user writes in; you still answer the user in theirs/,
+    )
     const brief = (ContextPackageSchema.shape.brief as { description?: string }).description ?? ""
     expect(brief).toMatch(/Only the technical scope: never the user, their request/)
   })

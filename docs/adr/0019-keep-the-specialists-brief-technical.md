@@ -26,7 +26,9 @@ The brief is technical only. It states:
 - what the step must map or discover.
 
 It never mentions the user, their request, who they are, what they intend, or why the work is
-being done, and it never invents ownership, authorization or purpose. The objective is phrased
+being done, and it never invents ownership, authorization or purpose. The whole context package
+is written in English, whatever language the user writes in, while the orchestrator answers the
+user in theirs. The objective is phrased
 the same way: "I have file X and need to map Y". The orchestrator's instructions, the package
 schema's description of `brief`, and the glossary say so.
 

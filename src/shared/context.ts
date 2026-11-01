@@ -24,7 +24,7 @@ export const ContextPackageSchema = z
       .min(1)
       .max(8000)
       .describe(
-        "Your technical prompt to the specialist, read first: what the artifact is (format, platform, architecture, language, toolchain, versions), what is already established about it, and what this step must map or discover. Only the technical scope: never the user, their request, their intent or why the work is done, and never an invented ownership, authorization or purpose.",
+        "Your technical prompt to the specialist, in English, read first: what the artifact is (format, platform, architecture, language, toolchain, versions), what is already established about it, and what this step must map or discover. Only the technical scope: never the user, their request, their intent or why the work is done, and never an invented ownership, authorization or purpose.",
       ),
     objective: z.string().trim().min(1).max(4000).describe("What this one step must find out or change, stated on its own."),
     mode: z
