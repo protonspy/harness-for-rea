@@ -695,14 +695,15 @@ describe("listing a provider's models (R1.9)", () => {
     expect(seen).toEqual([{ url: "https://api.deepseek.com/models", auth: "Bearer sk-deepseek-key00000" }])
   })
 
-  it("keeps only OpenRouter models that support tools, without needing a key", async () => {
+  it("keeps only OpenRouter models that support tools and image input, without needing a key", async () => {
     const ids = await withFetch(
       () =>
         json({
           data: [
-            { id: "a/chat", supported_parameters: ["tools", "temperature"] },
-            { id: "b/plain", supported_parameters: ["temperature"] },
+            { id: "a/chat", supported_parameters: ["tools", "temperature"], architecture: { input_modalities: ["text", "image"] } },
+            { id: "b/plain", supported_parameters: ["temperature"], architecture: { input_modalities: ["text", "image"] } },
             { id: "c/unknown" },
+            { id: "d/text-only", supported_parameters: ["tools"], architecture: { input_modalities: ["text"] } },
           ],
         }),
       () => listModels({ provider: "openrouter", baseUrl: "", apiKey: null }),
