@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/task-persistence
-delivery: in-progress
+delivery: in-review
+pr: 7
 ---
 
 # Task persistence — requirements
