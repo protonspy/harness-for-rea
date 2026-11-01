@@ -113,6 +113,12 @@ interface PendingCall {
 type Todo = { content?: string; status?: string }
 type Interrupt = { value?: { actionRequests?: { name: string; args: Record<string, unknown> }[] } }
 
+/** The backend's `execute`, when it runs commands; a plain filesystem backend does not. */
+function runnerOf(backend: AgentBackend): ToolContext["run"] {
+  const b = backend as Partial<{ execute(c: string): Promise<{ output: string; exitCode: number | null; truncated?: boolean }> }>
+  return typeof b.execute === "function" ? (c) => b.execute!.call(backend, c) : undefined
+}
+
 const patchOf = (p: PendingCall) => (p.name === APPLY_PATCH ? String(p.args.patchId ?? "") : null)
 
 const TODO_STATE: Record<string, TaskState> = { pending: "pending", in_progress: "running", completed: "done" }
@@ -237,6 +243,8 @@ export class TaskRunner {
             scratch: ws.scratch,
             sandboxes: ws.sandboxes,
             readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
+            // Commands run where the orchestrator's code is: the task's container (specs/vector-replay R2.1).
+            run: runnerOf(ws.backend),
           }),
           checkpointer: this.checkpointer,
           backend: ws.backend,

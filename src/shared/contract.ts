@@ -48,17 +48,38 @@ export const ContractSchema = z
       .array(z.object({ id: z.string().trim().min(1).max(100), resolution: Text, source: Source.optional() }).strict())
       .max(100)
       .default([]),
+    // Observed by running the target, never inferred from reading it (specs/vector-replay R1).
+    vectors: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(200),
+            args: z.array(z.string().max(4000)).max(50).default([]),
+            stdin: z
+              .string()
+              .max(64 * 1024)
+              .default(""),
+            stdout: z.string().max(256 * 1024),
+            exitCode: z.number().int().min(0).max(255).default(0),
+            source: Source,
+          })
+          .strict(),
+      )
+      .max(200)
+      .default([]),
   })
   .strict()
 
 export type Contract = z.output<typeof ContractSchema>
+export type Vector = Contract["vectors"][number]
 
 /** The shape the specialist is asked for, as its instructions show it. */
 export const CONTRACT_SHAPE = `{
   "functions": [{ "name": "…", "inputs": ["…"], "outputs": ["…"], "sideEffects": ["…"], "source": "path:10-30" }],
   "constants": [{ "name": "…", "value": 42, "source": "path@0x401000" }, { "name": "…", "value": "…", "estimated": true }],
   "unknowns": [{ "question": "…", "severity": "low | medium | high", "probes": ["what you tried"], "settle": "what would settle it" }],
-  "closes": [{ "id": "<an open unknown's id>", "resolution": "…", "source": "ev_…" }]
+  "closes": [{ "id": "<an open unknown's id>", "resolution": "…", "source": "ev_…" }],
+  "vectors": [{ "name": "…", "args": ["…"], "stdin": "…", "stdout": "…", "exitCode": 0, "source": "the command you ran" }]
 }`
 
 /** Contracts are read from at most this much of a report. */

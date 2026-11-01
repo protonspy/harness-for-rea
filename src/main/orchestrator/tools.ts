@@ -4,7 +4,7 @@ import { z } from "zod"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { ContextPackageSchema } from "@shared/context"
 import type { SpecialistEffort } from "@shared/types"
-import { withoutContract } from "@shared/contract"
+import { withoutContract, type Contract } from "@shared/contract"
 import { approvePatch, delegate, DelegationRefused, SafeguardRefusal, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
@@ -12,6 +12,7 @@ import { PathRejected } from "../sandbox/paths"
 import { COMMAND_DEFAULT_S, COMMAND_MAX_S, SandboxError, type TaskSandboxes } from "../sandbox/specialistbox"
 import { PREPARED, type PreparedFile } from "../sandbox/workspace"
 import { SpecialistError } from "../specialist/executor"
+import { compare, replayCommand, type Outcome } from "./replay"
 
 /*
   The orchestrator's own tools (specs/orchestrator R2.3–R2.5, R3.1): the specialist behind
@@ -33,6 +34,7 @@ export const PREPARED_CAP = 512 * 1024 * 1024
 export const SANDBOX_COPY = "sandbox_copy"
 export const SANDBOX_EXEC = "sandbox_exec"
 export const SANDBOX_DESTROY = "sandbox_destroy"
+export const REPLAY_VECTORS = "replay_vectors"
 
 export interface ToolContext {
   deps: DelegationDeps
@@ -57,6 +59,8 @@ export interface ToolContext {
   projectId?: string | null
   /** the specialist's effort for this task's delegations, the project's (specs/projects R2.1) */
   specialistEffort?: SpecialistEffort
+  /** runs a shell command in the task's sandbox, where the orchestrator's code is (specs/vector-replay R2.1) */
+  run?(command: string): Promise<{ output: string; exitCode: number | null; truncated?: boolean }>
 }
 
 function redactedJson(v: unknown): string {
@@ -480,6 +484,71 @@ export function readAnalysisTool(ctx: ToolContext) {
       name: READ_ANALYSIS,
       description: `Read one earlier analysis of this project in full: the package it was given, the specialist's whole report and its evidence. Ids come from ${PROJECT_ANALYSES}.`,
       schema: z.object({ analysis: z.string().uuid().describe(`An analysis id from ${PROJECT_ANALYSES}.`) }),
+    },
+  )
+}
+
+/** The contract of a delegation of this task or its project, or why there is none to read (specs/vector-replay R2.4). */
+function analysisContract(ctx: ToolContext, analysis: string): { contract: Contract | null } | string {
+  const { log } = ctx.deps
+  const own = log.steps(ctx.taskId).some((s) => s.id === analysis && s.kind === "delegation")
+  const shared = !own && ctx.projectId ? log.projectAnalyses(ctx.projectId).some((a) => a.id === analysis) : false
+  if (!own && !shared) return `there is no analysis ${analysis} in this task or its project`
+  return { contract: (log.getStep(analysis).data.contract as Contract | null | undefined) ?? null }
+}
+
+/**
+  Replay an analysis's test vectors against the orchestrator's own command in the task's sandbox, one at a time,
+  comparing standard output and the exit code with what the specialist observed (specs/vector-replay R2).
+*/
+export function replayVectorsTool(ctx: ToolContext) {
+  return tool(
+    async ({ analysis, command }) => {
+      if (!ctx.run) return "ERROR: this task has no sandbox to run commands in."
+      const found = analysisContract(ctx, analysis)
+      if (typeof found === "string") return `ERROR: ${found}.`
+      const vectors = found.contract?.vectors ?? []
+      if (!vectors.length)
+        return `ERROR: analysis ${analysis} recorded no test vectors; delegate again asking the specialist to run the target and record them.`
+      const outcomes: Outcome[] = []
+      for (const v of vectors) {
+        if (ctx.signal.aborted) break
+        const r = await ctx.run(replayCommand(command, v))
+        const o = compare(v, r.output, r.exitCode ?? -1)
+        outcomes.push(r.truncated ? { ...o, pass: false } : o)
+      }
+      const passed = outcomes.filter((o) => o.pass).length
+      const failed = outcomes.length - passed
+      ctx.deps.log.append({
+        taskId: ctx.taskId,
+        agent: "orchestrator",
+        kind: "vectors.replayed",
+        summary: `Replayed ${outcomes.length} test vector(s): ${passed} passed, ${failed} failed`,
+        payload: {
+          analysis,
+          command,
+          passed,
+          failed,
+          ...(failed
+            ? {
+                error: outcomes
+                  .filter((o) => !o.pass)
+                  .map((o) => o.name)
+                  .join(", "),
+              }
+            : {}),
+        },
+      })
+      return redactedJson({ analysis, command, passed, failed, outcomes })
+    },
+    {
+      name: REPLAY_VECTORS,
+      description:
+        "Replay the test vectors an analysis recorded — inputs given to the target and the output and exit code it produced — against your own reimplementation, in your sandbox. `command` runs your code (e.g. `python3 /scratch/impl.py`); each vector's arguments are appended and its standard input piped in. Returns each vector's outcome and what differed.",
+      schema: z.object({
+        analysis: z.string().uuid().describe("The delegation whose contract recorded the vectors: one of this task's, or an analysis id of its project."),
+        command: z.string().trim().min(1).max(2000).describe("The command that runs your reimplementation, one program and its fixed arguments."),
+      }),
     },
   )
 }

@@ -1280,7 +1280,7 @@ describe("the analysis contract (specs/analysis-contract R1.3–R1.5)", () => {
     const task = r.start({ request: REQUEST, sourceRoot: root })
     await r.settled(task.id)
     const told = JSON.parse(log.getTask(task.id).result)
-    expect(told.contract).toEqual({ functions: [], constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }], unknowns: [], closes: [] })
+    expect(told.contract).toEqual({ functions: [], constants: [{ name: "SEP", value: " ", source: "src/a.ts:1-1" }], unknowns: [], closes: [], vectors: [] })
     expect(told.report).not.toContain("```json")
     expect(told.contractProblems).toBeUndefined()
     expect(turns()).toHaveLength(1)
@@ -1316,6 +1316,92 @@ describe("the analysis contract (specs/analysis-contract R1.3–R1.5)", () => {
     expect(step).toMatchObject({ state: "done", data: { contract: null, contractProblems: [expect.any(String)] } })
     // every turn's spending is counted
     expect(log.getTask(task.id).specialistCostUsd).toBeCloseTo(0.42 * 3, 5)
+  })
+})
+
+describe("replaying test vectors (specs/vector-replay R2)", () => {
+  it("runs each vector of an analysis against the orchestrator's command in its sandbox, returns the outcomes and records the counts", async () => {
+    fakeContract = JSON.stringify({
+      vectors: [
+        { name: "two", args: ["a b"], stdout: "a\nb\n", source: "./parse 'a b'" },
+        { name: "empty", stdout: "", exitCode: 1, source: "./parse" },
+      ],
+    })
+    const ran: string[] = []
+    class Box extends FilesystemBackend {
+      async execute(command: string) {
+        ran.push(command)
+        return ran.length === 1 ? { output: "a\nb\n", exitCode: 0 } : { output: "", exitCode: 0 }
+      }
+    }
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({ backend: new Box({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+    })
+    let taskId = ""
+    const delegation = () => log.steps(taskId).find((s) => s.kind === "delegation")!.id
+    const results: string[] = []
+    script = [
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      () => ({ tool_calls: [{ name: "replay_vectors", args: { analysis: delegation(), command: "python3 /scratch/impl.py" } }] }),
+      (body) => {
+        results.push(lastTool(body))
+        return { tool_calls: [{ name: "replay_vectors", args: { analysis: "00000000-0000-4000-8000-000000000009", command: "x" } }] }
+      },
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "checked" }
+      },
+    ]
+    taskId = r.start({ request: REQUEST, sourceRoot: root }).id
+    await r.settled(taskId)
+    expect(ran).toHaveLength(2)
+    expect(ran[0]).toContain("| base64 -d | python3 /scratch/impl.py ")
+    const replay = JSON.parse(results[0])
+    expect(replay).toMatchObject({
+      passed: 1,
+      failed: 1,
+      outcomes: [
+        { name: "two", pass: true },
+        { name: "empty", pass: false, exitCode: { expected: 1, got: 0 } },
+      ],
+    })
+    expect(log.history(taskId).events.find((e) => e.kind === "vectors.replayed")?.payload).toMatchObject({ passed: 1, failed: 1 })
+    expect(results[1]).toMatch(/^ERROR: there is no analysis .* in this task or its project/)
+  })
+
+  it("refuses an analysis that recorded no vectors (R2.4)", async () => {
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({
+        backend: Object.assign(new FilesystemBackend({ rootDir: root, virtualMode: true }), { execute: async () => ({ output: "", exitCode: 0 }) }),
+        root: "/",
+        dispose: async () => undefined,
+      }),
+    })
+    let taskId = ""
+    const results: string[] = []
+    script = [
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      () => ({ tool_calls: [{ name: "replay_vectors", args: { analysis: log.steps(taskId).find((s) => s.kind === "delegation")!.id, command: "x" } }] }),
+      (body) => {
+        results.push(lastTool(body))
+        return { content: "ok" }
+      },
+    ]
+    taskId = r.start({ request: REQUEST, sourceRoot: root }).id
+    await r.settled(taskId)
+    expect(results[0]).toMatch(/^ERROR: analysis .* recorded no test vectors/)
   })
 })
 

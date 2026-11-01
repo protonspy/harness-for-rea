@@ -16,7 +16,7 @@ ledger; for the orchestrator consolidating analyses and the user following a pro
 
 ## R1 · The contract
 
-- **R1.1** The specialist's instructions shall ask for a report that ends with a JSON contract listing the functions mapped with their inputs, outputs and side effects, the constants found each with a source or marked estimated, the unknowns opened, and the earlier unknowns closed.
+- **R1.1** (MODIFIED) The specialist's instructions shall ask for a report that ends with a JSON contract listing the functions mapped with their inputs, outputs and side effects, the constants found each with a source or marked estimated, the unknowns opened, the earlier unknowns closed, and the test vectors observed (specs/vector-replay R1.2).
 - **R1.2** When a delegation's report arrives, the delegation shall validate its contract, refusing a constant that has neither a source nor `estimated: true`.
 - **R1.3** If a report's contract is missing or invalid, then the delegation shall return the problems to the specialist in the same session for a corrected report, at most twice.
 - **R1.4** If the contract is still invalid after the last correction, then the delegation shall finish with the last report and record that its contract failed, with the problems.

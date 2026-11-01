@@ -48,6 +48,7 @@ export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string
     CONTRACT_SHAPE,
     'List the functions you mapped with their inputs, outputs and side effects, and the constants you found. Every constant carries a source — a line range you read, an address in a binary, or an REA evidence id — or `"estimated": true` once you looked for one and found none; missing evidence is never proof.',
     "Record each question you leave open as an unknown, with what you tried and what would settle it, rather than guessing. When your analysis settles one of the open unknowns listed in the prompt, close it by its id in `closes`. Any list you have nothing for may be left out.",
+    "When the target runs, record test vectors in `vectors`: run it in this sandbox and write down exactly what you gave it (arguments, standard input) and what it printed on standard output with its exit code, `source` naming the command you ran. Only what you observed: never a vector worked out from reading the code.",
   ].join("\n")
 }
 

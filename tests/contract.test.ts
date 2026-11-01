@@ -28,10 +28,11 @@ describe("the analysis contract (specs/analysis-contract R1.2)", () => {
         ],
         unknowns: [{ question: "Is input UTF-8?", severity: "medium", probes: [] }],
         closes: [],
+        vectors: [],
       },
     })
     expect(readContract(`\`\`\`json\n{"functions": "old"}\n\`\`\`\n${report("{}")}`)).toEqual({
-      contract: { functions: [], constants: [], unknowns: [], closes: [] },
+      contract: { functions: [], constants: [], unknowns: [], closes: [], vectors: [] },
     })
   })
 
@@ -55,6 +56,14 @@ describe("the analysis contract (specs/analysis-contract R1.2)", () => {
     expect(readContract(report('{"purpose": "x"}'))).toMatchObject({ problems: [expect.stringMatching(/purpose|Unrecognized/i)] })
     expect(readContract(report('{"unknowns": [{"question": "q", "severity": "urgent"}]}'))).toMatchObject({
       problems: [expect.stringMatching(/^unknowns\.0\.severity/)],
+    })
+  })
+
+  it("carries observed test vectors, each with its source (specs/vector-replay R1.2)", () => {
+    const r = readContract(report(JSON.stringify({ vectors: [{ name: "split", args: ["a b"], stdout: "a\nb\n", source: "./parse 'a b'" }] })))
+    expect(r).toMatchObject({ contract: { vectors: [{ name: "split", args: ["a b"], stdin: "", stdout: "a\nb\n", exitCode: 0, source: "./parse 'a b'" }] } })
+    expect(readContract(report(JSON.stringify({ vectors: [{ name: "x", stdout: "" }] })))).toMatchObject({
+      problems: [expect.stringMatching(/^vectors\.0\.source/)],
     })
   })
 
