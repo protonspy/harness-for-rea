@@ -2,7 +2,7 @@
 
 ## 1 · The image
 
-- [ ] 1.1 (Unit) Fetch and verify REA's engines into the base image, with the skill directory, the operating guide and their environment — R1.1, R1.2, R1.3
+- [x] 1.1 (Unit) Fetch and verify REA's engines into the base image, with the skill directory, the operating guide and their environment — R1.1, R1.2, R1.3
 
 ## 2 · The run
 
