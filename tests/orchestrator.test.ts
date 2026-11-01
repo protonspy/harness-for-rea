@@ -15,7 +15,7 @@ import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
 import { listModels } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
-import { systemPrompt } from "../src/main/orchestrator/agent"
+import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
 import { UnknownsLedger } from "../src/main/unknowns"
 import { ProjectStore, type NewProject } from "../src/main/projects"
@@ -1465,6 +1465,35 @@ describe("a safeguard refusal (specs/specialist-lifecycle R2)", () => {
     r.answerQuestion(task.id, String(q.payload.questionId), "Stop the task")
     await r.settled(task.id)
     expect(log.getTask(task.id).state).toBe("cancelled")
+  })
+})
+
+describe("the reminder to delegate (adr:0011)", () => {
+  const readA = { tool_calls: [{ name: "read_file", args: { file_path: "/src/a.ts" } }] }
+  const said = () => requests.map((b) => JSON.stringify(b.messages)).map((m) => m.includes("[Reminder from the app]"))
+
+  it(`reminds the orchestrator once when a turn reads the target more than ${READS_BEFORE_REMINDER} times without delegating`, async () => {
+    script = [...Array.from({ length: READS_BEFORE_REMINDER + 2 }, () => readA), { content: "done" }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const flags = said()
+    // the call after the (READS_BEFORE_REMINDER + 1)th read is the first to carry it, and it stays in the history once
+    expect(flags.indexOf(true)).toBe(READS_BEFORE_REMINDER + 1)
+    expect(JSON.stringify(requests.at(-1)!.messages).split("[Reminder from the app]")).toHaveLength(2)
+  })
+
+  it("does not remind a turn that delegates, nor one that stays under the count", async () => {
+    script = [
+      ...Array.from({ length: READS_BEFORE_REMINDER }, () => readA),
+      { tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] },
+      ...Array.from({ length: READS_BEFORE_REMINDER }, () => readA),
+      { content: "done" },
+    ]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    expect(said().some(Boolean)).toBe(false)
   })
 })
 

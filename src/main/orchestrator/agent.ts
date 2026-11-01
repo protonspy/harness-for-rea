@@ -154,6 +154,43 @@ export function inboxMiddleware(drain: () => string[]) {
   })
 }
 
+/** Target reads in one turn, without a delegation, after which the orchestrator is reminded (adr:0011's fallback). */
+export const READS_BEFORE_REMINDER = 6
+
+export const DELEGATION_REMINDER = `[Reminder from the app] You have read the target's files yourself ${READS_BEFORE_REMINDER} times this turn without delegating. Deep analysis of the target belongs to the specialist: put what you need into a context package and call ${DELEGATE}, rather than reaching conclusions from your own reading (adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code).`
+
+/**
+  Counts the turn's reads of the target — read_file and grep outside the scratch — and, once they pass
+  READS_BEFORE_REMINDER with no delegation since, reminds the orchestrator once that the analysis is the
+  specialist's. A delegation, or a new turn, starts the count again.
+*/
+export function delegationReminderMiddleware(scratch?: string) {
+  let reads = 0
+  let reminded = false
+  const inScratch = (p: unknown) => typeof p === "string" && !!scratch && (p === scratch || p.startsWith(`${scratch}/`))
+  return createMiddleware({
+    name: "DelegationReminder",
+    beforeAgent: () => {
+      reads = 0
+      reminded = false
+      return undefined
+    },
+    beforeModel: () => {
+      if (reminded || reads <= READS_BEFORE_REMINDER) return undefined
+      reminded = true
+      return { messages: [new HumanMessage(DELEGATION_REMINDER)] } as never
+    },
+    wrapToolCall: (request, handler) => {
+      const { name, args } = request.toolCall as { name: string; args?: Record<string, unknown> }
+      if (name === DELEGATE) {
+        reads = 0
+        reminded = false
+      } else if ((name === "read_file" && !inScratch(args?.file_path)) || (name === "grep" && !inScratch(args?.path))) reads++
+      return handler(request)
+    },
+  })
+}
+
 export function buildAgent(o: {
   model: BaseChatModel
   ctx: ToolContext
@@ -188,7 +225,7 @@ export function buildAgent(o: {
       readAnalysisTool(o.ctx),
       replayVectorsTool(o.ctx),
     ],
-    middleware: [todoListMiddleware(), inboxMiddleware(o.inbox ?? (() => [])), toolPolicyMiddleware()],
+    middleware: [todoListMiddleware(), inboxMiddleware(o.inbox ?? (() => [])), toolPolicyMiddleware(), delegationReminderMiddleware(o.scratch)],
     backend: o.backend,
     // A backend that runs commands takes no path rules (DeepAgents refuses them): there the read-only
     // bind and the refused uploads are what keep the source unwritten.

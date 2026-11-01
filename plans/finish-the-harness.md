@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 6c01fb8a7b5e6286a7c01730693c7b4a00830f0633a02d098acc57779af3777c
+checksum: 5cbd7df15c76e71122a2d1d5d775fecb567b1b096fde5ed82d31814eee7e1fb0
 ---
 
 # Finish the harness
@@ -55,10 +55,16 @@ replayable test vectors.
 ## Tasks
 
 - [ ] 1.1 (Unit) Write `README.md`: what the harness is, how the orchestrator and the sandboxed specialist split the work, requirements (Docker, a Claude plan, an OpenAI-compatible key), install and first-run setup, projects and tasks, development commands from `.claude/rules/project.md`, and links to the ADRs
-- [ ] 1.2 (TDD) Prove with a Docker test (`HFR_DOCKER=1`) that a `CLAUDE.md` or settings planted in `/work` by an earlier delegation in a shared sandbox are not loaded by the specialist's Claude Code — settings and hooks are already kept out by `--setting-sources ""` (adr:0018-make-rea-native-to-the-specialist) — asserting "not loaded" and watching it fail first
-- [ ] 1.3 (Unit) If 1.2 shows anything still loads, record an ADR amending adr:0018-make-rea-native-to-the-specialist, stop it in `claudeArgs` or `containerEnv` with the matching `tests/sandbox.test.ts` cases, and keep 1.2 as the regression check; if nothing loads, strike this task with 1.2's result as its reason
+- [x] 1.2 (TDD) Prove with a Docker test (`HFR_DOCKER=1`) that a `CLAUDE.md` or settings planted in `/work` by an earlier delegation in a shared sandbox are not loaded by the specialist's Claude Code — settings and hooks are already kept out by `--setting-sources ""` (adr:0018-make-rea-native-to-the-specialist) — asserting "not loaded" and watching it fail first
+- [ ] 1.3 (Unit) If 1.2 shows anything still loads, record an ADR amending
+      adr:0018-make-rea-native-to-the-specialist, stop it in `claudeArgs` or
+      `containerEnv` with the matching `tests/sandbox.test.ts` cases, and keep 1.2 as
+      the regression check; if nothing loads, strike this task with 1.2's result as its
+      reason
   _Depends 1.2_
-- [ ] 1.4 (Unit) Remind the orchestrator, when a turn has read target files itself more than a fixed number of times without delegating, that deep analysis belongs to the specialist — the fallback adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code names — with the number a tested constant
+  _Status removed_
+  _Reason 1.2 showed nothing planted in /work loads: --setting-sources "" and --restricted each keep CLAUDE.md out, and with both removed the Docker test fails_
+- [x] 1.4 (Unit) Remind the orchestrator, when a turn has read target files itself more than a fixed number of times without delegating, that deep analysis belongs to the specialist — the fallback adr:0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code names — with the number a tested constant
 - [ ] 1.5 (Unit) Update `README.md` with the TUI, the npm install and the release downloads with the macOS first-run workaround, after the release spec is delivered
   _Depends 1.1_
   _Priority 3_
