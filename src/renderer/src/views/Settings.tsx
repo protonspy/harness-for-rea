@@ -6,9 +6,7 @@ import { ErrorText, Field, Mono, PanelHeader } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 
 /* Settings: the orchestrator's provider, key and endpoint, the model, the delegation timeout, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
 
@@ -230,10 +228,6 @@ export function SettingsView() {
               />
             </Field>
           </div>
-          <Label className="font-normal">
-            <Checkbox checked={settings.discardOnCompletion} onCheckedChange={(v) => save({ discardOnCompletion: v === true })} />
-            Discard each workspace, snapshot and decided patch when its delegation ends
-          </Label>
         </div>
       </Card>
 

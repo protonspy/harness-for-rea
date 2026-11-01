@@ -1,4 +1,4 @@
-import { ListTodo, RotateCcw, ScrollText, SquareX, Users, Wallet } from "lucide-react"
+import { ListTodo, RotateCcw, ScrollText, SquareX, Trash2, Users, Wallet } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Answer, ToolDecision } from "@shared/chat"
 import type { Push, TaskHistory } from "@shared/types"
@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { blocks, canClose, conversation, pendingCalls, pendingQuestions } from "@/lib/chat"
+import { blocks, canClose, canDelete, conversation, pendingCalls, pendingQuestions } from "@/lib/chat"
 import { tokens, tone, usd, when } from "@/lib/format"
 import { canRetry, fold, isLive, usageByAgent } from "@/lib/store"
 
@@ -23,7 +23,7 @@ import { canRetry, fold, isLive, usageByAgent } from "@/lib/store"
   order, the message box under them, and beside them the plan, delegations, usage and event log.
 */
 
-export function TaskView({ id, onOpen }: { id: string; onOpen(id: string): void }) {
+export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: string): void; onDeleted(): void }) {
   const [h, setH] = useState<TaskHistory | null>(null)
   const [error, setError] = useState("")
   const api = window.hfr.api
@@ -116,8 +116,24 @@ export function TaskView({ id, onOpen }: { id: string; onOpen(id: string): void 
               </Button>
             )}
             {canRetry(state) && (
-              <Button size="sm" onClick={() => act(async () => onOpen((await api.retryTask(id)).id))}>
-                <RotateCcw size={14} /> Retry
+              <Button size="sm" variant="outline" onClick={() => act(async () => onOpen((await api.retryTask(id)).id))}>
+                <RotateCcw size={14} /> Start over
+              </Button>
+            )}
+            {canDelete(state) && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() =>
+                  // Deleting removes the task's history, files and containers for good (specs/task-persistence R4.1).
+                  window.confirm("Delete this task with its history, files and containers? This cannot be undone.") &&
+                  act(async () => {
+                    await api.deleteTask(id)
+                    onDeleted()
+                  })
+                }
+              >
+                <Trash2 size={14} /> Delete
               </Button>
             )}
           </div>

@@ -30,9 +30,9 @@ afterEach(() => closeDb())
 
 describe("database (R2.1)", () => {
   it("migrates once and records the version", () => {
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2)
     migrate(getDb())
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2)
   })
 })
 
@@ -188,14 +188,15 @@ describe("recovery (R3.1)", () => {
     expect(log.recover()).toBe(0)
   })
 
-  it("interrupts a stopped turn and closes a conversation that waited for the user (specs/chat R1.5)", () => {
+  it("interrupts a stopped turn and leaves a conversation that waited for the user open (specs/task-persistence R2.3)", () => {
     const stopped = log.createTask({ request: "s", sourceRoot: "s", model: "m" })
     log.updateTask(stopped.id, { state: "stopped" })
     const idle = log.createTask({ request: "i", sourceRoot: "s", model: "m" })
     log.updateTask(idle.id, { state: "awaiting-user", result: "the answer" })
     expect(log.recover()).toBe(1)
     expect(log.getTask(stopped.id).state).toBe("interrupted")
-    expect(log.getTask(idle.id)).toMatchObject({ state: "done", result: "the answer" })
-    expect(log.history(idle.id).events.at(-1)).toMatchObject({ kind: "task.done", state: "done" })
+    expect(log.getTask(idle.id)).toMatchObject({ state: "awaiting-user", result: "the answer" })
+    expect(log.history(idle.id).events).toHaveLength(0)
+    expect(log.history(stopped.id).events.at(-1)!.summary).toMatch(/continue it to pick up where it stopped/)
   })
 })

@@ -11,7 +11,6 @@ export const DEFAULT_SETTINGS: Settings = {
   baseUrl: "",
   model: DEFAULT_MODEL,
   timeoutMinutes: 20,
-  discardOnCompletion: true,
   orchestratorEffort: "default",
   specialistEffort: "default",
   approvalTimeoutMinutes: 30,

@@ -3,7 +3,8 @@ import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
 /*
-  One SQLite file: settings, and the tasks, steps and events of the event log. Each migration runs
+  One SQLite file: settings, the tasks, steps and events of the event log, the orchestrator's conversations
+  and the specialist's sandboxes. Each migration runs
   once, in order, recorded in `user_version`.
 */
 
@@ -70,6 +71,38 @@ const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL
   );
   CREATE INDEX patches_task ON patches(task_id);
+  `,
+  // A task's conversation and sandboxes, kept until it is deleted (adr:0017-keep-a-tasks-conversation-containers-and-files-until-it-is-deleted).
+  `
+  CREATE TABLE checkpoints (
+    thread_id TEXT NOT NULL,
+    ns TEXT NOT NULL,
+    id TEXT NOT NULL,
+    parent_id TEXT,
+    checkpoint BLOB NOT NULL,
+    metadata BLOB NOT NULL,
+    PRIMARY KEY (thread_id, ns, id)
+  );
+
+  CREATE TABLE checkpoint_writes (
+    thread_id TEXT NOT NULL,
+    ns TEXT NOT NULL,
+    checkpoint_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    value BLOB NOT NULL,
+    task_path TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (thread_id, ns, checkpoint_id, task_id, idx)
+  );
+
+  CREATE TABLE sandboxes (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    limits TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX sandboxes_task ON sandboxes(task_id);
   `,
 ]
 
