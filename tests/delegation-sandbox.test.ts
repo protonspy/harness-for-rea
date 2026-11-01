@@ -68,13 +68,13 @@ function launcher(mode = "answer"): Launcher {
   }
 }
 
-const deps = (mode = "answer", discard = true) => ({
+const deps = (mode = "answer") => ({
   log,
   dataDir: data,
   launcher: launcher(mode),
-  settings: () => ({ ...DEFAULT_SETTINGS, timeoutMinutes: 1, discardOnCompletion: discard }),
+  settings: () => ({ ...DEFAULT_SETTINGS, timeoutMinutes: 1 }),
 })
-const boxes = () => new SpecialistBoxes({ exec, log, dataDir: data, sourceRoot: root, taskId, discard: () => true, everyMs: 60_000 })
+const boxes = () => new SpecialistBoxes({ exec, log, taskDir: log.taskDir(taskId), sourceRoot: root, taskId, everyMs: 60_000 })
 const pkg = (o: Record<string, unknown> = {}) => ContextPackageSchema.parse({ brief: "b", objective: "Look at /work/src/a.ts", files: ["src/a.ts"], ...o })
 
 describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
@@ -89,22 +89,22 @@ describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
     expect(readFileSync(join(box.ws.workspace, "src", "a.ts"), "utf8")).toContain("// unpacked")
     expect(readFileSync(join(box.ws.workspace, "src", "b.ts"), "utf8")).toBe("export const b = 2\n")
     expect(r.report).toContain("analysed src/a.ts")
-    // discard on completion does not touch a sandbox: it outlives the delegation
+    // a sandbox outlives the delegation
     expect(existsSync(box.ws.workspace)).toBe(true)
     expect(s.ids()).toEqual([box.id])
     expect(box.busy).toBe(false)
-    await s.disposeAll()
+    await s.removeAll()
   })
 
   it("refuses a sandbox that is running a delegation, or that the task does not have", async () => {
     const s = boxes()
     const box = await s.create({ cpus: 1, memoryMb: 512, diskMb: 100, pidsLimit: 256 })
-    const held = s.hold(box.id)
+    const held = await s.hold(box.id)
     await expect(delegate(deps(), { taskId, sourceRoot: root, pkg: pkg(), sandbox: { boxes: s, id: box.id } })).rejects.toThrow(DelegationRefused)
     await held.release()
     await expect(delegate(deps(), { taskId, sourceRoot: root, pkg: pkg(), sandbox: { boxes: s, id: "nope" } })).rejects.toThrow(/no sandbox nope/)
     expect(launches).toEqual([])
-    await s.disposeAll()
+    await s.removeAll()
   })
 
   it("clears the questions and answers an earlier delegation left on the ask channel", async () => {
@@ -114,7 +114,7 @@ describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
     writeFileSync(join(askDir(box.ws.runDir), "a-1.json"), "{}")
     await delegate(deps(), { taskId, sourceRoot: root, pkg: pkg(), sandbox: { boxes: s, id: box.id } })
     expect(readdirSync(askDir(box.ws.runDir))).toEqual([])
-    await s.disposeAll()
+    await s.removeAll()
   })
 
   it("tells the specialist in a sandbox that /work is writable but stays as it is in read mode (R4.7)", async () => {
@@ -124,7 +124,7 @@ describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
     const system = readFileSync(join(box.ws.runDir, "system.md"), "utf8")
     expect(system).toContain("Leave the files in /work as they are")
     expect(system).toContain("root")
-    await s.disposeAll()
+    await s.removeAll()
   })
 
   it("names the sandbox's stop when its disk limit ended the run", async () => {
@@ -134,7 +134,7 @@ describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
     await expect(delegate(deps("limit"), { taskId, sourceRoot: root, pkg: pkg(), sandbox: { boxes: s, id: box.id } })).rejects.toThrow(
       /plan.s limit is reached.*\(sandbox .* was stopped: it used \d+ MB of disk, past its 1 MB limit\)/,
     )
-    await s.disposeAll()
+    await s.removeAll()
   })
 })
 
@@ -150,7 +150,7 @@ describe("patches from a sandbox (R4.5)", () => {
     // only the second edit, on top of the first
     expect(second.patch?.diff).toContain("-export const a = 1 // fixed")
     expect(second.patch?.diff).toContain("+export const a = 1 // fixed // fixed")
-    await s.disposeAll()
+    await s.removeAll()
   })
 })
 

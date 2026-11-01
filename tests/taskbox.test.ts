@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -27,12 +27,15 @@ import { SPECIALIST_IMAGE } from "../src/main/sandbox/docker"
 */
 
 describe("task container arguments (R2.2)", () => {
-  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo")
+  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo", "C:\\data\\tasks\\t1\\scratch")
   const after = (flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
-  it("binds the whole source folder read-only at /workspace and nothing else", () => {
+  it("binds the whole source folder read-only at /workspace and the task's scratch folder at /scratch, nothing else", () => {
     // Recursively read-only: a mount nested inside the source folder stays read-only too.
-    expect(after("--mount")).toEqual([`type=bind,source=C:\\Users\\me\\repo,target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`])
+    expect(after("--mount")).toEqual([
+      `type=bind,source=C:\\Users\\me\\repo,target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`,
+      `type=bind,source=C:\\data\\tasks\\t1\\scratch,target=${SCRATCH}`,
+    ])
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
@@ -47,20 +50,24 @@ describe("task container arguments (R2.2)", () => {
     expect(args.join(" ")).not.toMatch(/docker\.sock/)
     for (const flag of ["--memory", "--memory-swap", "--cpus", "--pids-limit", "--storage-opt"]) expect(args).not.toContain(flag)
     expect(after("--name")).toEqual([taskBoxName("t1")])
-    expect(args.slice(-3)).toEqual([SPECIALIST_IMAGE, "-c", `mkdir -p ${SCRATCH} && exec sleep infinity`])
-    expect(after("--entrypoint")).toEqual(["sh"])
+    expect(args.slice(-2)).toEqual([SPECIALIST_IMAGE, "infinity"])
+    expect(after("--entrypoint")).toEqual(["sleep"])
+    // kept when stopped, so what was installed outlives the task's end (specs/task-persistence R3.4)
+    expect(args).not.toContain("--rm")
+    expect(args).toContain("--init")
     expect(args.join(" ")).not.toMatch(/ -e |--env/)
   })
 
   it("refuses a source path that would add mount options", () => {
-    expect(() => taskBoxArgs("t", "C:/a,b")).toThrow(/comma or quote/)
+    expect(() => taskBoxArgs("t", "C:/a,b", "C:/s")).toThrow(/comma or quote/)
+    expect(() => taskBoxArgs("t", "C:/a", "C:/s,x")).toThrow(/comma or quote/)
   })
 
-  it("gives the orchestrator a writable /scratch on disk apart from the read-only source, with no size cap (specs/chat R6.3, specs/specialist-sandbox R6.2)", () => {
+  it("gives the orchestrator a writable /scratch on the host apart from the read-only source, with no size cap (specs/chat R6.3, specs/task-persistence R3.2)", () => {
     expect(args).not.toContain("--tmpfs")
     expect(SCRATCH).toBe("/scratch")
-    expect(after("--mount")).toHaveLength(1)
     expect(after("--mount")[0]).toContain(",readonly")
+    expect(after("--mount")[1]).not.toContain("readonly")
   })
 })
 
@@ -141,54 +148,74 @@ describe("TaskBox", () => {
     expect(BUFFER_CAP).toBeGreaterThan(OUTPUT_CAP)
   })
 
-  it("sweeps task containers left behind by a previous run", async () => {
+  it("stops, and keeps, the task containers a previous run left running (specs/task-persistence R3.4)", async () => {
     const f = fake((a) => (a[0] === "ps" ? { stdout: Buffer.from("abc\ndef\n") } : {}))
     expect(await TaskBox.sweep(f.exec)).toBe(2)
     expect(f.calls).toEqual([
-      ["ps", "-aq", "--filter", "name=^hfr-orch-"],
-      ["rm", "-f", "abc", "def"],
+      ["ps", "-q", "--filter", "name=^hfr-orch-"],
+      ["stop", "-t", "2", "abc", "def"],
     ])
     const none = fake(() => ({ stdout: Buffer.from("") }))
     expect(await TaskBox.sweep(none.exec)).toBe(0)
     expect(none.calls).toHaveLength(1)
   })
 
-  it("starts the container or says why it could not, and removes it", async () => {
-    const ok = fake(() => ({}))
-    const box = await TaskBox.start(ok.exec, "t1", "C:/repo")
-    expect(ok.calls[0].slice(0, 2)).toEqual(["run", "-d"])
+  it("starts the container Docker still has, creates it when not, says why it could not, and stops it at the end (specs/task-persistence R3.4, R3.5)", async () => {
+    const scratch = join(mkdtempSync(join(tmpdir(), "hfr-scr-")), "scratch")
+    const kept = fake(() => ({}))
+    const again = await TaskBox.start(kept.exec, "t1", "C:/repo", scratch)
+    expect(kept.calls).toEqual([["start", "hfr-orch-t1"]])
+    expect(again.created).toBe(false)
+    const gone = fake((a) => (a[0] === "start" ? { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" } : {}))
+    const box = await TaskBox.start(gone.exec, "t1", "C:/repo", scratch)
+    expect(gone.calls[1].slice(0, 2)).toEqual(["run", "-d"])
+    expect(box.created).toBe(true)
+    expect(existsSync(scratch)).toBe(true)
     await box.dispose()
-    expect(ok.calls.at(-1)).toEqual(["rm", "-f", "hfr-orch-t1"])
+    expect(gone.calls.at(-1)).toEqual(["stop", "-t", "2", "hfr-orch-t1"])
     await expect(
-      TaskBox.start(fake(() => ({ code: 125, stderr: "docker: Error response from daemon: invalid mount\n" })).exec, "t2", "C:/repo"),
+      TaskBox.start(
+        fake((a) =>
+          a[0] === "start" ? { code: 1, stderr: "No such container" } : { code: 125, stderr: "docker: Error response from daemon: invalid mount\n" },
+        ).exec,
+        "t2",
+        "C:/repo",
+        scratch,
+      ),
     ).rejects.toThrow(/invalid mount/)
+    const removed = fake(() => ({}))
+    await TaskBox.remove(removed.exec, "t1")
+    expect(removed.calls).toEqual([["rm", "-f", "hfr-orch-t1"]])
   })
 
-  it("starts a container that went away again, once, and says the scratch was reset (specs/orchestrator R2.2)", async () => {
-    let alive = true
+  it("brings a stopped container up again quietly, and says what was reset when it had to be created (specs/task-persistence R3.5)", async () => {
+    const scratch = join(mkdtempSync(join(tmpdir(), "hfr-scr-")), "scratch")
+    // stopped: started again, nothing to report
+    let state: "up" | "stopped" | "gone" = "up"
     const f = fake((a) => {
-      if (a[0] === "run") return ((alive = true), {})
-      if (a[0] === "exec" && !alive) return { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" }
+      if (a[0] === "start") return state === "gone" ? { code: 1, stderr: "No such container: hfr-orch-t1" } : ((state = "up"), {})
+      if (a[0] === "run") return ((state = "up"), {})
+      if (a[0] === "exec" && state === "stopped") return { code: 1, stderr: "Error response from daemon: container abc is not running\n" }
+      if (a[0] === "exec" && state === "gone") return { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" }
       return { stdout: Buffer.from("ok\n") }
     })
-    const box = await TaskBox.start(f.exec, "t1", "C:/repo")
-    alive = false
+    const box = await TaskBox.start(f.exec, "t1", "C:/repo", scratch)
+    state = "stopped"
+    expect((await box.execute("echo ok")).output).toBe("ok\n")
+    state = "gone"
     const r = await box.execute("echo ok")
     expect(r).toMatchObject({ exitCode: 0 })
     expect(r.output).toBe(`${RESTARTED} ok\n`)
-    expect(f.calls.filter((c) => c[0] === "run")).toHaveLength(2)
-    alive = false
-    expect((await box.downloadFiles(["/workspace/a"]))[0].content).toEqual(new Uint8Array(Buffer.from("ok\n")))
-    // Once disposed, a gone container stays gone.
+    expect(RESTARTED).toMatch(/\/scratch was kept, anything installed is gone/)
+    // Once the task ended, a stopped container stays stopped.
     await box.dispose()
-    alive = false
-    expect((await box.execute("echo ok")).output).toMatch(/No such container/)
-    expect(f.calls.filter((c) => c[0] === "run")).toHaveLength(3)
+    state = "stopped"
+    expect((await box.execute("echo ok")).output).toMatch(/is not running/)
   })
 
-  it("reports a container that cannot be started again as the error it was", async () => {
+  it("reports a container that cannot be brought up again as the error it was", async () => {
     const f = fake((a) => (a[0] === "run" ? { code: 125, stderr: "no space" } : { code: 1, stderr: "Error response from daemon: No such container: x\n" }))
-    const box = new TaskBox(f.exec, "t1", async () => (await f.exec(["run"])).code === 0)
+    const box = new TaskBox(f.exec, "t1", async () => null)
     expect((await box.execute("ls")).output).toMatch(/No such container/)
   })
 })
@@ -251,7 +278,8 @@ describe.skipIf(!process.env.HFR_DOCKER)("TaskBox on Docker", () => {
     mkdirSync(join(src, "src"))
     writeFileSync(join(src, "src", "a.js"), "one\ntwo\n")
     const id = `smoke-${Date.now()}`
-    const box = await TaskBox.start(dockerExecBuffer, id, src)
+    const scratch = join(src, "..", `${id}-scratch`)
+    const box = await TaskBox.start(dockerExecBuffer, id, src, scratch)
     try {
       expect((await box.read("/workspace/src/a.js")).error).toBeUndefined()
       expect(JSON.stringify(await box.read("/workspace/src/a.js"))).toContain("two")
@@ -263,11 +291,19 @@ describe.skipIf(!process.env.HFR_DOCKER)("TaskBox on Docker", () => {
       expect((await box.write("/scratch/probe.sh", "echo probed")).error).toBeUndefined()
       expect((await box.execute("sh /scratch/probe.sh")).output.trim()).toBe("probed")
       expect((await box.write("/workspace/probe.sh", "x")).error).toBeDefined()
-      // removed from outside, it is started again with a fresh scratch, and the source is still there
-      await dockerExecBuffer(["rm", "-f", taskBoxName(id)])
-      expect((await box.execute("ls /scratch; cat /workspace/src/a.js")).output).toBe(`${RESTARTED} one\ntwo\n`)
-    } finally {
+      expect((await box.execute("apt-get --version >/dev/null && touch /usr/local/bin/installed && echo ok")).output.trim()).toBe("ok")
+      // stopped at the task's end and started on its reopen: scratch and installs both still there
       await box.dispose()
+      const reopened = await TaskBox.start(dockerExecBuffer, id, src, scratch)
+      expect(reopened.created).toBe(false)
+      expect((await reopened.execute("cat /scratch/probe.sh; ls /usr/local/bin/installed")).output).toBe("echo probed/usr/local/bin/installed\n")
+      // removed from outside: created again over the same scratch, the installs gone
+      await dockerExecBuffer(["rm", "-f", taskBoxName(id)])
+      expect((await reopened.execute("cat /scratch/probe.sh; ls /usr/local/bin/installed 2>/dev/null || echo none")).output).toBe(
+        `${RESTARTED} echo probednone\n`,
+      )
+    } finally {
+      await TaskBox.remove(dockerExecBuffer, id)
     }
   }, 60_000)
 })

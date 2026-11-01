@@ -1,17 +1,31 @@
 import { randomUUID } from "node:crypto"
-import { lstatSync, readdirSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
+import { getDb } from "../db"
 import type { EventLog } from "../events/log"
 import { identity, limitArgs, loginVolume, mountSource, SPECIALIST_IMAGE } from "./docker"
-import { OUTPUT_CAP, type ExecBuffer } from "./taskbox"
-import { addFiles, askDir, createWorkspace, discardWorkspace, type CopiedFile, type PreparedFile, type Workspace } from "./workspace"
+import { bringUp, OUTPUT_CAP, type ExecBuffer } from "./taskbox"
+import {
+  addFiles,
+  askDir,
+  createWorkspace,
+  discardWorkspace,
+  readManifest,
+  workspaceDirs,
+  type CopiedFile,
+  type PreparedFile,
+  type Workspace,
+} from "./workspace"
 
 /*
   The sandboxes the orchestrator creates for the specialist (adr:0016-let-the-orchestrator-run-the-specialists-sandbox,
   specs/specialist-sandbox): one long-lived root container per sandbox, with the limits the orchestrator chose,
   its workspace at /work, files copied in from the source folder or the orchestrator's scratch, commands run in it
   as root, delegations run in it one at a time, and its disk watched against its limit. One `SpecialistBoxes` per
-  task; every sandbox goes with the task.
+  task. A sandbox is recorded in the database and its folders live in the task's own, so it is stopped at the
+  task's end, brought up again when the task reopens, and created again over the same folders when Docker no
+  longer has it; only deleting the task removes it
+  (adr:0017-keep-a-tasks-conversation-containers-and-files-until-it-is-deleted, specs/task-persistence R3).
 */
 
 const MB = 1024 * 1024
@@ -39,6 +53,10 @@ export interface Box {
   /** why it was stopped, once it was */
   stopped: string | null
   timer: ReturnType<typeof setInterval> | null
+  /** the container runs in this process; false for one recorded by an earlier run of the task */
+  up: boolean
+  /** where the specialist keeps what it extracts and builds, bound at /root/out */
+  outDir: string
 }
 
 /** A call the orchestrator made that the sandbox service refuses; its message goes back to the orchestrator. */
@@ -55,14 +73,14 @@ export function sandboxName(id: string): string {
 
 /**
   `docker run` for a sandbox (R1.1–R1.3): root with the install capabilities and a writable root, Docker's default
-  network, the login volume, and only its workspace, run directory and ask channel bound; never privileged, never
-  the Docker socket. `/tmp` is no tmpfs, so what is written there counts toward the disk.
+  network, the login volume, and only its workspace, run directory, ask channel and output folder bound; never
+  privileged, never the Docker socket. `/tmp` is no tmpfs, so what is written there counts toward the disk. Kept
+  when stopped (specs/task-persistence R3.4).
 */
-export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits): string[] {
+export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits, outDir: string): string[] {
   return [
     "run",
     "-d",
-    "--rm",
     "--name",
     name,
     "--hostname",
@@ -78,6 +96,8 @@ export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits): str
     `type=bind,source=${mountSource(ws.runDir)},target=/run/hfr,readonly`,
     "--mount",
     `type=bind,source=${mountSource(askDir(ws.runDir))},target=/run/hfr-ask`,
+    "--mount",
+    `type=bind,source=${mountSource(outDir)},target=/root/out`,
     "-w",
     "/work",
     "--entrypoint",
@@ -131,57 +151,76 @@ const lastLine = (s: string) => s.trim().split("\n").pop()?.trim() ?? ""
 export interface BoxesDeps {
   exec: ExecBuffer
   log: EventLog
-  dataDir: string
+  /** the task's own folder, where each sandbox's folders live (specs/task-persistence R3.1) */
+  taskDir: string
   sourceRoot: string
   taskId: string
-  /** whether a destroyed sandbox's workspace, run directory and snapshot are deleted */
-  discard(): boolean
   everyMs?: number
 }
+
+/** A sandbox created again over its folders after Docker lost it: what the orchestrator is told. */
+export const recreated = (id: string) => `[Sandbox ${id} was created again: /work and /root/out were kept, anything installed is gone.]`
 
 export class SpecialistBoxes {
   private readonly boxes = new Map<string, Box>()
   private readonly d: BoxesDeps
-  /** the task ended: a sandbox still starting is removed rather than kept */
-  private disposed = false
+  /** the task ended: a sandbox still starting is stopped rather than kept running */
+  private ended = false
 
+  /** The task's sandboxes, those an earlier run of it recorded included (R3.6). */
   constructor(deps: BoxesDeps) {
     this.d = deps
+    for (const r of getDb().prepare("SELECT id, limits FROM sandboxes WHERE task_id = ? ORDER BY created_at").all(deps.taskId) as Record<string, unknown>[]) {
+      const id = String(r.id)
+      const ws: Workspace = { id, ...workspaceDirs(deps.taskDir, id), files: [] }
+      if (!existsSync(ws.workspace)) continue
+      for (const [path, sha256] of Object.entries(readManifest(ws.snapshot))) ws.files.push({ path, sha256, size: 0 })
+      this.boxes.set(id, this.box(id, ws, JSON.parse(String(r.limits)) as BoxLimits, false))
+    }
+  }
+
+  private box(id: string, ws: Workspace, limits: BoxLimits, up: boolean): Box {
+    return { id, name: sandboxName(id), ws, limits, busy: false, stopped: null, timer: null, up, outDir: join(this.d.taskDir, "outputs", id) }
   }
 
   private event(kind: string, summary: string, payload: Record<string, unknown>) {
     this.d.log.append({ taskId: this.d.taskId, agent: "sandbox", kind, summary, payload })
   }
 
+  /** Only a disk limit is watched; without one the sandbox takes what Docker has (R1.5). */
+  private watch(box: Box) {
+    if (box.limits.diskMb === undefined || box.timer) return
+    box.timer = setInterval(() => void this.checkDisk(box).catch(() => undefined), this.d.everyMs ?? DISK_EVERY_MS)
+    box.timer.unref?.()
+  }
+
   /** Start a sandbox with the orchestrator's limits; Docker's refusal comes back as the error, leaving nothing (R1.1, R1.4). */
   async create(limits: BoxLimits): Promise<Box> {
     const id = randomUUID()
-    const name = sandboxName(id)
-    const ws = createWorkspace(this.d.dataDir, id)
+    const ws = createWorkspace(this.d.taskDir, id)
+    const box = this.box(id, ws, limits, true)
+    mkdirSync(box.outDir, { recursive: true })
+    const forget = () => {
+      discardWorkspace(this.d.taskDir, id)
+      rmSync(box.outDir, { recursive: true, force: true })
+    }
     let args: string[]
     try {
-      args = sandboxArgs(name, ws, limits)
+      args = sandboxArgs(box.name, ws, limits, box.outDir)
     } catch (e) {
-      discardWorkspace(this.d.dataDir, id)
+      forget()
       throw new SandboxError((e as Error).message)
     }
     const r = await this.d.exec(args)
-    if (r.code !== 0) {
-      await this.d.exec(["rm", "-f", name])
-      discardWorkspace(this.d.dataDir, id)
-      throw new SandboxError(`Docker did not start the sandbox: ${lastLine(r.stderr) || `exit ${r.code}`}`)
+    if (r.code !== 0 || this.ended) {
+      await this.d.exec(["rm", "-f", box.name])
+      forget()
+      throw new SandboxError(
+        r.code !== 0 ? `Docker did not start the sandbox: ${lastLine(r.stderr) || `exit ${r.code}`}` : "The task ended while the sandbox was starting.",
+      )
     }
-    if (this.disposed) {
-      await this.d.exec(["rm", "-f", name])
-      discardWorkspace(this.d.dataDir, id)
-      throw new SandboxError("The task ended while the sandbox was starting.")
-    }
-    const box: Box = { id, name, ws, limits, busy: false, stopped: null, timer: null }
-    // Only a disk limit is watched; without one the sandbox takes what Docker has (R1.5).
-    if (limits.diskMb !== undefined) {
-      box.timer = setInterval(() => void this.checkDisk(box).catch(() => undefined), this.d.everyMs ?? DISK_EVERY_MS)
-      box.timer.unref?.()
-    }
+    getDb().prepare("INSERT INTO sandboxes (id, task_id, limits, created_at) VALUES (?, ?, ?, ?)").run(id, this.d.taskId, JSON.stringify(limits), Date.now())
+    this.watch(box)
     this.boxes.set(id, box)
     this.event("sandbox.created", `Created sandbox ${id}: ${describeLimits(limits)}`, { sandbox: id, ...limits })
     return box
@@ -195,29 +234,50 @@ export class SpecialistBoxes {
     return box
   }
 
-  /** Copy files from the source folder and the scratch into /work, all or none, within the disk left (R2.1–R2.3). */
-  async copy(id: string, requested: string[], prepared: PreparedFile[]): Promise<CopiedFile[]> {
+  /**
+    The sandbox, running: one recorded by an earlier run of the task is started, or created again over its folders
+    when Docker no longer has it (specs/task-persistence R3.5); the notice says what the orchestrator lost.
+  */
+  async open(id: string): Promise<{ box: Box; notice: string }> {
     const box = this.usable(id)
+    if (box.up) return { box, notice: "" }
+    let created: boolean
+    try {
+      mkdirSync(box.outDir, { recursive: true })
+      ;({ created } = await bringUp(this.d.exec, box.name, sandboxArgs(box.name, box.ws, box.limits, box.outDir)))
+    } catch (e) {
+      throw new SandboxError(`Sandbox ${id} could not be brought up again: ${(e as Error).message}`)
+    }
+    box.up = true
+    this.watch(box)
+    this.event("sandbox.reopened", created ? `Created sandbox ${id} again over its folders` : `Started sandbox ${id} again`, { sandbox: id, created })
+    return { box, notice: created ? recreated(id) : "" }
+  }
+
+  /** Copy files from the source folder and the scratch into /work, all or none, within the disk left (R2.1–R2.3). */
+  async copy(id: string, requested: string[], prepared: PreparedFile[]): Promise<CopiedFile[] & { notice?: string }> {
+    const { box, notice } = await this.open(id)
     const disk = box.limits.diskMb
     const used = disk === undefined ? 0 : await this.usage(box)
     // A size that cannot be told does not block a copy; the watch stops the sandbox if it passes the limit.
     const left = disk === undefined ? Infinity : Math.max(0, disk * MB - (used ?? 0))
-    const files = addFiles(box.ws, this.d.sourceRoot, requested, prepared, left, `${disk} MB disk limit of sandbox ${id}`)
+    const files: CopiedFile[] & { notice?: string } = addFiles(box.ws, this.d.sourceRoot, requested, prepared, left, `${disk} MB disk limit of sandbox ${id}`)
     this.event("sandbox.copy", `Copied ${files.length} file(s) into sandbox ${id}`, {
       sandbox: id,
       files: files.map((f) => ({ path: f.path, op: "copy" })),
       sha256: Object.fromEntries(files.map((f) => [f.path, f.sha256])),
     })
     await this.checkDisk(box)
+    if (notice) files.notice = notice
     return files
   }
 
   /** Run a command as root in /work, stopped at its time limit, its output capped (R2.4). */
   async run(id: string, command: string, timeoutS = COMMAND_DEFAULT_S): Promise<{ output: string; exitCode: number; truncated: boolean }> {
-    const box = this.usable(id)
+    const { box, notice } = await this.open(id)
     const limit = Math.min(Math.max(1, Math.floor(timeoutS)), COMMAND_MAX_S)
     const r = await this.d.exec(["exec", "-w", "/work", box.name, "timeout", "-s", "KILL", String(limit), "sh", "-c", command], (limit + 10) * 1000)
-    let output = r.stdout.toString("utf8") + r.stderr
+    let output = (notice ? `${notice} ` : "") + r.stdout.toString("utf8") + r.stderr
     const truncated = r.overflow === true || output.length > OUTPUT_CAP
     if (truncated) output = output.slice(0, OUTPUT_CAP)
     this.event("sandbox.exec", `Ran in sandbox ${id}: ${command.slice(0, 120)}`, { sandbox: id, command, exitCode: r.code, output: output.slice(0, 4000) })
@@ -237,22 +297,29 @@ export class SpecialistBoxes {
   /** Measure the disk and stop the sandbox past its limit (R3.2, R3.3); a stopped sandbox is not measured again. */
   async checkDisk(box: Box): Promise<void> {
     const disk = box.limits.diskMb
-    if (disk === undefined || box.stopped || !this.boxes.has(box.id)) return
+    if (disk === undefined || box.stopped || !box.up || !this.boxes.has(box.id)) return
     const used = await this.usage(box)
     // Destroyed while measured, or not measurable this time: the next check decides.
     if (used === null || used <= disk * MB || box.stopped || !this.boxes.has(box.id)) return
     const usedMb = Math.ceil(used / MB)
     box.stopped = `it used ${usedMb} MB of disk, past its ${disk} MB limit`
     if (box.timer) clearInterval(box.timer)
+    box.timer = null
     await this.d.exec(["kill", box.name])
     this.event("sandbox.stopped", `Stopped sandbox ${box.id}: ${box.stopped}`, { sandbox: box.id, usedMb, diskMb: box.limits.diskMb })
   }
 
-  /** Hold the sandbox for one delegation; refused while another runs in it (specs/specialist-sandbox R4.2). */
-  hold(id: string): { box: Box; release: () => Promise<void> } {
+  /** Hold the sandbox, running, for one delegation; refused while another runs in it (specs/specialist-sandbox R4.2). */
+  async hold(id: string): Promise<{ box: Box; release: () => Promise<void> }> {
     const box = this.usable(id)
     if (box.busy) throw new SandboxError(`Sandbox ${id} is already running a delegation; wait for it to end.`)
     box.busy = true
+    try {
+      await this.open(id)
+    } catch (e) {
+      box.busy = false
+      throw e
+    }
     let released = false
     return {
       box,
@@ -267,35 +334,55 @@ export class SpecialistBoxes {
   }
 
   /**
-    Remove the sandbox's container and, when discarding, its workspace, run directory and snapshot (R2.5). The
-    orchestrator cannot remove one a delegation runs in; the task's end can.
+    Remove the sandbox's container and its record, keeping its folders for the task (R2.5, specs/task-persistence
+    R4.3). The orchestrator cannot remove one a delegation runs in.
   */
-  async destroy(id: string, force = false): Promise<void> {
+  async destroy(id: string): Promise<void> {
     const box = this.boxes.get(id)
     if (!box) throw new SandboxError(`There is no sandbox ${id} in this task.`)
-    if (box.busy && !force) throw new SandboxError(`Sandbox ${id} is running a delegation; destroy it once the delegation ends.`)
-    this.boxes.delete(id)
-    if (box.timer) clearInterval(box.timer)
+    if (box.busy) throw new SandboxError(`Sandbox ${id} is running a delegation; destroy it once the delegation ends.`)
+    this.forget(box)
     await this.d.exec(["rm", "-f", box.name])
-    if (this.d.discard()) discardWorkspace(this.d.dataDir, id)
+    getDb().prepare("DELETE FROM sandboxes WHERE id = ?").run(id)
     this.event("sandbox.destroyed", `Destroyed sandbox ${id}`, { sandbox: id })
   }
 
-  /** Every sandbox of the task, when it ends (R2.6). */
-  async disposeAll(): Promise<void> {
-    this.disposed = true
-    await Promise.allSettled([...this.boxes.keys()].map((id) => this.destroy(id, true)))
+  private forget(box: Box) {
+    this.boxes.delete(box.id)
+    if (box.timer) clearInterval(box.timer)
+    box.timer = null
+  }
+
+  /** Stop every running sandbox of the task, keeping it, its record and its folders (R2.6, specs/task-persistence R3.4). */
+  async stopAll(): Promise<void> {
+    this.ended = true
+    const up = [...this.boxes.values()].filter((b) => b.up)
+    for (const box of up) {
+      if (box.timer) clearInterval(box.timer)
+      box.timer = null
+      box.up = false
+    }
+    if (up.length) await this.d.exec(["stop", "-t", "2", ...up.map((b) => b.name)])
+  }
+
+  /** Remove every container of a task being deleted, recorded by this run or an earlier one (specs/task-persistence R4.1). */
+  async removeAll(): Promise<void> {
+    this.ended = true
+    const all = [...this.boxes.values()]
+    for (const box of all) this.forget(box)
+    if (all.length) await this.d.exec(["rm", "-f", ...all.map((b) => b.name)])
+    getDb().prepare("DELETE FROM sandboxes WHERE task_id = ?").run(this.d.taskId)
   }
 
   ids(): string[] {
     return [...this.boxes.keys()]
   }
 
-  /** Remove every sandbox a previous run of the app left behind (R2.7). */
+  /** Stop, and keep, every sandbox a previous run of the app left running (R2.7, specs/task-persistence R3.4). */
   static async sweep(exec: ExecBuffer): Promise<number> {
-    const r = await exec(["ps", "-aq", "--filter", "name=^hfr-sbx-"])
+    const r = await exec(["ps", "-q", "--filter", "name=^hfr-sbx-"])
     const ids = r.code === 0 ? r.stdout.toString("utf8").split(/\s+/).filter(Boolean) : []
-    if (ids.length) await exec(["rm", "-f", ...ids])
+    if (ids.length) await exec(["stop", "-t", "2", ...ids])
     return ids.length
   }
 }

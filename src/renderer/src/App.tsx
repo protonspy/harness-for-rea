@@ -63,7 +63,7 @@ export function App() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         {view.kind === "new" && <NewTask onStarted={(t) => open(t.id)} onSettings={() => setView({ kind: "settings" })} />}
         {view.kind === "settings" && <SettingsView />}
-        {view.kind === "task" && <TaskView key={view.id} id={view.id} onOpen={open} />}
+        {view.kind === "task" && <TaskView key={view.id} id={view.id} onOpen={open} onDeleted={() => setView({ kind: "new" })} />}
       </main>
     </div>
   )

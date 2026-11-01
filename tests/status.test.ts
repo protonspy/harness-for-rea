@@ -19,7 +19,7 @@ describe("settings (R1.1)", () => {
   it("returns the defaults until changed, then merges each change", () => {
     expect(getSettings()).toEqual(DEFAULT_SETTINGS)
     saveSettings({ model: "z-ai/glm-5.3-flash" })
-    expect(saveSettings({ discardOnCompletion: false })).toEqual({ ...DEFAULT_SETTINGS, model: "z-ai/glm-5.3-flash", discardOnCompletion: false })
+    expect(saveSettings({ timeoutMinutes: 7 })).toEqual({ ...DEFAULT_SETTINGS, model: "z-ai/glm-5.3-flash", timeoutMinutes: 7 })
   })
 })
 

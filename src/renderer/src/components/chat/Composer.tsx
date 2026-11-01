@@ -4,7 +4,7 @@ import type { TaskState } from "@shared/types"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { canSend, canStop, turnLabel } from "@/lib/chat"
+import { canContinue, canSend, canStop, turnLabel } from "@/lib/chat"
 import { cn } from "@/lib/cn"
 
 /*
@@ -65,7 +65,7 @@ export function Composer({
               <TooltipContent>Stop the turn. The conversation stays open and the turn can be continued.</TooltipContent>
             </Tooltip>
           )}
-          {state === "stopped" && (
+          {canContinue(state) && (
             <Button size="sm" variant="default" onClick={onContinue}>
               <Play size={13} /> Continue
             </Button>

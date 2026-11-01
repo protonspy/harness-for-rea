@@ -4,6 +4,8 @@ import type { EventRow, StepRow } from "../src/shared/types"
 import {
   blocks,
   canClose,
+  canContinue,
+  canDelete,
   canSend,
   canStop,
   conversation,
@@ -162,9 +164,14 @@ describe("the conversation the chat renders (R7.1–R7.5)", () => {
     }
   })
 
-  it("keeps the message box open while the conversation is, and offers stop and close by state", () => {
+  it("keeps the message box open in every state, an ended task reopening on a message, and offers stop, continue, close and delete by state", () => {
     expect((["running", "waiting", "awaiting-user", "stopped"] as const).every(canSend)).toBe(true)
-    expect((["done", "failed", "cancelled", "interrupted"] as const).some(canSend)).toBe(false)
+    // specs/task-persistence R2.1, R2.2, R4.2
+    expect((["done", "failed", "cancelled", "interrupted"] as const).every(canSend)).toBe(true)
+    expect((["stopped", "done", "failed", "cancelled", "interrupted"] as const).every(canContinue)).toBe(true)
+    expect((["running", "waiting", "pending", "awaiting-user"] as const).some(canContinue)).toBe(false)
+    expect((["running", "waiting", "pending"] as const).some(canDelete)).toBe(false)
+    expect((["awaiting-user", "stopped", "done", "cancelled", "failed", "interrupted"] as const).every(canDelete)).toBe(true)
     expect([canStop("running"), canStop("waiting"), canStop("awaiting-user"), canStop("stopped")]).toEqual([true, true, false, false])
     expect([canClose("awaiting-user"), canClose("stopped"), canClose("running")]).toEqual([true, true, false])
   })
@@ -201,6 +208,6 @@ describe("the conversation the chat renders (R7.1–R7.5)", () => {
     expect(turnLabel("waiting", 1)).toBe("Waiting for you: 1 decision.")
     expect(turnLabel("stopped", 0)).toMatch(/^Stopped/)
     expect(turnLabel("running", 0)).toMatch(/before its next step/)
-    expect(turnLabel("done", 0)).toMatch(/closed/)
+    expect(turnLabel("done", 0)).toMatch(/Ended\. Its history and files are kept/)
   })
 })

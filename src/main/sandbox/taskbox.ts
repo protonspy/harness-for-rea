@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { mkdirSync } from "node:fs"
 import { posix } from "node:path"
 import { BaseSandbox } from "deepagents"
 import { identity, mountSource, SPECIALIST_IMAGE } from "./docker"
@@ -8,9 +9,10 @@ import { identity, mountSource, SPECIALIST_IMAGE } from "./docker"
   the source folder bind-mounted read-only at /workspace, full internet access
   (adr:0013-give-the-sandboxes-full-internet-access), confined like the specialist's.
   DeepAgents reaches it as a sandbox backend, so its file tools and `execute` all run there through
-  `docker exec`, and no tool of the orchestrator writes the user's files. Its one writable place is
-  /scratch, a tmpfs gone with the container, where it writes and runs its own code
-  (adr:0009-give-the-orchestrator-a-writable-scratch, specs/chat R6.3).
+  `docker exec`, and no tool of the orchestrator writes the user's files. It writes and runs its own code in
+  /scratch (adr:0009-give-the-orchestrator-a-writable-scratch, specs/chat R6.3), bound from the task's own
+  folder, and the container is stopped rather than removed when the task ends, so both outlive it until the
+  task is deleted (adr:0017-keep-a-tasks-conversation-containers-and-files-until-it-is-deleted).
 */
 
 export const WORKSPACE = "/workspace"
@@ -78,63 +80,94 @@ export function taskBoxName(taskId: string): string {
   process or size limit: /scratch and /tmp are folders on the writable root, on Docker's disk rather than in memory
   (specs/specialist-sandbox R6.1, R6.2).
 */
-export function taskBoxArgs(taskId: string, sourceRoot: string): string[] {
+export function taskBoxArgs(taskId: string, sourceRoot: string, scratchDir: string): string[] {
   return [
     "run",
     "-d",
-    "--rm",
     "--name",
     taskBoxName(taskId),
     "--hostname",
     "workspace",
+    // a PID 1 that reaps what `docker exec` and `timeout` leave behind
+    "--init",
     // Root with what apt, dpkg, pip and npm need, and nothing else: no NET_RAW, MKNOD or SYS_CHROOT.
     ...identity(true),
     "--mount",
     `type=bind,source=${mountSource(sourceRoot)},target=${WORKSPACE},readonly,bind-propagation=rprivate,bind-recursive=readonly`,
+    "--mount",
+    `type=bind,source=${mountSource(scratchDir)},target=${SCRATCH}`,
     "-w",
     WORKSPACE,
     "--entrypoint",
-    "sh",
+    "sleep",
     SPECIALIST_IMAGE,
-    "-c",
-    `mkdir -p ${SCRATCH} && exec sleep infinity`,
+    "infinity",
   ]
 }
 
-/** What the orchestrator reads once a container that went away was started again. */
-export const RESTARTED = "[The task's sandbox had stopped and was started again: /scratch and anything installed were reset.]"
+/** What the orchestrator reads once a container Docker had removed was created again. */
+export const RESTARTED = "[The task's sandbox was created again: /scratch was kept, anything installed is gone.]"
+
+const lastLine = (s: string) => s.trim().split("\n").pop() || ""
+
+/**
+  Bring the task's container up: start it when Docker still has it, stopped or running, or create it over the same
+  folders when not (specs/task-persistence R3.5). Returns whether it was created, or throws with Docker's reason.
+*/
+export async function bringUp(exec: ExecBuffer, name: string, args: string[]): Promise<{ created: boolean }> {
+  const started = await exec(["start", name])
+  if (started.code === 0) return { created: false }
+  if (!/No such container/i.test(started.stderr)) throw new Error(lastLine(started.stderr) || `exit ${started.code}`)
+  const r = await exec(args)
+  if (r.code !== 0) throw new Error(lastLine(r.stderr) || `exit ${r.code}`)
+  return { created: true }
+}
 
 export class TaskBox extends BaseSandbox {
   readonly id: string
   private readonly exec: ExecBuffer
-  /** starts the container again when it went away, if it can; true once it runs */
-  private readonly revive: () => Promise<boolean>
+  /** brings the container up again when it stopped or went away; whether it had to be created, or null when it could not */
+  private readonly revive: () => Promise<{ created: boolean } | null>
   private disposed = false
+  /** the container was created rather than started when the task opened: what was installed is gone */
+  created = false
 
-  constructor(exec: ExecBuffer, taskId: string, revive: () => Promise<boolean> = async () => false) {
+  constructor(exec: ExecBuffer, taskId: string, revive: () => Promise<{ created: boolean } | null> = async () => null) {
     super()
     this.exec = exec
     this.id = taskBoxName(taskId)
     this.revive = revive
   }
 
-  /** Start the task's container; throws with Docker's reason when it cannot. A container that goes away later is started again. */
-  static async start(exec: ExecBuffer, taskId: string, sourceRoot: string): Promise<TaskBox> {
-    const run = () => exec(taskBoxArgs(taskId, sourceRoot))
-    const r = await run()
-    if (r.code !== 0) throw new Error(`The task's sandbox did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
-    return new TaskBox(exec, taskId, async () => (await run()).code === 0)
+  /**
+    Bring the task's container up, started again when Docker still has it (specs/task-persistence R3.5); throws with
+    Docker's reason when it cannot. A container that stops or goes away later is brought up again.
+  */
+  static async start(exec: ExecBuffer, taskId: string, sourceRoot: string, scratchDir: string): Promise<TaskBox> {
+    mkdirSync(scratchDir, { recursive: true })
+    const up = () => bringUp(exec, taskBoxName(taskId), taskBoxArgs(taskId, sourceRoot, scratchDir))
+    let first: { created: boolean }
+    try {
+      first = await up()
+    } catch (e) {
+      throw new Error(`The task's sandbox did not start: ${(e as Error).message}`, { cause: e })
+    }
+    const box = new TaskBox(exec, taskId, () => up().catch(() => null))
+    box.created = first.created
+    return box
   }
 
   /**
-    One `docker exec` into the container. When the container is gone — removed by Docker, by a crash or by
-    another app's sweep — it is started again once and the call retried, so the task goes on with a fresh scratch.
+    One `docker exec` into the container. When the container stopped or is gone — stopped by the app's start, removed
+    by Docker or by a crash — it is brought up again once and the call retried; /scratch is the task's folder, so it
+    is still there.
   */
   private async inBox(args: string[], input?: Uint8Array): Promise<BufferResult & { restarted?: boolean }> {
     const r = await this.exec(args, undefined, input)
-    if (this.disposed || r.code === 0 || !/No such container/.test(r.stderr)) return r
-    if (!(await this.revive())) return r
-    return { ...(await this.exec(args, undefined, input)), restarted: true }
+    if (this.disposed || r.code === 0 || !/No such container|is not running/i.test(r.stderr)) return r
+    const up = await this.revive()
+    if (!up) return r
+    return { ...(await this.exec(args, undefined, input)), restarted: up.created }
   }
 
   async execute(command: string) {
@@ -171,15 +204,21 @@ export class TaskBox extends BaseSandbox {
 
   /** Remove every task container a previous run of the app left behind, e.g. after a crash. */
   static async sweep(exec: ExecBuffer): Promise<number> {
-    const r = await exec(["ps", "-aq", "--filter", "name=^hfr-orch-"])
+    // Running only: their tasks were interrupted, and a stopped container keeps what was installed in it.
+    const r = await exec(["ps", "-q", "--filter", "name=^hfr-orch-"])
     const ids = r.code === 0 ? r.stdout.toString("utf8").split(/\s+/).filter(Boolean) : []
-    if (ids.length) await exec(["rm", "-f", ...ids])
+    if (ids.length) await exec(["stop", "-t", "2", ...ids])
     return ids.length
   }
 
-  /** Remove the container; one already gone is not an error. */
+  /** Stop the container and keep it, with what was installed, for when the task reopens (specs/task-persistence R3.4). */
   async dispose(): Promise<void> {
     this.disposed = true
-    await this.exec(["rm", "-f", this.id])
+    await this.exec(["stop", "-t", "2", this.id])
+  }
+
+  /** Remove the container of a task being deleted; one already gone is not an error (R4.1). */
+  static async remove(exec: ExecBuffer, taskId: string): Promise<void> {
+    await exec(["rm", "-f", taskBoxName(taskId)])
   }
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { statSync } from "node:fs"
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages"
-import { Command, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph"
+import { Command, type BaseCheckpointSaver } from "@langchain/langgraph"
 import {
   ALWAYS_GATED,
   checkAnswer,
@@ -20,6 +20,8 @@ import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
 import type { SpecialistBoxes } from "../sandbox/specialistbox"
+import { RESTARTED } from "../sandbox/taskbox"
+import { SqliteSaver } from "./checkpoint"
 import { APPLY_PATCH, type ToolContext } from "./tools"
 
 /*
@@ -36,8 +38,11 @@ export interface TaskWorkspace {
   root: string
   /** the writable place for the agent's own code, when the backend has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
-  /** the sandboxes the orchestrator creates for the specialist, removed with the workspace (specs/specialist-sandbox R2.6) */
+  /** the sandboxes the orchestrator creates for the specialist, stopped with the workspace (specs/specialist-sandbox R2.6) */
   sandboxes?: SpecialistBoxes
+  /** the task's container had to be created again: what was installed in it is gone (specs/task-persistence R3.5) */
+  created?: boolean
+  /** stop the containers and keep them for when the task reopens (specs/task-persistence R3.4) */
   dispose(): Promise<void>
 }
 
@@ -45,12 +50,18 @@ export interface RunnerDeps extends DelegationDeps {
   apiKey(provider: ProviderId): string | null
   /** the task's sandbox for the orchestrator's tools (adr:0007-run-the-orchestrators-tools-in-a-task-container) */
   workspace(task: TaskRow): Promise<TaskWorkspace>
+  /** remove the containers of a task being deleted (specs/task-persistence R4.1) */
+  removeContainers?(task: TaskRow): Promise<void>
   checkpointer?: BaseCheckpointSaver
   /** how long a continued turn waits for the stopped one's stream to wind down (specs/chat R3.3) */
   stopGraceMs?: number
 }
 
 const STOP_GRACE_MS = 5000
+/** The states a task with no run in this process can be continued from (specs/task-persistence R2.1). */
+const REOPENABLE: TaskState[] = ["cancelled", "failed", "interrupted", "done", "awaiting-user", "stopped"]
+/** What the orchestrator reads when the user continues a task with nothing pending on its thread. */
+const CONTINUE = "Continue the task from where it stopped. Your files in /scratch and your sandboxes are as you left them."
 const STOPPED = "The user stopped the turn before deciding."
 const TIMED_OUT = "No decision came within the approval timeout, so the call was rejected."
 
@@ -112,7 +123,8 @@ export class TaskRunner {
 
   constructor(deps: RunnerDeps) {
     this.deps = deps
-    this.checkpointer = deps.checkpointer ?? new MemorySaver()
+    // The conversation outlives the process (specs/task-persistence R1).
+    this.checkpointer = deps.checkpointer ?? new SqliteSaver()
   }
 
   start(input: { request: string; sourceRoot: string; gated?: GateableTool[]; auto?: boolean }): TaskRow {
@@ -128,6 +140,33 @@ export class TaskRunner {
     if (!apiKey) throw new Error(`Set your ${PROVIDERS[settings.provider].label} API key in Settings first.`)
     const { log } = this.deps
     const task = log.createTask({ request: input.request, sourceRoot: input.sourceRoot, model: settings.model })
+    const auto = input.auto === true
+    const gated = auto ? [] : [...new Set<GateableTool>([ALWAYS_GATED, ...(input.gated ?? [])])]
+    const live = this.open(task, auto, gated, apiKey)
+    log.updateTask(task.id, { state: "running" })
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "task.started",
+      state: "running",
+      summary: "Task started",
+      payload: { input: task.request, model: task.model, gated, auto },
+    })
+    this.userMessage(task.id, task.request)
+    live.run = this.drive(task.id, { messages: [new HumanMessage(task.request)] }, live.callbacks)
+    return log.getTask(task.id)
+  }
+
+  /**
+    The live run of a task that exists: its model, tool context, workspace and agent on the task's thread. A new
+    task opens once; a cancelled, failed, interrupted or closed one opens again on the same thread
+    (specs/task-persistence R2).
+  */
+  private open(task: TaskRow, auto: boolean, gated: GateableTool[], key?: string): Live {
+    const { log } = this.deps
+    const settings = this.deps.settings()
+    const apiKey = key ?? this.deps.apiKey(settings.provider)
+    if (!apiKey) throw new Error(`Set your ${PROVIDERS[settings.provider].label} API key in Settings first.`)
     const abort = new AbortController()
     const model = makeModel({
       provider: settings.provider,
@@ -154,9 +193,7 @@ export class TaskRunner {
       signal: abort.signal,
       ask: (q, agent, stepId) => this.ask(task.id, q, agent, stepId),
     }
-    const auto = input.auto === true
     ctx.auto = auto
-    const gated = auto ? [] : [...new Set<GateableTool>([ALWAYS_GATED, ...(input.gated ?? [])])]
     const ready = this.deps.workspace(task).then((ws) => ({
       ws,
       agent: buildAgent({
@@ -233,18 +270,51 @@ export class TaskRunner {
       asked: 0,
     }
     this.live.set(task.id, live)
-    log.updateTask(task.id, { state: "running" })
-    log.append({
-      taskId: task.id,
-      agent: "orchestrator",
-      kind: "task.started",
-      state: "running",
-      summary: "Task started",
-      payload: { input: task.request, model: task.model, gated, auto },
-    })
-    this.userMessage(task.id, task.request)
-    live.run = this.drive(task.id, { messages: [new HumanMessage(task.request)] }, callbacks)
-    return log.getTask(task.id)
+    return live
+  }
+
+  /** The tool-call choice a task started with: every call without asking unless it was started with gates (specs/chat R4.1). */
+  private startedWith(taskId: string): { auto: boolean; gated: GateableTool[] } {
+    const started = this.deps.log.history(taskId).events.find((e) => e.kind === "task.started")
+    const auto = started?.payload.auto !== false
+    const gated = (started?.payload.gated as unknown[] | undefined)?.filter((g): g is GateableTool => (GATEABLE_TOOLS as readonly unknown[]).includes(g))
+    return { auto, gated: auto ? [] : [...new Set<GateableTool>([ALWAYS_GATED, ...(gated ?? [])])] }
+  }
+
+  /**
+    Open a task that has no run in this process again, on its thread (specs/task-persistence R1.2, R2): its
+    containers come up, and a container that had to be created again is reported to the orchestrator.
+  */
+  private reopen(taskId: string): Live {
+    const task = this.deps.log.getTask(taskId)
+    const { auto, gated } = this.startedWith(taskId)
+    const live = this.open(task, auto, gated)
+    live.ready.then(({ ws }) => ws.created && live.inbox.push(RESTARTED)).catch(() => undefined)
+    this.deps.log.append({ taskId, agent: "app", kind: "task.reopened", summary: "Task reopened where it stopped", payload: {} })
+    return live
+  }
+
+  /**
+    Continue a task from where it stopped (specs/task-persistence R2.1): a stopped turn of a live run, or a
+    cancelled, failed, interrupted or closed task opened again from its last checkpoint.
+  */
+  continueTask(taskId: string): TaskRow {
+    const task = this.deps.log.getTask(taskId)
+    const live = this.live.get(taskId)
+    if (live && task.state === "stopped") return this.continueTurn(taskId)
+    if (live) throw new Error(`The task is ${task.state}; it is still open.`)
+    if (!REOPENABLE.includes(task.state))
+      throw new Error(`The task is ${task.state}; only a stopped, cancelled, failed, interrupted or closed task can be continued.`)
+    const opened = this.reopen(taskId)
+    this.deps.log.updateTask(taskId, { state: "running", error: "" })
+    this.deps.log.append({ taskId, agent: "app", kind: "turn.continued", state: "running", summary: "You continued the task", payload: {} })
+    opened.run = (async () => {
+      const { agent } = await opened.ready
+      const snap = await (agent as unknown as { getState(c: unknown): Promise<{ next?: string[] }> }).getState({ configurable: { thread_id: taskId } })
+      // Null input resumes the thread's pending step; a thread with none left takes a nudge instead.
+      return this.drive(taskId, snap.next?.length ? null : { messages: [new HumanMessage(CONTINUE)] }, opened.callbacks)
+    })()
+    return this.deps.log.getTask(taskId)
   }
 
   /** The todo list as steps: one per todo, created once and updated as its status moves (R2.1). */
@@ -464,7 +534,15 @@ export class TaskRunner {
   sendMessage(taskId: string, message: string): TaskRow {
     const live = this.live.get(taskId)
     const task = this.deps.log.getTask(taskId)
-    if (!live) throw new Error("The conversation is closed; retry the task to start a new one.")
+    if (!live) {
+      if (!REOPENABLE.includes(task.state) && task.state !== "awaiting-user") throw new Error(`The task is ${task.state}.`)
+      const opened = this.reopen(taskId)
+      this.deps.log.updateTask(taskId, { state: "running", error: "" })
+      this.userMessage(taskId, message)
+      this.deps.log.append({ taskId, agent: "orchestrator", kind: "message.read", summary: "Read your message", payload: { output: message } })
+      opened.run = this.drive(taskId, { messages: [new HumanMessage(message)] }, opened.callbacks)
+      return this.deps.log.getTask(taskId)
+    }
     if (["pending", "running", "waiting"].includes(task.state)) {
       // The orchestrator reads it before its next model call; a running delegation never sees it (R2.1, R2.3).
       live.inbox.push(message)
@@ -670,9 +748,21 @@ export class TaskRunner {
     if (!["interrupted", "failed", "cancelled"].includes(t.state))
       throw new Error(`Only an interrupted, failed or cancelled task can be retried; this one is ${t.state}.`)
     // A task runs its calls without asking unless it was started with gates; one from before that choice existed runs without (specs/chat R4.1).
-    const started = this.deps.log.history(taskId).events.find((e) => e.kind === "task.started")
-    const gated = (started?.payload.gated as unknown[] | undefined)?.filter((g): g is GateableTool => (GATEABLE_TOOLS as readonly unknown[]).includes(g))
-    return this.start({ request: t.request, sourceRoot: t.sourceRoot, gated, auto: started?.payload.auto !== false })
+    const { auto, gated } = this.startedWith(taskId)
+    return this.start({ request: t.request, sourceRoot: t.sourceRoot, gated, auto })
+  }
+
+  /**
+    Delete a task and everything it kept (specs/task-persistence R4): refused while a turn runs; otherwise its
+    run ends, its containers go, then its conversation, patches, records and folder.
+  */
+  async remove(taskId: string): Promise<void> {
+    const task = this.deps.log.getTask(taskId)
+    if (["pending", "running", "waiting"].includes(task.state)) throw new Error(`The task is ${task.state}; cancel it before deleting it.`)
+    if (this.live.has(taskId)) await this.end(taskId)
+    await this.deps.removeContainers?.(task)
+    await this.checkpointer.deleteThread(taskId)
+    this.deps.log.deleteTask(taskId)
   }
 
   /** Settles when the task's current turn stops: at its end, at an approval pause, or awaiting the user. */

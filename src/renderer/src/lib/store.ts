@@ -34,6 +34,7 @@ export function fold(h: TaskHistory | null, p: Push): TaskHistory | null {
 
 /** The task list, newest first, with a pushed task added or replaced. */
 export function foldTasks(list: TaskRow[], p: Push): TaskRow[] {
+  if (p.type === "taskDeleted") return list.filter((t) => t.id !== p.id)
   if (p.type !== "task") return list
   return upsert(list, p.task, (a, b) => b.createdAt - a.createdAt)
 }

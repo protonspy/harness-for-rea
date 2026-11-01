@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { QUESTION_CAP } from "../src/shared/chat"
 import { DEFAULT_SETTINGS, PRESET_MODEL } from "../src/shared/defaults"
-import type { Settings } from "../src/shared/types"
-import { closeDb, openDb } from "../src/main/db"
+import type { Push, Settings } from "../src/shared/types"
+import { closeDb, getDb, openDb } from "../src/main/db"
 import { EventLog } from "../src/main/events/log"
 import { dockerLauncher, type Launcher } from "../src/main/delegation"
 import { claudeArgs } from "../src/main/sandbox/docker"
@@ -16,7 +16,7 @@ import { fallbackModels, usageOf } from "../src/main/orchestrator/model"
 import { systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
-import { SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
+import { RESTARTED, SCRATCH, TaskBox, WORKSPACE } from "../src/main/sandbox/taskbox"
 import { FilesystemBackend } from "deepagents"
 
 /*
@@ -245,7 +245,6 @@ describe("end to end (specs/orchestrator 3.2)", () => {
       "approval.resumed",
       "patch.approved",
       "patch.applied",
-      "sandbox.discarded",
       "turn.done",
     ])
       expect(k, want).toContain(want)
@@ -280,7 +279,9 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     expect(fake).toContain("/work/src/a.ts")
     expect(fake).not.toContain(root.replace(/\\/g, "\\\\"))
     expect(readFileSync(join(data, "tasks", task.id, "raw.jsonl"), "utf8")).toContain("specialist")
-    expect(existsSync(join(data, "workspace"))).toBe(true)
+    // the delegation's workspace is kept, under the task's own folder (specs/task-persistence R3.1, R3.7)
+    expect(readdirSync(join(data, "tasks", task.id, "workspace"))).toHaveLength(1)
+    expect(existsSync(join(data, "workspace"))).toBe(false)
   })
 
   it("records a rejection, leaves the files alone and carries on", async () => {
@@ -759,7 +760,13 @@ describe("the conversation (specs/chat R1)", () => {
     await new Promise((res) => setTimeout(res, 10))
     expect(r.isLive(task.id)).toBe(false)
     expect(disposed).toBe(1)
-    expect(() => r.sendMessage(task.id, "more")).toThrow(/closed/)
+    // a closed conversation reopens on the next message, on the same thread (specs/task-persistence R2.2)
+    script.push({ content: "Third answer." })
+    expect(r.sendMessage(task.id, "more").state).toBe("running")
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "Third answer." })
+    expect(JSON.stringify(requests.at(-1)!.messages)).toContain("Second answer.")
+    expect(kinds(task.id)).toContain("task.reopened")
   })
 
   it("records each user and agent message in order with the task's other events (R1.3)", async () => {
@@ -871,7 +878,7 @@ describe("stop and continue (specs/chat R3)", () => {
 
     fakeMode = "answer"
     script = [{ content: "Resumed." }]
-    expect(r.continueTurn(task.id).state).toBe("running")
+    expect(r.continueTask(task.id).state).toBe("running")
     await r.settled(task.id)
     expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "Resumed." })
     // the interrupted delegation ran again from the checkpoint; the first model call did not
@@ -1410,12 +1417,12 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
       settings: () => settings,
       apiKey: () => "sk-or-v1-testkey000000",
       workspace: async (task) => {
-        sandboxes = new SpecialistBoxes({ exec, log, dataDir: data, sourceRoot: root, taskId: task.id, discard: () => true, everyMs: 60_000 })
+        sandboxes = new SpecialistBoxes({ exec, log, taskDir: log.taskDir(task.id), sourceRoot: root, taskId: task.id, everyMs: 60_000 })
         return {
           backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
           root: "/",
           sandboxes,
-          dispose: () => sandboxes.disposeAll(),
+          dispose: () => sandboxes.stopAll(),
         }
       },
     })
@@ -1539,7 +1546,7 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
     expect(JSON.stringify(requests.at(-1)!.messages)).not.toContain("LEAKEDTOKEN123456")
   })
 
-  it("removes every sandbox when the task ends (R2.6)", async () => {
+  it("stops, and keeps, every sandbox when the task ends (R2.6, specs/task-persistence R3.4)", async () => {
     script = [{ tool_calls: [{ name: "sandbox_create", args: { cpus: 1, memoryMb: 512, diskMb: 100 } }] }, { content: "done" }]
     const r = sandboxRunner()
     const task = r.start({ request: "x", sourceRoot: root })
@@ -1548,7 +1555,8 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
     // the workspace and its sandboxes go down after the close returns
     await new Promise((res) => setTimeout(res, 50))
     const name = dockerCalls.find((c) => c[0] === "run")![dockerCalls.find((c) => c[0] === "run")!.indexOf("--name") + 1]
-    expect(dockerCalls).toContainEqual(["rm", "-f", name])
+    expect(dockerCalls).toContainEqual(["stop", "-t", "2", name])
+    expect(dockerCalls.some((c) => c[0] === "rm")).toBe(false)
   })
 
   it("instructs the orchestrator to prepare sandboxes and leave extraction and analysis to the specialist (R5.2)", () => {
@@ -1560,5 +1568,130 @@ describe("the specialist's sandboxes (specs/specialist-sandbox R5, R2.6)", () =>
     )
     expect(p).toMatch(/The analysis itself stays with the specialist: do not dump, parse or interpret the target to reach conclusions yourself/)
     expect(p).toContain("sandbox_destroy")
+  })
+})
+
+describe("a task kept until it is deleted (specs/task-persistence)", () => {
+  const said = (body: Body) => JSON.stringify(body.messages)
+
+  it("continues a cancelled task from where it stopped, with its history (R2.1)", async () => {
+    fakeMode = "hang"
+    script = [{ tool_calls: [{ ...delegateModify, args: { ...delegateModify.args, mode: "read" } }] }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 100 && !kinds(task.id).includes("specialist.init"); i++) await new Promise((res) => setTimeout(res, 50))
+    r.cancel(task.id)
+    await r.settled(task.id)
+    expect(log.getTask(task.id).state).toBe("cancelled")
+    await new Promise((res) => setTimeout(res, 20))
+    // the workspace is stopped, not removed, at the end
+    expect(disposed).toBe(1)
+
+    fakeMode = "answer"
+    script = [{ content: "Picked up again." }]
+    expect(r.continueTask(task.id).state).toBe("running")
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "Picked up again." })
+    // the model saw the whole conversation so far, and the nudge to continue
+    const last = said(requests.at(-1)!)
+    expect(last).toContain("PINEAPPLE-42")
+    expect(last).toContain("delegate_to_specialist")
+    expect(kinds(task.id)).toEqual(expect.arrayContaining(["task.reopened", "turn.continued"]))
+  })
+
+  it("continues a conversation after the app restarts, from the database (R1.2, R2.2, R2.3)", async () => {
+    script = [{ content: "First answer." }]
+    const before = runner()
+    const task = before.start({ request: REQUEST, sourceRoot: root })
+    await before.settled(task.id)
+    await before.stopAll()
+    // the app quits and starts again: a fresh runner and checkpointer on the same database
+    closeDb()
+    openDb(join(data, "hfr.db"))
+    log = new EventLog(data)
+    log.recover()
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+    script = [{ content: "Second answer." }]
+    const after = runner()
+    expect(after.isLive(task.id)).toBe(false)
+    after.sendMessage(task.id, "And b.ts?")
+    await after.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "Second answer." })
+    const last = said(requests.at(-1)!)
+    expect(last).toContain("PINEAPPLE-42")
+    expect(last).toContain("First answer.")
+    expect(last).toContain("And b.ts?")
+  })
+
+  it("continues an interrupted task after a restart, and tells the orchestrator when its container was created again (R3.5)", async () => {
+    script = [{ content: "First answer." }]
+    const before = runner()
+    const task = before.start({ request: REQUEST, sourceRoot: root })
+    await before.settled(task.id)
+    log.updateTask(task.id, { state: "interrupted" })
+    await before.stopAll()
+    script = [{ content: "Resumed." }]
+    const after = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({
+        backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
+        root: "/",
+        created: true,
+        dispose: async () => undefined,
+      }),
+    })
+    after.continueTask(task.id)
+    await after.settled(task.id)
+    expect(log.getTask(task.id).result).toBe("Resumed.")
+    expect(said(requests.at(-1)!)).toContain(RESTARTED)
+  })
+
+  it("deletes a task with its conversation, records, patches, folder and containers, refusing a running one (R4)", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast, { content: "Done." }]
+    const removed: string[] = []
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+      removeContainers: async (t) => void removed.push(t.id),
+    })
+    const pushed: Push[] = []
+    log.setPush((p) => pushed.push(p))
+    const task = r.start({ request: REQUEST, sourceRoot: root, auto: true })
+    await expect(r.remove(task.id)).rejects.toThrow(/cancel it before deleting it/)
+    await r.settled(task.id)
+    const patchId = log.history(task.id).patches[0].id
+    expect(existsSync(join(data, "patches", patchId))).toBe(true)
+    expect(existsSync(log.taskDir(task.id))).toBe(true)
+    await r.remove(task.id)
+    expect(removed).toEqual([task.id])
+    expect(() => log.getTask(task.id)).toThrow(/No task/)
+    expect(existsSync(log.taskDir(task.id))).toBe(false)
+    expect(existsSync(join(data, "patches", patchId))).toBe(false)
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM checkpoints WHERE thread_id = ?").get(task.id) as { n: number }).n).toBe(0)
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = ?").get(task.id) as { n: number }).n).toBe(0)
+    // the rest of the app forgets it too
+    expect(pushed.some((p) => p.type === "taskDeleted" && p.id === task.id)).toBe(true)
+  })
+
+  it("keeps a rejected patch until the task is deleted (R4.3)", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast, { content: "Done." }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 200 && log.getTask(task.id).state !== "waiting"; i++) await new Promise((res) => setTimeout(res, 20))
+    const patchId = log.history(task.id).patches[0].id
+    r.decide(task.id, patchId, "reject")
+    await r.settled(task.id)
+    expect(log.getPatch(patchId).state).toBe("rejected")
+    expect(existsSync(join(data, "patches", patchId))).toBe(true)
   })
 })

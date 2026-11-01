@@ -35,7 +35,6 @@ const SettingsPatch = z
       .trim()
       .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
     timeoutMinutes: z.number().int().min(1).max(240),
-    discardOnCompletion: z.boolean(),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
@@ -77,6 +76,7 @@ export const API_SCHEMAS = {
   stopTurn: z.tuple([id]),
   continueTurn: z.tuple([id]),
   closeTask: z.tuple([id]),
+  deleteTask: z.tuple([id]),
   decideTool: z.tuple([id, id, DecisionSchema]),
   answerQuestion: z.tuple([id, id, AnswerSchema]),
 } as const
@@ -110,6 +110,7 @@ export interface ApiResults {
   stopTurn: TaskRow
   continueTurn: TaskRow
   closeTask: TaskRow
+  deleteTask: boolean
   decideTool: TaskRow
   answerQuestion: TaskRow
 }
