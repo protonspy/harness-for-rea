@@ -1,4 +1,4 @@
-import { join } from "node:path"
+import { existsSync } from "node:fs"
 import { createCliRenderer } from "@opentui/core"
 import { API_METHODS, type Api } from "../../src/shared/api"
 import type { Push } from "../../src/shared/types"
@@ -6,7 +6,9 @@ import { startCore } from "../../src/main/core"
 import { makeDispatcher } from "../../src/main/ipc"
 import { DataFolderBusy, defaultDataDir } from "../../src/main/lock"
 import { App } from "./app"
+import pkg from "../../package.json"
 import { keychainKeyStore } from "./keys"
+import { answerFlags, sandboxDirFor } from "./paths"
 
 /*
   The TUI's entry (specs/tui R1): the core the desktop app runs, on its data folder, with the keys in the OS
@@ -17,9 +19,17 @@ import { keychainKeyStore } from "./keys"
 /** The TUI's own origin for the dispatcher's page check. */
 const PAGE = "tui://local/"
 
-/** The sandbox sources: next to the package's bundle, or the repository's when run from source. */
-function sandboxDir(): string {
-  return process.env.HFR_SANDBOX_DIR ?? join(import.meta.dir, "..", "..", "sandbox")
+// Flags are answered before the core starts, so `--version` works where the data folder is taken (specs/release R1.4).
+const flags = answerFlags(process.argv.slice(2), pkg.version)
+if (flags !== null) {
+  console.log(flags)
+  process.exit(0)
+}
+
+const sandboxDir = sandboxDirFor({ env: process.env, execPath: process.execPath, moduleDir: import.meta.dir, exists: existsSync })
+if (!sandboxDir) {
+  console.error("The sandbox sources (specialist/Dockerfile) were not found; set HFR_SANDBOX_DIR to the folder holding them.")
+  process.exit(1)
 }
 
 let app: App | null = null
@@ -30,7 +40,7 @@ try {
   core = await startCore({
     app: "tui",
     dataDir: process.env.HFR_DATA_DIR ?? defaultDataDir(),
-    sandboxDir: sandboxDir(),
+    sandboxDir,
     push: (p) => (app ? app.onPush(p) : pending.push(p)),
     keys: keychainKeyStore(),
   })

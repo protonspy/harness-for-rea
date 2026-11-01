@@ -11,3 +11,5 @@ plans
 .codegraph
 CLAUDE.md
 *.md
+tui/dist
+tui/sandbox

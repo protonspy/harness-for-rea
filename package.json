@@ -18,7 +18,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dist": "electron-vite build && electron-builder --win",
-    "tui": "bun tui/src/main.ts"
+    "tui": "bun tui/src/main.ts",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "cli:package": "bun scripts/build-cli.ts package",
+    "cli:binary": "bun scripts/build-cli.ts binary"
   },
   "devDependencies": {
     "@langchain/core": "^1.3.0",
@@ -52,6 +55,7 @@
     "typescript": "6.0.3",
     "vite": "8.3.4",
     "vitest": "5.0.5",
+    "web-tree-sitter": "^0.25.10",
     "zod": "^4.6.7"
   },
   "allowScripts": {

@@ -1,0 +1,32 @@
+{
+  "name": "harness-for-rea",
+  "version": "0.1.0",
+  "description": "Terminal UI of Harness for REA: an orchestrator that delegates deep analysis to a sandboxed Claude Code specialist.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/protonspy/harness-for-rea.git",
+    "directory": "tui"
+  },
+  "bin": {
+    "harness-for-rea": "bin/harness-for-rea.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "sandbox"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32",
+    "darwin"
+  ],
+  "dependencies": {
+    "@opentui/core": "0.8.1",
+    "bun": "1.4.4",
+    "web-tree-sitter": "0.25.10"
+  }
+}

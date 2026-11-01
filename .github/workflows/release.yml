@@ -1,0 +1,161 @@
+name: Release
+
+# A release a maintainer starts by hand on main (specs/release): the desktop app and the CLI/TUI for Windows x64,
+# macOS arm64 and macOS x64, unsigned, published to a GitHub Release tagged v<version>, and the CLI published to npm
+# as harness-for-rea with the NPM_TOKEN repository secret. Bump `version` in package.json before dispatching it.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  check:
+    # Dispatched on another branch, nothing runs (R1.1).
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: version
+        name: Refuse a version already released (R2.1)
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version is already tagged; bump the version in package.json."
+            exit 1
+          fi
+          if npm view "harness-for-rea@$version" version > /dev/null 2>&1; then
+            echo "::error::harness-for-rea@$version is already on npm; bump the version in package.json."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: check
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: npm ci --no-audit --no-fund
+      - name: Desktop app (R1.2)
+        run: npm run build && npx electron-builder --win --publish never
+      - name: CLI (R1.3, R1.4)
+        shell: bash
+        run: |
+          bun scripts/build-cli.ts binary bun-windows-x64 cli
+          ./cli/harness-for-rea.exe --version
+          7z a "harness-for-rea-cli-$VERSION-windows-x64.zip" ./cli/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            harness-for-rea-cli-*.zip
+
+  macos:
+    needs: check
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: npm ci --no-audit --no-fund
+      - name: OpenTUI's x64 library, for the binary cross-compiled on this arm64 runner
+        run: npm install --no-save --force "@opentui/core-darwin-x64@$(node -p "require('@opentui/core/package.json').version")"
+      - name: Desktop app (R1.2)
+        run: npm run build && npx electron-builder --mac --publish never
+      - name: CLI (R1.3, R1.4)
+        run: |
+          for arch in arm64 x64; do
+            bun scripts/build-cli.ts binary "bun-darwin-$arch" "cli-$arch"
+            tar -czf "harness-for-rea-cli-$VERSION-macos-$arch.tar.gz" -C "cli-$arch" .
+          done
+          ./cli-arm64/harness-for-rea --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            harness-for-rea-cli-*.tar.gz
+
+  publish:
+    needs: [check, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: GitHub Release (R2.2)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          The desktop app and the terminal UI (CLI) for Windows x64, macOS arm64 and macOS x64. Nothing is signed or
+          notarized.
+
+          - Windows: run the setup; SmartScreen may ask you to confirm with "More info" then "Run anyway".
+          - macOS, desktop app: open the disk image, drag the app to Applications, then run
+            `xattr -dr com.apple.quarantine "/Applications/Harness for REA.app"` once before the first launch.
+          - macOS, CLI: unpack the archive, then run `xattr -dr com.apple.quarantine ./harness-for-rea` once.
+          - The CLI is also on npm: `npm install -g harness-for-rea`.
+
+          See the README for Docker, the Claude plan and the provider key the app needs.
+          NOTES
+          gh release create "v$VERSION" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Harness for REA $VERSION" --notes-file notes.md
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: npm ci --no-audit --no-fund
+      - name: npm (R2.3)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          bun scripts/build-cli.ts package
+          npm publish ./tui --access public

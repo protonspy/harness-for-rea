@@ -16,5 +16,5 @@
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": ["tui/src", "src/main/env.d.ts", "tests/fixtures/bun-*.ts"]
+  "include": ["tui/src", "src/main/env.d.ts", "tests/fixtures/bun-*.ts", "scripts/build-cli.ts"]
 }
