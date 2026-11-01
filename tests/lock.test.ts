@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -28,6 +28,7 @@ describe("the data folder's lock", () => {
     expect(JSON.parse(readFileSync(join(d, LOCK_FILE), "utf8"))).toMatchObject({ app: "tui", pid: 2002 })
     release()
     writeFileSync(join(d, LOCK_FILE), "not json")
+    utimesSync(join(d, LOCK_FILE), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
     lockDataFolder(d, "desktop", 1001, () => true)()
   })
 
@@ -46,6 +47,22 @@ describe("the data folder's lock", () => {
     writeFileSync(join(d, LOCK_FILE), JSON.stringify({ app: "tui", pid: 2002, since: 0 }))
     release()
     expect(existsSync(join(d, LOCK_FILE))).toBe(true)
+  })
+
+  it("does not take over an unreadable lock another app may be writing, nor a stale one another process is clearing", () => {
+    const d = dir()
+    writeFileSync(join(d, LOCK_FILE), "")
+    expect(() => lockDataFolder(d, "tui", 2002, () => false)).toThrow(/another app may be starting/)
+    utimesSync(join(d, LOCK_FILE), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    lockDataFolder(d, "tui", 2002, () => false)()
+
+    writeFileSync(join(d, LOCK_FILE), JSON.stringify({ app: "desktop", pid: 1001, since: 0 }))
+    writeFileSync(join(d, `${LOCK_FILE}.takeover`), "")
+    expect(() => lockDataFolder(d, "tui", 2002, (p) => p !== 1001)).toThrow(/another app may be starting/)
+    // a guard left by a process that died is cleared once it is old
+    utimesSync(join(d, `${LOCK_FILE}.takeover`), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    lockDataFolder(d, "tui", 2002, (p) => p !== 1001)()
+    expect(existsSync(join(d, `${LOCK_FILE}.takeover`))).toBe(false)
   })
 
   it("finds the folder the desktop app keeps its data in, on each platform", () => {

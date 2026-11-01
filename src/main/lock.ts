@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, rmSync, writeSync } from "node:fs"
+import { closeSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -54,7 +54,7 @@ function read(file: string): Holder | null {
 */
 export function lockDataFolder(dataDir: string, app: AppName, pid = process.pid, isAlive: (pid: number) => boolean = alive): () => void {
   const file = join(dataDir, LOCK_FILE)
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     try {
       // Created exclusively: of two apps starting at once, one wins.
       const fd = openSync(file, "wx")
@@ -67,10 +67,58 @@ export function lockDataFolder(dataDir: string, app: AppName, pid = process.pid,
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
       const holder = read(file)
       if (holder && holder.pid !== pid && isAlive(holder.pid)) throw new DataFolderBusy(holder)
-      rmSync(file, { force: true })
+      // An unreadable lock may be one another app is writing this instant: only an old one is stale.
+      if (!holder && ageOf(file) < UNREADABLE_STALE_MS) {
+        pause()
+        continue
+      }
+      // One process at a time clears a stale lock, and only the one it read: none removes a lock another just took.
+      if (!guarded(file, () => sameHolder(read(file), holder) && rmSync(file, { force: true }))) pause()
     }
   }
-  throw new Error(`Could not take the lock on ${dataDir}.`)
+  throw new Error(`Could not take the lock on ${dataDir}; another app may be starting on it.`)
+}
+
+/** About a second of retries, well inside the window an unreadable lock is taken to be still written. */
+const ATTEMPTS = 20
+const PAUSE_MS = 50
+/** An unreadable lock this recent may still be being written. */
+const UNREADABLE_STALE_MS = 2000
+/** A takeover guard this old was left by a process that died holding it. */
+const GUARD_STALE_MS = 5000
+
+function pause() {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PAUSE_MS)
+}
+
+function ageOf(file: string): number {
+  try {
+    return Date.now() - statSync(file).mtimeMs
+  } catch {
+    return Infinity
+  }
+}
+
+function sameHolder(a: Holder | null, b: Holder | null): boolean {
+  return a === null || b === null ? a === b : a.pid === b.pid && a.since === b.since
+}
+
+/** Runs `clear` holding `<lock>.takeover`, created exclusively; false when another process holds it. */
+function guarded(file: string, clear: () => unknown): boolean {
+  const guard = `${file}.takeover`
+  try {
+    closeSync(openSync(guard, "wx"))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+    if (ageOf(guard) > GUARD_STALE_MS) rmSync(guard, { force: true })
+    return false
+  }
+  try {
+    clear()
+  } finally {
+    rmSync(guard, { force: true })
+  }
+  return true
 }
 
 /** Where the desktop app keeps its data — Electron's `userData` for the product name — so the TUI opens the same folder. */
