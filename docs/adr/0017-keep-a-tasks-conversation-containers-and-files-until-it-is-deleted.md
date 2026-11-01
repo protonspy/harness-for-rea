@@ -46,3 +46,9 @@ containers, which a `docker system prune` or a Docker reset erases.
 - What a tool installed survives a stop but not a container Docker removed; the files do.
 - A delegation cut off mid-run is not resumed inside Claude Code: the orchestrator delegates
   again, over the files that remain.
+- What containers write — samples, extracted payloads, links, special files — stays on the host
+  under `%AppData%` until the task is deleted; the app never opens or runs anything there, and
+  deleting removes each entry with `unlink`, never following a link.
+- A container is reused only while it carries the fingerprint of the arguments the app would
+  create it with now; one made by an older app, with another image or boundary, is created
+  again over the same folders.

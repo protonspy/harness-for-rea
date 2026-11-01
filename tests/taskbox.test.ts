@@ -8,6 +8,7 @@ import { renderPrompt, scrubPaths } from "../src/main/sandbox/prompt"
 import {
   BUFFER_CAP,
   dockerExecBuffer,
+  labelled,
   OUTPUT_CAP,
   RESTARTED,
   TaskBox,
@@ -162,11 +163,14 @@ describe("TaskBox", () => {
 
   it("starts the container Docker still has, creates it when not, says why it could not, and stops it at the end (specs/task-persistence R3.4, R3.5)", async () => {
     const scratch = join(mkdtempSync(join(tmpdir(), "hfr-scr-")), "scratch")
-    const kept = fake(() => ({}))
+    // what an app of this version made: started again as it is
+    const label = labelled(taskBoxArgs("t1", "C:/repo", scratch))[3]
+    const kept = fake((a) => (a[0] === "inspect" ? { stdout: Buffer.from(`${label}\n`) } : {}))
     const again = await TaskBox.start(kept.exec, "t1", "C:/repo", scratch)
-    expect(kept.calls).toEqual([["start", "hfr-orch-t1"]])
+    expect(kept.calls.map((c) => c[0])).toEqual(["inspect", "start"])
+    expect(kept.calls[1]).toEqual(["start", "hfr-orch-t1"])
     expect(again.created).toBe(false)
-    const gone = fake((a) => (a[0] === "start" ? { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" } : {}))
+    const gone = fake((a) => (a[0] === "inspect" ? { code: 1, stderr: "Error: No such object: hfr-orch-t1\n" } : {}))
     const box = await TaskBox.start(gone.exec, "t1", "C:/repo", scratch)
     expect(gone.calls[1].slice(0, 2)).toEqual(["run", "-d"])
     expect(box.created).toBe(true)
@@ -192,7 +196,9 @@ describe("TaskBox", () => {
     const scratch = join(mkdtempSync(join(tmpdir(), "hfr-scr-")), "scratch")
     // stopped: started again, nothing to report
     let state: "up" | "stopped" | "gone" = "up"
+    const label = labelled(taskBoxArgs("t1", "C:/repo", scratch))[3]
     const f = fake((a) => {
+      if (a[0] === "inspect") return state === "gone" ? { code: 1, stderr: "No such object" } : { stdout: Buffer.from(label) }
       if (a[0] === "start") return state === "gone" ? { code: 1, stderr: "No such container: hfr-orch-t1" } : ((state = "up"), {})
       if (a[0] === "run") return ((state = "up"), {})
       if (a[0] === "exec" && state === "stopped") return { code: 1, stderr: "Error response from daemon: container abc is not running\n" }
@@ -211,6 +217,18 @@ describe("TaskBox", () => {
     await box.dispose()
     state = "stopped"
     expect((await box.execute("echo ok")).output).toMatch(/is not running/)
+  })
+
+  it("creates again, over the same folders, a container an older app made with another image or boundary (specs/task-persistence R3.5)", async () => {
+    const scratch = join(mkdtempSync(join(tmpdir(), "hfr-scr-")), "scratch")
+    const old = fake((a) => (a[0] === "inspect" ? { stdout: Buffer.from("hfr.config=0123456789abcdef") } : {}))
+    const box = await TaskBox.start(old.exec, "t1", "C:/repo", scratch)
+    expect(old.calls.map((c) => c[0])).toEqual(["inspect", "rm", "run"])
+    expect(old.calls[2]).toEqual(labelled(taskBoxArgs("t1", "C:/repo", scratch)))
+    expect(box.created).toBe(true)
+    // the label is the fingerprint of every argument: another image or flag gives another one
+    expect(labelled(["run", "-d", "a"])[3]).not.toBe(labelled(["run", "-d", "b"])[3])
+    expect(labelled(["run", "-d", "a"]).slice(0, 3)).toEqual(["run", "-d", "--label"])
   })
 
   it("reports a container that cannot be brought up again as the error it was", async () => {

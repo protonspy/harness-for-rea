@@ -79,13 +79,18 @@ export class SqliteSaver extends MemorySaver {
     const checkpointId = String(config.configurable?.checkpoint_id)
     this.load(threadId)
     await super.putWrites(config, writes, taskId, taskPath)
-    // Every write the parent now holds for this checkpoint: it skips a write already there, and so does the insert.
-    const insert = getDb().prepare(
-      "INSERT OR IGNORE INTO checkpoint_writes (thread_id, ns, checkpoint_id, task_id, idx, channel, value, task_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    )
+    // What the parent now holds for this task's writes, row for row: it keeps the first of an ordinary write and
+    // replaces a special one (an error, interrupt or resume, at a negative index), and so does the database.
+    const sql = (verb: string) =>
+      getDb().prepare(
+        `INSERT ${verb} INTO checkpoint_writes (thread_id, ns, checkpoint_id, task_id, idx, channel, value, task_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+    const keep = sql("OR IGNORE")
+    const replace = sql("OR REPLACE")
     for (const [inner, [task, channel, value, path]] of Object.entries(this.writes[writesKey(threadId, ns, checkpointId)] ?? {})) {
       if (task !== taskId) continue
-      insert.run(threadId, ns, checkpointId, task, Number(inner.slice(inner.lastIndexOf(",") + 1)), channel, value, path ?? "")
+      const idx = Number(inner.slice(inner.lastIndexOf(",") + 1))
+      ;(idx < 0 ? replace : keep).run(threadId, ns, checkpointId, task, idx, channel, value, path ?? "")
     }
   }
 

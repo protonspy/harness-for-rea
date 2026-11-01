@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -16,7 +16,7 @@ import {
   SpecialistBoxes,
   type BoxLimits,
 } from "../src/main/sandbox/specialistbox"
-import { dockerExecBuffer, type BufferResult, type ExecBuffer } from "../src/main/sandbox/taskbox"
+import { dockerExecBuffer, labelled, type BufferResult, type ExecBuffer } from "../src/main/sandbox/taskbox"
 import { readManifest } from "../src/main/sandbox/workspace"
 
 /* specs/specialist-sandbox R1–R3: the sandboxes the orchestrator creates, controls and destroys, and their disk watch. */
@@ -46,6 +46,8 @@ interface Fake {
   events: { kind: string; payload: Record<string, unknown> }[]
   /** what `container inspect --size` reports as the writable layer */
   layer: number
+  /** the config label `inspect` reports for an existing container; none when unset */
+  label?: string
 }
 
 function fake(answers: Record<string, Partial<BufferResult>> = {}): Fake {
@@ -54,6 +56,8 @@ function fake(answers: Record<string, Partial<BufferResult>> = {}): Fake {
     f.calls.push({ args, timeoutMs })
     const key = args.join(" ")
     if (key.startsWith("container inspect --size")) return { code: 0, stdout: Buffer.from(`${f.layer}\n`), stderr: "" }
+    if (args[0] === "inspect" && !answers.inspect)
+      return f.label ? { code: 0, stdout: Buffer.from(f.label), stderr: "" } : { code: 1, stdout: Buffer.alloc(0), stderr: "Error: No such object" }
     const hit = Object.entries(answers).find(([k]) => key.startsWith(k))?.[1]
     return { code: 0, stdout: Buffer.alloc(0), stderr: "", ...hit }
   }
@@ -111,7 +115,7 @@ describe("creating, controlling and destroying sandboxes (R1.4, R1.5, R2)", () =
     const f = fake()
     const s = boxes(f)
     const box = await s.create(limits)
-    expect(f.calls[0].args).toEqual(sandboxArgs(box.name, box.ws, limits, box.outDir))
+    expect(f.calls[0].args).toEqual(labelled(sandboxArgs(box.name, box.ws, limits, box.outDir)))
     expect(box.outDir).toBe(join(data, "outputs", box.id))
     expect(existsSync(box.outDir)).toBe(true)
     expect(existsSync(box.ws.workspace)).toBe(true)
@@ -399,12 +403,14 @@ describe("a sandbox across the task's reopening (specs/task-persistence R3.5, R3
     await first.stopAll()
     // the task reopens, in this run of the app or a later one
     const again = fake({ "exec -w /work": { stdout: Buffer.from("ok\n") } })
+    again.label = labelled(sandboxArgs(box.name, box.ws, limits, box.outDir))[3]
     const reopened = boxes(again)
     expect(reopened.ids()).toEqual([box.id])
     expect(reopened.usable(box.id).ws.files.map((x) => x.path)).toEqual(["src/a.bin"])
     expect(again.calls).toEqual([])
     const r = await reopened.run(box.id, "ls")
-    expect(again.calls[0].args).toEqual(["start", box.name])
+    expect(again.calls[0].args[0]).toBe("inspect")
+    expect(again.calls[1].args).toEqual(["start", box.name])
     expect(r.output).toBe("ok\n")
     expect(again.events.map((e) => e.kind)).toContain("sandbox.reopened")
     // started once, not on every call
@@ -417,11 +423,11 @@ describe("a sandbox across the task's reopening (specs/task-persistence R3.5, R3
     const first = boxes(fake())
     const box = await first.create({})
     await first.stopAll()
-    const gone = fake({ start: { code: 1, stderr: "Error response from daemon: No such container: x" }, "exec -w /work": { stdout: Buffer.from("ok\n") } })
+    const gone = fake({ "exec -w /work": { stdout: Buffer.from("ok\n") } })
     const reopened = boxes(gone)
     const r = await reopened.run(box.id, "ls")
     const run = gone.calls.find((c) => c.args[0] === "run")!.args
-    expect(run).toEqual(sandboxArgs(box.name, box.ws, {}, box.outDir))
+    expect(run).toEqual(labelled(sandboxArgs(box.name, box.ws, {}, box.outDir)))
     expect(r.output).toBe(`${recreated(box.id)} ok\n`)
     expect(recreated(box.id)).toMatch(/\/work and \/root\/out were kept, anything installed is gone/)
     await reopened.removeAll()
@@ -436,5 +442,24 @@ describe("a sandbox across the task's reopening (specs/task-persistence R3.5, R3
     await reopened.removeAll()
     expect(f.calls.at(-1)!.args).toEqual(["rm", "-f", a.name])
     expect(boxes(fake()).ids()).toEqual([])
+  })
+})
+
+describe("deleting a task's sandboxes (specs/task-persistence R4.1)", () => {
+  it("removes every recorded container, even one whose folders are gone, and keeps the records when Docker fails", async () => {
+    const s = boxes(fake())
+    const box = await s.create({})
+    await s.stopAll()
+    rmSync(box.ws.workspace, { recursive: true, force: true })
+    const f = fake()
+    const reopened = boxes(f)
+    expect(reopened.ids()).toEqual([])
+    await reopened.removeAll()
+    expect(f.calls.at(-1)!.args).toEqual(["rm", "-f", box.name])
+
+    const kept = await boxes(fake()).create({})
+    const failing = boxes(fake({ "rm -f": { code: 1, stderr: "Error response from daemon: device or resource busy" } }))
+    await expect(failing.removeAll()).rejects.toThrow(/could not be removed: .*busy/)
+    expect(boxes(fake()).ids()).toEqual([kept.id])
   })
 })

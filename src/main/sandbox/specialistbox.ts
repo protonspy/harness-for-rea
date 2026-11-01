@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { getDb } from "../db"
 import type { EventLog } from "../events/log"
 import { identity, limitArgs, loginVolume, mountSource, SPECIALIST_IMAGE } from "./docker"
-import { bringUp, OUTPUT_CAP, type ExecBuffer } from "./taskbox"
+import { bringUp, labelled, OUTPUT_CAP, type ExecBuffer } from "./taskbox"
 import {
   addFiles,
   askDir,
@@ -174,7 +174,14 @@ export class SpecialistBoxes {
       const id = String(r.id)
       const ws: Workspace = { id, ...workspaceDirs(deps.taskDir, id), files: [] }
       if (!existsSync(ws.workspace)) continue
-      for (const [path, sha256] of Object.entries(readManifest(ws.snapshot))) ws.files.push({ path, sha256, size: 0 })
+      // A snapshot that cannot be read leaves the sandbox reachable, its files unknown until copied again.
+      let manifest: Record<string, string> = {}
+      try {
+        manifest = readManifest(ws.snapshot)
+      } catch {
+        manifest = {}
+      }
+      for (const [path, sha256] of Object.entries(manifest)) ws.files.push({ path, sha256, size: 0 })
       this.boxes.set(id, this.box(id, ws, JSON.parse(String(r.limits)) as BoxLimits, false))
     }
   }
@@ -211,7 +218,7 @@ export class SpecialistBoxes {
       forget()
       throw new SandboxError((e as Error).message)
     }
-    const r = await this.d.exec(args)
+    const r = await this.d.exec(labelled(args))
     if (r.code !== 0 || this.ended) {
       await this.d.exec(["rm", "-f", box.name])
       forget()
@@ -365,12 +372,20 @@ export class SpecialistBoxes {
     if (up.length) await this.d.exec(["stop", "-t", "2", ...up.map((b) => b.name)])
   }
 
-  /** Remove every container of a task being deleted, recorded by this run or an earlier one (specs/task-persistence R4.1). */
+  /**
+    Remove every container of a task being deleted, every one its records name included (specs/task-persistence
+    R4.1); throws, keeping the records, when Docker fails to remove one it still has.
+  */
   async removeAll(): Promise<void> {
     this.ended = true
-    const all = [...this.boxes.values()]
-    for (const box of all) this.forget(box)
-    if (all.length) await this.d.exec(["rm", "-f", ...all.map((b) => b.name)])
+    for (const box of [...this.boxes.values()]) this.forget(box)
+    const recorded = (getDb().prepare("SELECT id FROM sandboxes WHERE task_id = ?").all(this.d.taskId) as Record<string, unknown>[]).map((r) =>
+      sandboxName(String(r.id)),
+    )
+    if (recorded.length) {
+      const r = await this.d.exec(["rm", "-f", ...recorded])
+      if (r.code !== 0 && !/No such container/i.test(r.stderr)) throw new Error(`The task's sandboxes could not be removed: ${lastLine(r.stderr)}`)
+    }
     getDb().prepare("DELETE FROM sandboxes WHERE task_id = ?").run(this.d.taskId)
   }
 

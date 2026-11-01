@@ -1695,3 +1695,120 @@ describe("a task kept until it is deleted (specs/task-persistence)", () => {
     expect(existsSync(join(data, "patches", patchId))).toBe(true)
   })
 })
+
+describe("reopening, edge cases (specs/task-persistence R2, R3.5)", () => {
+  const bare = (o: Partial<ConstructorParameters<typeof TaskRunner>[0]> = {}) =>
+    new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+      ...o,
+    })
+
+  it("fails a continued task whose containers cannot start, and lets it be continued again", async () => {
+    script = [{ content: "First." }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    r.close(task.id)
+    await new Promise((res) => setTimeout(res, 20))
+    workspaceFails = "Docker is not running."
+    r.continueTask(task.id)
+    await r.settled(task.id)
+    expect(log.getTask(task.id)).toMatchObject({ state: "failed", error: expect.stringMatching(/Docker is not running/) })
+    expect(r.isLive(task.id)).toBe(false)
+    workspaceFails = ""
+    script = [{ content: "Back." }]
+    r.continueTask(task.id)
+    await r.settled(task.id)
+    expect(log.getTask(task.id).result).toBe("Back.")
+  })
+
+  it("brings a task's containers up only once the ones it is stopping have stopped", async () => {
+    const order: string[] = []
+    let release: () => void = () => undefined
+    const r = bare({
+      workspace: async () => {
+        order.push("up")
+        return {
+          backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
+          root: "/",
+          dispose: () => new Promise<void>((res) => (release = () => (order.push("stopped"), res()))),
+        }
+      },
+    })
+    script = [{ content: "First." }, { content: "Again." }]
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    r.close(task.id)
+    r.continueTask(task.id)
+    await new Promise((res) => setTimeout(res, 30))
+    expect(order).toEqual(["up"])
+    release()
+    await r.settled(task.id)
+    expect(order).toEqual(["up", "stopped", "up"])
+  })
+
+  it("asks again for the approval a task waited on when a message reopens it after a restart", async () => {
+    script = [{ tool_calls: [delegateModify] }, applyFromLast]
+    const before = runner()
+    const task = before.start({ request: REQUEST, sourceRoot: root })
+    for (let i = 0; i < 200 && log.getTask(task.id).state !== "waiting"; i++) await new Promise((res) => setTimeout(res, 20))
+    await before.stopAll()
+    log.recover()
+    expect(log.getTask(task.id).state).toBe("interrupted")
+    const after = runner()
+    after.sendMessage(task.id, "Go ahead.")
+    for (let i = 0; i < 200 && log.getTask(task.id).state !== "waiting"; i++) await new Promise((res) => setTimeout(res, 20))
+    expect(log.getTask(task.id).state).toBe("waiting")
+    expect(kinds(task.id).filter((k) => k === "approval.requested").length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe("deleting safely (specs/task-persistence R4)", () => {
+  it("keeps the task, its conversation and its records when its files cannot be removed", async () => {
+    script = [{ content: "Done." }]
+    const r = runner()
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    const real = log.deleteTaskFiles.bind(log)
+    log.deleteTaskFiles = () => {
+      throw new Error("EPERM: operation not permitted")
+    }
+    await expect(r.remove(task.id)).rejects.toThrow(/EPERM/)
+    expect(log.getTask(task.id).id).toBe(task.id)
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM checkpoints WHERE thread_id = ?").get(task.id) as { n: number }).n).toBeGreaterThan(0)
+    log.deleteTaskFiles = real
+    await r.remove(task.id)
+    expect(() => log.getTask(task.id)).toThrow(/No task/)
+  })
+
+  it("refuses to reopen a task while it is being deleted", async () => {
+    script = [{ content: "Done." }]
+    let release: () => void = () => undefined
+    const r = new TaskRunner({
+      stopGraceMs: 50,
+      log,
+      dataDir: data,
+      launcher: launcher(),
+      settings: () => settings,
+      apiKey: () => "sk-or-v1-testkey000000",
+      workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
+      removeContainers: () => new Promise<void>((res) => (release = res)),
+    })
+    const task = r.start({ request: REQUEST, sourceRoot: root })
+    await r.settled(task.id)
+    r.close(task.id)
+    const deleting = r.remove(task.id)
+    await new Promise((res) => setTimeout(res, 20))
+    expect(() => r.continueTask(task.id)).toThrow(/being deleted/)
+    expect(() => r.sendMessage(task.id, "wait")).toThrow(/being deleted/)
+    release()
+    await deleting
+    expect(r.isLive(task.id)).toBe(false)
+  })
+})

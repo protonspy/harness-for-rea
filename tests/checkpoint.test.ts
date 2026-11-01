@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AIMessage, HumanMessage } from "@langchain/core/messages"
-import { Command, END, interrupt, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph"
+import { Command, emptyCheckpoint, END, interrupt, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { closeDb, getDb, openDb } from "../src/main/db"
 import { SqliteSaver } from "../src/main/orchestrator/checkpoint"
@@ -83,5 +83,36 @@ describe("the conversation in the database (R1.1, R1.2)", () => {
     for await (const t of new SqliteSaver().list({})) ids.push(String(t.config.configurable?.thread_id))
     expect(ids.length).toBeGreaterThan(0)
     expect(new Set(ids)).toEqual(new Set(["task-1"]))
+  })
+})
+
+describe("special writes (R1.1)", () => {
+  it("keeps the last interrupt or resume a task wrote, as MemorySaver does, across a restart", async () => {
+    const saver = new SqliteSaver()
+    const cp = { ...emptyCheckpoint(), id: "cp-1" }
+    const saved = await saver.put({ configurable: { thread_id: "t", checkpoint_ns: "" } }, cp, { source: "loop", step: 0, parents: {} } as never)
+    // an ordinary write keeps its first value; a special one (here a resume, index -4) is replaced
+    await saver.putWrites(
+      saved,
+      [
+        ["messages", "first"],
+        ["__resume__", "first"],
+      ],
+      "task-a",
+    )
+    await saver.putWrites(
+      saved,
+      [
+        ["messages", "second"],
+        ["__resume__", "second"],
+      ],
+      "task-a",
+    )
+    const inMemory = (await saver.getTuple(saved))!.pendingWrites!.map(([, ch, v]) => `${ch}=${String(v)}`)
+    closeDb()
+    openDb(file)
+    const restored = (await new SqliteSaver().getTuple(saved))!.pendingWrites!.map(([, ch, v]) => `${ch}=${String(v)}`)
+    expect(inMemory).toEqual(expect.arrayContaining(["messages=first", "__resume__=second"]))
+    expect(restored.sort()).toEqual(inMemory.sort())
   })
 })

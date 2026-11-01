@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto"
-import { appendFileSync, mkdirSync, rmSync } from "node:fs"
+import { appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Agent, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 import { getDb } from "../db"
+import { removeTree } from "../sandbox/paths"
 import { redact, redactValue } from "./redact"
 
 /*
@@ -264,14 +265,17 @@ export class EventLog {
   }
 
   /**
-    Remove a task's records, its patches' stored files and its folder (specs/task-persistence R4.1). Its steps,
-    events, patches and sandboxes go with the task row.
+    Remove a task's folder and its patches' stored files (specs/task-persistence R4.1); throws, keeping the task, when
+    any entry cannot be removed, so nothing is reported deleted that is still on disk.
   */
+  deleteTaskFiles(id: string) {
+    for (const r of getDb().prepare("SELECT id FROM patches WHERE task_id = ?").all(id) as Row[]) removeTree(join(this.dataDir, "patches", String(r.id)))
+    removeTree(this.taskDir(id))
+  }
+
+  /** Remove a task's records, its files already gone; its steps, events, patches and sandboxes go with the task row. */
   deleteTask(id: string) {
-    const patches = (getDb().prepare("SELECT id FROM patches WHERE task_id = ?").all(id) as Row[]).map((r) => String(r.id))
     getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id)
-    for (const p of patches) rmSync(join(this.dataDir, "patches", p), { recursive: true, force: true })
-    rmSync(this.taskDir(id), { recursive: true, force: true })
     this.push({ type: "taskDeleted", id })
   }
 

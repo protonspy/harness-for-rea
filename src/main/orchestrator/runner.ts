@@ -120,6 +120,10 @@ export class TaskRunner {
   private readonly checkpointer: BaseCheckpointSaver
   private readonly live = new Map<string, Live>()
   private readonly disposals = new Set<Promise<void>>()
+  /** tasks being deleted, which nothing may reopen */
+  private readonly deleting = new Set<string>()
+  /** each task's workspace still going down, which a reopen of that task waits for */
+  private readonly disposing = new Map<string, Promise<void>>()
 
   constructor(deps: RunnerDeps) {
     this.deps = deps
@@ -194,24 +198,27 @@ export class TaskRunner {
       ask: (q, agent, stepId) => this.ask(task.id, q, agent, stepId),
     }
     ctx.auto = auto
-    const ready = this.deps.workspace(task).then((ws) => ({
-      ws,
-      agent: buildAgent({
-        model,
-        ctx: Object.assign(ctx, {
-          root: ws.root,
+    // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
+    const ready = (this.disposing.get(task.id) ?? Promise.resolve())
+      .then(() => this.deps.workspace(task))
+      .then((ws) => ({
+        ws,
+        agent: buildAgent({
+          model,
+          ctx: Object.assign(ctx, {
+            root: ws.root,
+            scratch: ws.scratch,
+            sandboxes: ws.sandboxes,
+            readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
+          }),
+          checkpointer: this.checkpointer,
+          backend: ws.backend,
+          inbox: () => this.drainInbox(task.id),
+          gated,
+          auto,
           scratch: ws.scratch,
-          sandboxes: ws.sandboxes,
-          readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
         }),
-        checkpointer: this.checkpointer,
-        backend: ws.backend,
-        inbox: () => this.drainInbox(task.id),
-        gated,
-        auto,
-        scratch: ws.scratch,
-      }),
-    }))
+      }))
     ready.catch(() => undefined)
     const names = new Map<string, string>()
     const callbacks = [
@@ -286,6 +293,7 @@ export class TaskRunner {
     containers come up, and a container that had to be created again is reported to the orchestrator.
   */
   private reopen(taskId: string): Live {
+    if (this.deleting.has(taskId)) throw new Error("The task is being deleted.")
     const task = this.deps.log.getTask(taskId)
     const { auto, gated } = this.startedWith(taskId)
     const live = this.open(task, auto, gated)
@@ -308,13 +316,35 @@ export class TaskRunner {
     const opened = this.reopen(taskId)
     this.deps.log.updateTask(taskId, { state: "running", error: "" })
     this.deps.log.append({ taskId, agent: "app", kind: "turn.continued", state: "running", summary: "You continued the task", payload: {} })
-    opened.run = (async () => {
-      const { agent } = await opened.ready
-      const snap = await (agent as unknown as { getState(c: unknown): Promise<{ next?: string[] }> }).getState({ configurable: { thread_id: taskId } })
-      // Null input resumes the thread's pending step; a thread with none left takes a nudge instead.
-      return this.drive(taskId, snap.next?.length ? null : { messages: [new HumanMessage(CONTINUE)] }, opened.callbacks)
-    })()
+    opened.run = this.fromCheckpoint(taskId, opened)
     return this.deps.log.getTask(taskId)
+  }
+
+  /**
+    Drive a reopened task on from its last checkpoint (specs/task-persistence R2): a step left pending — an approval
+    the task waited on — runs again and asks again, the user's message waiting in the inbox for the next model call;
+    otherwise the turn opens on the message, or on a nudge to continue. A reopen that cannot start fails the task.
+  */
+  private async fromCheckpoint(taskId: string, live: Live, message?: string): Promise<void> {
+    let input: unknown
+    try {
+      const { agent } = await live.ready
+      const snap = await (agent as unknown as { getState(c: unknown): Promise<{ next?: string[] }> }).getState({ configurable: { thread_id: taskId } })
+      if (snap.next?.length) {
+        if (message) live.inbox.push(message)
+        input = null
+      } else {
+        if (message) this.deps.log.append({ taskId, agent: "orchestrator", kind: "message.read", summary: "Read your message", payload: { output: message } })
+        input = { messages: [new HumanMessage(message ?? CONTINUE)] }
+      }
+    } catch (e) {
+      const err = friendlyError(e, PROVIDERS[this.deps.settings().provider].label)
+      this.deps.log.updateTask(taskId, { state: "failed", error: err.message })
+      this.deps.log.append({ taskId, agent: "orchestrator", kind: "task.failed", state: "failed", summary: err.message, payload: { error: err.message } })
+      void this.end(taskId)
+      return
+    }
+    return this.drive(taskId, input, live.callbacks)
   }
 
   /** The todo list as steps: one per todo, created once and updated as its status moves (R2.1). */
@@ -539,8 +569,7 @@ export class TaskRunner {
       const opened = this.reopen(taskId)
       this.deps.log.updateTask(taskId, { state: "running", error: "" })
       this.userMessage(taskId, message)
-      this.deps.log.append({ taskId, agent: "orchestrator", kind: "message.read", summary: "Read your message", payload: { output: message } })
-      opened.run = this.drive(taskId, { messages: [new HumanMessage(message)] }, opened.callbacks)
+      opened.run = this.fromCheckpoint(taskId, opened, message)
       return this.deps.log.getTask(taskId)
     }
     if (["pending", "running", "waiting"].includes(task.state)) {
@@ -759,10 +788,20 @@ export class TaskRunner {
   async remove(taskId: string): Promise<void> {
     const task = this.deps.log.getTask(taskId)
     if (["pending", "running", "waiting"].includes(task.state)) throw new Error(`The task is ${task.state}; cancel it before deleting it.`)
-    if (this.live.has(taskId)) await this.end(taskId)
-    await this.deps.removeContainers?.(task)
-    await this.checkpointer.deleteThread(taskId)
-    this.deps.log.deleteTask(taskId)
+    if (this.deleting.has(taskId)) throw new Error("The task is already being deleted.")
+    // From here no reopen may bring the task back up.
+    this.deleting.add(taskId)
+    try {
+      if (this.live.has(taskId)) await this.end(taskId)
+      await this.disposing.get(taskId)
+      await this.deps.removeContainers?.(task)
+      // Files first: when one cannot go, the task stays, listed and deletable again.
+      this.deps.log.deleteTaskFiles(taskId)
+      await this.checkpointer.deleteThread(taskId)
+      this.deps.log.deleteTask(taskId)
+    } finally {
+      this.deleting.delete(taskId)
+    }
   }
 
   /** Settles when the task's current turn stops: at its end, at an approval pause, or awaiting the user. */
@@ -783,7 +822,11 @@ export class TaskRunner {
     clearTimeout(live?.approvalTimer)
     const done = live ? live.ready.then(({ ws }) => ws.dispose()).catch(() => undefined) : Promise.resolve()
     this.disposals.add(done)
-    void done.finally(() => this.disposals.delete(done))
+    this.disposing.set(taskId, done)
+    void done.finally(() => {
+      this.disposals.delete(done)
+      if (this.disposing.get(taskId) === done) this.disposing.delete(taskId)
+    })
     return done
   }
 

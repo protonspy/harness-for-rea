@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { posix } from "node:path"
 import { BaseSandbox } from "deepagents"
@@ -110,15 +111,34 @@ export const RESTARTED = "[The task's sandbox was created again: /scratch was ke
 
 const lastLine = (s: string) => s.trim().split("\n").pop() || ""
 
+/** The label a container carries of the arguments it was created with, so one made by an older app is not reused. */
+export const CONFIG_LABEL = "hfr.config"
+
+/** `docker run` arguments with the label of their own fingerprint, which covers the image and every flag and mount. */
+export function labelled(args: string[]): string[] {
+  const fingerprint = createHash("sha256").update(args.join("\0")).digest("hex").slice(0, 16)
+  return [...args.slice(0, 2), "--label", `${CONFIG_LABEL}=${fingerprint}`, ...args.slice(2)]
+}
+
 /**
-  Bring the task's container up: start it when Docker still has it, stopped or running, or create it over the same
-  folders when not (specs/task-persistence R3.5). Returns whether it was created, or throws with Docker's reason.
+  Bring a task's container up: start it when Docker still has it as these arguments would make it, or create it over
+  the same folders when Docker no longer has it or it was made otherwise — by an older app with another image or
+  boundary (specs/task-persistence R3.5). Returns whether it was created, or throws with Docker's reason.
 */
 export async function bringUp(exec: ExecBuffer, name: string, args: string[]): Promise<{ created: boolean }> {
-  const started = await exec(["start", name])
-  if (started.code === 0) return { created: false }
-  if (!/No such container/i.test(started.stderr)) throw new Error(lastLine(started.stderr) || `exit ${started.code}`)
-  const r = await exec(args)
+  const run = labelled(args)
+  const want = run[3]
+  const has = await exec(["inspect", "--format", `${CONFIG_LABEL}={{index .Config.Labels "${CONFIG_LABEL}"}}`, name])
+  if (has.code === 0 && has.stdout.toString("utf8").trim() === want) {
+    const started = await exec(["start", name])
+    if (started.code === 0) return { created: false }
+    if (!/No such container/i.test(started.stderr)) throw new Error(lastLine(started.stderr) || `exit ${started.code}`)
+  } else if (has.code === 0) {
+    // made with another image or boundary: replaced, its folders kept
+    const gone = await exec(["rm", "-f", name])
+    if (gone.code !== 0 && !/No such container/i.test(gone.stderr)) throw new Error(lastLine(gone.stderr) || `exit ${gone.code}`)
+  }
+  const r = await exec(run)
   if (r.code !== 0) throw new Error(lastLine(r.stderr) || `exit ${r.code}`)
   return { created: true }
 }
@@ -219,6 +239,7 @@ export class TaskBox extends BaseSandbox {
 
   /** Remove the container of a task being deleted; one already gone is not an error (R4.1). */
   static async remove(exec: ExecBuffer, taskId: string): Promise<void> {
-    await exec(["rm", "-f", taskBoxName(taskId)])
+    const r = await exec(["rm", "-f", taskBoxName(taskId)])
+    if (r.code !== 0 && !/No such container/i.test(r.stderr)) throw new Error(`The task's container could not be removed: ${lastLine(r.stderr)}`)
   }
 }
