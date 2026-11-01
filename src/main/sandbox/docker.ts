@@ -144,11 +144,13 @@ export function dockerRunArgs(spec: RunSpec): string[] {
 */
 export function specialistCommand(cli: string[]): string[] {
   const script = [
+    `rm -f ${CLAUDE_PID_FILE}`,
     "exec 3<&0",
     `"$@" <&3 3<&- & pid=$!`,
     "exec 3<&-",
     `echo "$pid" > ${CLAUDE_PID_FILE}`,
     `wait "$pid"; status=$?`,
+    `rm -f ${CLAUDE_PID_FILE}`,
     `chown -R ${AGENT_UID}:${AGENT_UID} ${CONFIG_DIR} 2>/dev/null`,
     `exit "$status"`,
   ].join("\n")

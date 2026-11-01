@@ -299,3 +299,58 @@ describe("a sandbox with no limits (R1.5)", () => {
     await s.disposeAll()
   })
 })
+
+describe("review fixes: a measurement that cannot be told, and races with the task's end", () => {
+  it("stops counting past the entry cap and reports the size unknown, so the sandbox is not stopped on a guess", async () => {
+    mkdirSync(join(base, "many"))
+    for (let i = 0; i < 5; i++) writeFileSync(join(base, "many", `f${i}`), "x")
+    expect(folderSize(join(base, "many"), { entries: 3 })).toBeNull()
+    expect(folderSize(join(base, "many"))).toBe(5)
+    expect(folderSize(join(base, "missing"))).toBe(0)
+  })
+
+  it("skips a sandbox whose writable layer cannot be read, and catches a failed interval check", async () => {
+    const f = fake()
+    // inspect fails, as for a container Docker no longer knows
+    const inner = f.exec
+    f.exec = async (args, t) => (args[0] === "container" ? { code: 1, stdout: Buffer.alloc(0), stderr: "gone" } : inner(args, t))
+    const s = boxes(f)
+    const box = await s.create(limits)
+    await s.run(box.id, "true")
+    expect(box.stopped).toBeNull()
+    await s.disposeAll()
+  })
+
+  it("refuses to destroy a sandbox a delegation runs in, but the task's end removes it", async () => {
+    const f = fake()
+    const s = boxes(f)
+    const box = await s.create(limits)
+    s.hold(box.id)
+    await expect(s.destroy(box.id)).rejects.toThrow(/running a delegation/)
+    await s.disposeAll()
+    expect(s.ids()).toEqual([])
+  })
+
+  it("removes a sandbox that finished starting after the task ended", async () => {
+    let started: () => void = () => undefined
+    const f = fake()
+    const inner = f.exec
+    f.exec = async (args, t) => {
+      if (args[0] === "run") await new Promise<void>((r) => (started = r))
+      return inner(args, t)
+    }
+    const s = boxes(f)
+    const pending = s.create(limits)
+    await new Promise((r) => setTimeout(r, 10))
+    await s.disposeAll()
+    started()
+    await expect(pending).rejects.toThrow(/task ended while the sandbox was starting/)
+    expect(f.calls.at(-1)!.args.slice(0, 2)).toEqual(["rm", "-f"])
+    expect(s.ids()).toEqual([])
+  })
+
+  it("starts the sandbox with an init that reaps orphaned processes", () => {
+    const ws = { id: "x", workspace: "C:/d/w", runDir: "C:/d/r", snapshot: "C:/d/s", files: [] }
+    expect(sandboxArgs("hfr-sbx-x", ws, {})).toContain("--init")
+  })
+})

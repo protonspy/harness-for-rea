@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/specialist-sandbox
+delivery: in-progress
 ---
 
 # Specialist sandbox — requirements

@@ -54,8 +54,12 @@ host path, which a container with full internet access
 
 ## Consequences
 
-- The specialist can read the subscription token on the login volume with its shell; the
-  exposure is accepted, as the sandbox holds nothing but the task's files.
+- The login volume, with the subscription token, is mounted in every sandbox from its start.
+  The specialist can read it with its shell, and so can the orchestrator's model through
+  `sandbox_exec`, whose output goes to OpenRouter; the redaction of known secret shapes masks
+  a plain read, not a deliberate one, and full internet access already lets either send it
+  anywhere. The exposure is accepted for now; handing the token to a sandbox only for the
+  length of a delegation is the change that would narrow it.
 - A disk limit is enforced after the fact: a sandbox can pass its limit by what it writes between
   two checks before it is stopped.
 - The orchestrator can analyse the target with `sandbox_exec` as it could with `execute`;

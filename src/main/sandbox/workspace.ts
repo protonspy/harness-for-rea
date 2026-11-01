@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { PathRejected, resolveRequested, UNSAFE_NAME } from "./paths"
 
@@ -85,8 +85,29 @@ function planFiles(sourceRoot: string, requested: string[], prepared: PreparedFi
   return { resolved, prepared }
 }
 
+/**
+  Refuse a target whose folders under the workspace include a link: a sandbox's root processes can plant one in
+  /work after it starts, and the app must not write through it to the host.
+*/
+function assertNoLink(root: string, rel: string) {
+  let dir = root
+  for (const name of rel.split("/").slice(0, -1)) {
+    dir = join(dir, name)
+    let st
+    try {
+      st = lstatSync(dir)
+    } catch {
+      return
+    }
+    if (st.isSymbolicLink() || !st.isDirectory()) throw new PathRejected(rel, `cannot be written: ${name} in the workspace is not a folder`)
+  }
+  const target = join(root, rel)
+  if (existsSync(target) && !lstatSync(target).isFile()) throw new PathRejected(rel, "cannot be written: it is not a file in the workspace")
+}
+
 /** Copy planned files into the workspace; source files also into the snapshot and its manifest. */
 function writeFiles(ws: Workspace, plan: Plan): CopiedFile[] {
+  for (const rel of [...plan.resolved.keys(), ...plan.prepared.map((p) => `${PREPARED}/${p.path}`)]) assertNoLink(ws.workspace, rel)
   const manifest = readManifest(ws.snapshot)
   const files: CopiedFile[] = []
   for (const [rel, abs] of plan.resolved) {
@@ -160,7 +181,14 @@ export function rebaseSnapshot(ws: Workspace, changes: { path: string; status: "
       rmSync(target, { force: true })
       continue
     }
-    const data = readFileSync(join(ws.workspace, c.path))
+    // Only a regular file becomes the base: what the sandbox left in its place is dropped from the snapshot.
+    const source = join(ws.workspace, c.path)
+    if (!lstatSync(source, { throwIfNoEntry: false })?.isFile()) {
+      delete manifest[c.path]
+      rmSync(target, { force: true })
+      continue
+    }
+    const data = readFileSync(source)
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, data)
     manifest[c.path] = sha256(data)

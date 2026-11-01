@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { beforeEach, describe, expect, it } from "vitest"
@@ -127,6 +127,24 @@ describe("a sandbox's workspace (specs/specialist-sandbox R2.1–R2.3, R4.5)", (
     expect(readManifest(ws.snapshot)).toEqual({})
   })
 
+  it("refuses to write through a link the sandbox planted in its workspace", () => {
+    const ws = createWorkspace(data, "box-5")
+    mkdirSync(join(base, "elsewhere"))
+    // a junction needs no privilege on Windows; elsewhere a directory link
+    symlinkSync(join(base, "elsewhere"), join(ws.workspace, "src"), process.platform === "win32" ? "junction" : "dir")
+    expect(() => addFiles(ws, root, ["src/a.ts"], [], 1024, "limit")).toThrow(/src in the workspace is not a folder/)
+    expect(existsSync(join(base, "elsewhere", "a.ts"))).toBe(false)
+  })
+
+  it("drops from the snapshot what is no longer a regular file", () => {
+    const ws = createWorkspace(data, "box-6")
+    addFiles(ws, root, ["src/a.ts"], [], 1024, "limit")
+    rmSync(join(ws.workspace, "src", "a.ts"))
+    mkdirSync(join(ws.workspace, "src", "a.ts"))
+    rebaseSnapshot(ws, [{ path: "src/a.ts", status: "modified" }])
+    expect(readManifest(ws.snapshot)).toEqual({})
+  })
+
   it("takes the workspace as the snapshot for the files a patch changed", () => {
     const ws = createWorkspace(data, "box-4")
     addFiles(ws, root, ["src/a.ts", "src/b.ts"], [], 1024, "limit")
@@ -238,6 +256,10 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(cmd[2]).toContain("/tmp/hfr-claude.pid")
     expect(cmd[2]).toContain("chown -R 1000:1000 /home/agent/.claude-config")
     expect(cmd[2]).toMatch(/exit "\$status"$/)
+    // a stale process id from an earlier delegation is never signalled
+    const lines = cmd[2].split("\n")
+    expect(lines[0]).toBe("rm -f /tmp/hfr-claude.pid")
+    expect(lines[lines.indexOf('wait "$pid"; status=$?') + 1]).toBe("rm -f /tmp/hfr-claude.pid")
   })
 
   it("runs the specialist in a sandbox with docker exec, and stops only its CLI there (specs/specialist-sandbox R4.1, R4.4)", () => {

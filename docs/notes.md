@@ -49,3 +49,4 @@ over this file answers with the example above as well as with the notes. -->
 - n-0009 2026-10-30 #ceiling @src/main/sandbox/taskbox.ts — the task container's writable layer has no size cap, so a runaway install fills Docker's disk until the task ends; --storage-opt size= or tmpfs on the apt paths would bound it
 - n-0010 2026-11-01 #gotcha @src/main/sandbox/docker.ts — a background job in non-interactive sh gets /dev/null as stdin before its own redirections, so the specialist wrapper passes stdin through fd 3, not <&0
 - n-0011 2026-11-01 #gotcha @src/main/sandbox/specialistbox.ts — Docker Desktop's containerd snapshotter accepts --storage-opt size= and ignores it; disk is enforced by watching SizeRw plus the workspace
+- n-0012 2026-11-01 #ceiling @src/main/sandbox/specialistbox.ts — the disk watch walks /work synchronously on the main thread every 15 s, capped at 200k entries (unknown past it); an async walk in a worker lifts it

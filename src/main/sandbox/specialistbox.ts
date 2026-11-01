@@ -67,6 +67,8 @@ export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits): str
     name,
     "--hostname",
     "sandbox",
+    // a PID 1 that reaps what `docker exec` and `timeout` leave behind
+    "--init",
     ...identity(true),
     ...limitArgs(limits),
     ...loginVolume(),
@@ -85,8 +87,15 @@ export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits): str
   ]
 }
 
-/** Bytes of regular files under a folder, links not followed. */
-export function folderSize(dir: string): number {
+/** Most entries one measurement of a workspace visits; past it the size is unknown. */
+export const FOLDER_ENTRY_CAP = 200_000
+
+/**
+  Bytes of regular files under a folder, links not followed, or null when it cannot be told: the sandbox changes
+  the folder while it is walked, so an entry gone between listing and reading is skipped, and a tree past the
+  entry cap is not walked to its end on the app's main thread.
+*/
+export function folderSize(dir: string, budget = { entries: FOLDER_ENTRY_CAP }): number | null {
   let total = 0
   let names: string[] = []
   try {
@@ -95,10 +104,18 @@ export function folderSize(dir: string): number {
     return 0
   }
   for (const name of names) {
-    const abs = join(dir, name)
-    const st = lstatSync(abs)
-    if (st.isDirectory()) total += folderSize(abs)
-    else if (st.isFile()) total += st.size
+    if (--budget.entries < 0) return null
+    let st
+    try {
+      st = lstatSync(join(dir, name))
+    } catch {
+      continue
+    }
+    if (st.isDirectory()) {
+      const sub = folderSize(join(dir, name), budget)
+      if (sub === null) return null
+      total += sub
+    } else if (st.isFile()) total += st.size
   }
   return total
 }
@@ -125,6 +142,8 @@ export interface BoxesDeps {
 export class SpecialistBoxes {
   private readonly boxes = new Map<string, Box>()
   private readonly d: BoxesDeps
+  /** the task ended: a sandbox still starting is removed rather than kept */
+  private disposed = false
 
   constructor(deps: BoxesDeps) {
     this.d = deps
@@ -152,10 +171,15 @@ export class SpecialistBoxes {
       discardWorkspace(this.d.dataDir, id)
       throw new SandboxError(`Docker did not start the sandbox: ${lastLine(r.stderr) || `exit ${r.code}`}`)
     }
+    if (this.disposed) {
+      await this.d.exec(["rm", "-f", name])
+      discardWorkspace(this.d.dataDir, id)
+      throw new SandboxError("The task ended while the sandbox was starting.")
+    }
     const box: Box = { id, name, ws, limits, busy: false, stopped: null, timer: null }
     // Only a disk limit is watched; without one the sandbox takes what Docker has (R1.5).
     if (limits.diskMb !== undefined) {
-      box.timer = setInterval(() => void this.checkDisk(box), this.d.everyMs ?? DISK_EVERY_MS)
+      box.timer = setInterval(() => void this.checkDisk(box).catch(() => undefined), this.d.everyMs ?? DISK_EVERY_MS)
       box.timer.unref?.()
     }
     this.boxes.set(id, box)
@@ -175,7 +199,9 @@ export class SpecialistBoxes {
   async copy(id: string, requested: string[], prepared: PreparedFile[]): Promise<CopiedFile[]> {
     const box = this.usable(id)
     const disk = box.limits.diskMb
-    const left = disk === undefined ? Infinity : Math.max(0, disk * MB - (await this.usage(box)))
+    const used = disk === undefined ? 0 : await this.usage(box)
+    // A size that cannot be told does not block a copy; the watch stops the sandbox if it passes the limit.
+    const left = disk === undefined ? Infinity : Math.max(0, disk * MB - (used ?? 0))
     const files = addFiles(box.ws, this.d.sourceRoot, requested, prepared, left, `${disk} MB disk limit of sandbox ${id}`)
     this.event("sandbox.copy", `Copied ${files.length} file(s) into sandbox ${id}`, {
       sandbox: id,
@@ -200,11 +226,12 @@ export class SpecialistBoxes {
     return { output, exitCode: r.code, truncated }
   }
 
-  /** Bytes the sandbox uses: its container's writable layer plus its workspace (R3.1). */
-  async usage(box: Box): Promise<number> {
+  /** Bytes the sandbox uses: its container's writable layer plus its workspace (R3.1), or null when either cannot be told. */
+  async usage(box: Box): Promise<number | null> {
     const r = await this.d.exec(["container", "inspect", "--size", "--format", "{{.SizeRw}}", box.name])
-    const layer = r.code === 0 ? Number(r.stdout.toString("utf8").trim()) || 0 : 0
-    return layer + folderSize(box.ws.workspace)
+    const layer = r.code === 0 ? Number(r.stdout.toString("utf8").trim()) : NaN
+    const work = folderSize(box.ws.workspace)
+    return Number.isFinite(layer) && work !== null ? layer + work : null
   }
 
   /** Measure the disk and stop the sandbox past its limit (R3.2, R3.3); a stopped sandbox is not measured again. */
@@ -212,7 +239,8 @@ export class SpecialistBoxes {
     const disk = box.limits.diskMb
     if (disk === undefined || box.stopped || !this.boxes.has(box.id)) return
     const used = await this.usage(box)
-    if (used <= disk * MB || box.stopped) return
+    // Destroyed while measured, or not measurable this time: the next check decides.
+    if (used === null || used <= disk * MB || box.stopped || !this.boxes.has(box.id)) return
     const usedMb = Math.ceil(used / MB)
     box.stopped = `it used ${usedMb} MB of disk, past its ${disk} MB limit`
     if (box.timer) clearInterval(box.timer)
@@ -238,10 +266,14 @@ export class SpecialistBoxes {
     }
   }
 
-  /** Remove the sandbox's container and, when discarding, its workspace, run directory and snapshot (R2.5). */
-  async destroy(id: string): Promise<void> {
+  /**
+    Remove the sandbox's container and, when discarding, its workspace, run directory and snapshot (R2.5). The
+    orchestrator cannot remove one a delegation runs in; the task's end can.
+  */
+  async destroy(id: string, force = false): Promise<void> {
     const box = this.boxes.get(id)
     if (!box) throw new SandboxError(`There is no sandbox ${id} in this task.`)
+    if (box.busy && !force) throw new SandboxError(`Sandbox ${id} is running a delegation; destroy it once the delegation ends.`)
     this.boxes.delete(id)
     if (box.timer) clearInterval(box.timer)
     await this.d.exec(["rm", "-f", box.name])
@@ -251,7 +283,8 @@ export class SpecialistBoxes {
 
   /** Every sandbox of the task, when it ends (R2.6). */
   async disposeAll(): Promise<void> {
-    await Promise.allSettled([...this.boxes.keys()].map((id) => this.destroy(id)))
+    this.disposed = true
+    await Promise.allSettled([...this.boxes.keys()].map((id) => this.destroy(id, true)))
   }
 
   ids(): string[] {
