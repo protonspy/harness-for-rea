@@ -34,8 +34,8 @@ describe("evidence parsing stays linear on hostile reports", () => {
 
   it("still reads nested paths, /work prefixes and single lines", () => {
     expect(parseEvidence("- /work/src/deep/a.ts:3-9 — the loop\n- `src/a.ts`:4 — one line", ["src/deep/a.ts"])).toEqual([
-      { path: "src/deep/a.ts", startLine: 3, endLine: 9, claim: "the loop", checked: true },
-      { path: "src/a.ts", startLine: 4, endLine: 4, claim: "one line", checked: false },
+      { kind: "lines", path: "src/deep/a.ts", startLine: 3, endLine: 9, claim: "the loop", checked: true },
+      { kind: "lines", path: "src/a.ts", startLine: 4, endLine: 4, claim: "one line", checked: false },
     ])
   })
 
@@ -103,5 +103,31 @@ describe("size limits keep the main process responsive", () => {
     } finally {
       closeDb()
     }
+  })
+})
+
+describe("evidence of three kinds (specs/rea-native R3)", () => {
+  const ev = `ev_${"a".repeat(64)}`
+  const unk = `unk_${"0123456789abcdef".repeat(4)}`
+  it("reads an address in a file, checked against the package's files", () => {
+    expect(parseEvidence("- /work/lib/libgame.so@0x1A2B — decrypts the asset table\n- other.so@0x10 — elsewhere", ["lib/libgame.so"])).toEqual([
+      { kind: "address", path: "lib/libgame.so", startLine: 0, endLine: 0, ref: "0x1a2b", claim: "decrypts the asset table", checked: true },
+      { kind: "address", path: "other.so", startLine: 0, endLine: 0, ref: "0x10", claim: "elsewhere", checked: false },
+    ])
+  })
+
+  it("reads REA evidence and unknown ids as cited, and nothing that only looks like one", () => {
+    expect(parseEvidence(`- ${ev} — the key is derived from the build id\n- \`${unk}\` — whether the server checks it`, [])).toEqual([
+      // cited, never checked: nothing compares an id with REA's ledger (R3.3)
+      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: ev, claim: "the key is derived from the build id", checked: false },
+      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: unk, claim: "whether the server checks it", checked: false },
+    ])
+    expect(parseEvidence(`- ev_${"a".repeat(63)} — short\n- ev_${"G".repeat(64)} — not hex`, [])).toEqual([])
+  })
+
+  it("stays linear on a long hostile line of each new form", () => {
+    const start = performance.now()
+    parseEvidence(`- ${"@0x".repeat(600)} x\n- ev_${"a".repeat(1900)} — y`, [])
+    expect(performance.now() - start).toBeLessThan(200)
   })
 })

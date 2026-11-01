@@ -72,7 +72,7 @@ function boxes(f: Fake, everyMs = 60_000) {
 }
 
 describe("a sandbox's docker run arguments (R1.1–R1.3)", () => {
-  const ws = { id: "x", workspace: "C:\\d\\workspace\\x", runDir: "C:\\d\\runs\\x", snapshot: "C:\\d\\snapshots\\x", files: [] }
+  const ws = { id: "x", workspace: "C:\\d\\workspace\\x", runDir: "C:\\d\\runs\\x", snapshot: "C:\\d\\snapshots\\x", out: "C:\\d\\outputs\\x", files: [] }
   const args = sandboxArgs(sandboxName("x"), ws, limits, "C:\\d\\outputs\\x")
 
   it("starts a long-lived container from the specialist image with the orchestrator's limits", () => {
@@ -227,6 +227,9 @@ describe("the disk limit (R3)", () => {
     await s.copy(box.id, ["src/a.bin"], [])
     expect(await s.usage(box)).toBe(4096 + 1000)
     expect(folderSize(box.ws.workspace)).toBe(1000)
+    // what the specialist extracts to /root/out lands on the host, and counts too (specs/rea-native R2.4)
+    writeFileSync(join(box.outDir, "extracted.bin"), Buffer.alloc(300))
+    expect(await s.usage(box)).toBe(4096 + 1000 + 300)
     await s.removeAll()
   })
 
@@ -389,7 +392,7 @@ describe("review fixes: a measurement that cannot be told, and races with the ta
   })
 
   it("starts the sandbox with an init that reaps orphaned processes", () => {
-    const ws = { id: "x", workspace: "C:/d/w", runDir: "C:/d/r", snapshot: "C:/d/s", files: [] }
+    const ws = { id: "x", workspace: "C:/d/w", runDir: "C:/d/r", snapshot: "C:/d/s", out: "C:/d/o", files: [] }
     expect(sandboxArgs("hfr-sbx-x", ws, {}, "C:/d/o")).toContain("--init")
   })
 })

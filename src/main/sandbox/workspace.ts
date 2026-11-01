@@ -32,6 +32,8 @@ export interface Workspace {
   workspace: string
   runDir: string
   snapshot: string
+  /** what the specialist extracts, builds or exports, mounted at /root/out (specs/rea-native R2.4) */
+  out: string
   files: CopiedFile[]
 }
 
@@ -45,7 +47,12 @@ export function askDir(runDir: string): string {
 }
 
 export function workspaceDirs(dataDir: string, id: string) {
-  return { workspace: join(dataDir, "workspace", id), runDir: join(dataDir, "runs", id), snapshot: join(dataDir, "snapshots", id) }
+  return {
+    workspace: join(dataDir, "workspace", id),
+    runDir: join(dataDir, "runs", id),
+    snapshot: join(dataDir, "snapshots", id),
+    out: join(dataDir, "outputs", id),
+  }
 }
 
 interface Plan {

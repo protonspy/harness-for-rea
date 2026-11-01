@@ -27,7 +27,7 @@ themselves. -->
 - **specialist** — the Claude Opus agent run through the pinned Claude Code CLI for steps that need deep analysis. Avoid: expert agent, worker agent
 - **delegation** — handing one step from the orchestrator to the specialist with a context package. Avoid: handoff
 - **context package** — what a delegation carries: the orchestrator's brief, objective, files and excerpts, environment facts, questions, constraints, and the expected report format. Avoid: context bundle
-- **brief** — the orchestrator's own prompt to the specialist inside a context package: the background and real purpose of one step, never an invented authorization. Avoid: narrative, pretext
+- **brief** — the orchestrator's own technical prompt to the specialist inside a context package: what the artifact is, what is known about it and what one step must discover, never the user's request or purpose (adr:0019-keep-the-specialists-brief-technical). Avoid: narrative, pretext
 - **sandbox** — the container the specialist runs in, with `workspace/<uuid>/` holding copies of only the files it was given mounted at `/work`: one the orchestrator created and prepared (`hfr-sbx-<id>`), or a delegation's own
 - **evidence** — a claim in a report tied to a file and line range, or to a captured tool output, that the orchestrator can check
 - **event** — one normalized, redacted record of an agent action, stored in SQLite and shown in the UI

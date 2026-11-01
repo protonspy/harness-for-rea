@@ -61,11 +61,11 @@ export function DelegationCard({ step, events, patches }: { step: StepRow; event
               <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Evidence</h4>
               {evidence.map((e, i) => (
                 <div key={i} className="flex items-start gap-2 text-sm">
-                  <Badge variant={e.checked ? "ok" : "bad"} className="mt-0.5 shrink-0">
-                    {e.checked ? "in package" : "unverified"}
+                  <Badge variant={e.kind === "rea" ? "info" : e.checked ? "ok" : "bad"} className="mt-0.5 shrink-0">
+                    {e.kind === "rea" ? (e.ref?.startsWith("unk_") ? "REA unknown, cited" : "REA evidence, cited") : e.checked ? "in package" : "unverified"}
                   </Badge>
-                  <Mono className="shrink-0 text-primary">
-                    {e.path}:{e.startLine}-{e.endLine}
+                  <Mono className="shrink-0 text-primary" title={e.ref}>
+                    {evidenceLabel(e)}
                   </Mono>
                   <span>{e.claim}</span>
                 </div>
@@ -107,4 +107,11 @@ function Files({ title, items }: { title: string; items: string[] }) {
       </ul>
     </div>
   )
+}
+
+/** Where a piece of evidence points: a line range, an address in a file, or an REA id shortened for the eye (specs/rea-native R3). */
+function evidenceLabel(e: Evidence): string {
+  if (e.kind === "rea") return `${e.ref?.slice(0, 16)}…`
+  if (e.kind === "address") return `${e.path}@${e.ref}`
+  return `${e.path}:${e.startLine}-${e.endLine}`
 }

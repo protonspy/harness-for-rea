@@ -158,7 +158,7 @@ describe("the production launcher in a sandbox (R4.1, R4.4)", () => {
   it("runs the CLI with docker exec and stops only the CLI", async () => {
     const calls: string[][] = []
     const l = dockerLauncher(async (args) => (calls.push(args), { code: 0, stdout: "", stderr: "" }))
-    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", files: [] }, "read", {}, "hfr-sbx-1")
+    const launch = l.launch({ id: "i", workspace: "w", runDir: "r", snapshot: "s", out: "o", files: [] }, "read", {}, "hfr-sbx-1")
     expect(launch.args).toEqual(execArgs("hfr-sbx-1", claudeArgs("read")))
     await launch.stop!()
     expect(calls).toEqual([stopArgs("hfr-sbx-1")])

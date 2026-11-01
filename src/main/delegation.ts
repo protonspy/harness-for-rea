@@ -120,7 +120,7 @@ export function dockerLauncher(exec: Exec = dockerExec): Launcher {
       if (box) return { command: "docker", args: execArgs(box, cli), stop: async () => void (await exec(stopArgs(box))) }
       return {
         command: "docker",
-        args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, mode }), ...specialistCommand(cli)],
+        args: [...dockerRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, out: ws.out, mode }), ...specialistCommand(cli)],
         stop: () => killContainer(exec, ws.id),
       }
     },

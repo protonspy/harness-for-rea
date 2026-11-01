@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { getDb } from "../db"
 import type { EventLog } from "../events/log"
@@ -187,7 +187,7 @@ export class SpecialistBoxes {
   }
 
   private box(id: string, ws: Workspace, limits: BoxLimits, up: boolean): Box {
-    return { id, name: sandboxName(id), ws, limits, busy: false, stopped: null, timer: null, up, outDir: join(this.d.taskDir, "outputs", id) }
+    return { id, name: sandboxName(id), ws, limits, busy: false, stopped: null, timer: null, up, outDir: ws.out }
   }
 
   private event(kind: string, summary: string, payload: Record<string, unknown>) {
@@ -207,10 +207,8 @@ export class SpecialistBoxes {
     const ws = createWorkspace(this.d.taskDir, id)
     const box = this.box(id, ws, limits, true)
     mkdirSync(box.outDir, { recursive: true })
-    const forget = () => {
-      discardWorkspace(this.d.taskDir, id)
-      rmSync(box.outDir, { recursive: true, force: true })
-    }
+    // The workspace's folders, its output folder among them.
+    const forget = () => discardWorkspace(this.d.taskDir, id)
     let args: string[]
     try {
       args = sandboxArgs(box.name, ws, limits, box.outDir)
@@ -293,12 +291,16 @@ export class SpecialistBoxes {
     return { output, exitCode: r.code, truncated }
   }
 
-  /** Bytes the sandbox uses: its container's writable layer plus its workspace (R3.1), or null when either cannot be told. */
+  /**
+    Bytes the sandbox uses: its container's writable layer plus its workspace and its output folder, both on the host
+    (R3.1, specs/rea-native R2.4), or null when any cannot be told.
+  */
   async usage(box: Box): Promise<number | null> {
     const r = await this.d.exec(["container", "inspect", "--size", "--format", "{{.SizeRw}}", box.name])
     const layer = r.code === 0 ? Number(r.stdout.toString("utf8").trim()) : NaN
     const work = folderSize(box.ws.workspace)
-    return Number.isFinite(layer) && work !== null ? layer + work : null
+    const out = folderSize(box.outDir)
+    return Number.isFinite(layer) && work !== null && out !== null ? layer + work + out : null
   }
 
   /** Measure the disk and stop the sandbox past its limit (R3.2, R3.3); a stopped sandbox is not measured again. */

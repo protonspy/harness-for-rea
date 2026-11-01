@@ -38,7 +38,8 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **R2.4** When the agent delegates a step, the orchestrator shall run the delegation in the sandbox and return the specialist's report, its evidence and any proposed patch to the agent.
 - **R2.5** If a context package fails validation or the sandbox refuses the delegation, then the orchestrator shall return the reason to the agent as a tool error instead of failing the task.
 - **R2.6** The orchestrator shall redact secret shapes from the specialist's report before returning it to the model.
-- **R2.7** The orchestrator shall write for each delegation a brief stating the background and real purpose of the step, without claiming ownership or purpose the user's request does not support.
+- **R2.7** The orchestrator shall write for each delegation a technical brief stating what the artifact is, what is already established about it and what the step must map or discover, without mentioning the user, their request or the purpose of the work, and without claiming any ownership, authorization or purpose (adr:0019-keep-the-specialists-brief-technical).
+- **R2.10** The orchestrator shall write every field of a context package in English, whatever language the user writes in, and answer the user in the user's language.
 
 ## R3 · Approval and lifecycle
 
