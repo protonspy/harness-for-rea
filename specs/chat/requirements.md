@@ -75,6 +75,6 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 
 ## Out of scope
 
-- Resuming a run's exact checkpoint after the app restarts; a continued turn resumes only while the app has kept the task's container (specs/orchestrator out of scope).
+- Resuming a Claude Code session cut off mid-delegation (specs/task-persistence out of scope).
 - Several tasks sharing one conversation; a thread is one task.
 - Streaming the model's tokens as they generate; the UI advances on node updates and recorded events (specs/desktop-ui R2.2).

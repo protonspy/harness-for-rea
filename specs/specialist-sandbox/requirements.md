@@ -31,9 +31,9 @@ specialist, not the orchestrator, does the extraction and the analysis.
 - **R2.2** If a file named for copying resolves outside the source folder and the scratch, then the sandbox service shall copy nothing of that call and return the rejected path.
 - **R2.3** If the files copied into a sandbox would pass the disk limit the orchestrator set, then the sandbox service shall copy nothing of that call and return the limit.
 - **R2.4** When the orchestrator runs a command in a sandbox, the sandbox service shall run it as root with `sh -c` in `/work`, stop it at the time limit the orchestrator gives, up to a day, or ten minutes, and return its exit code and output, truncated to the orchestrator's output cap.
-- **R2.5** When the orchestrator destroys a sandbox, the sandbox service shall remove its container and, where discard on completion is enabled, its workspace, run directory and snapshot.
-- **R2.6** When a task ends, the sandbox service shall destroy every sandbox the task created.
-- **R2.7** When the app starts, the sandbox service shall remove every `hfr-sbx-` container a previous run left behind.
+- **R2.5** When the orchestrator destroys a sandbox, the sandbox service shall remove its container and its record and keep its folders until the task is deleted.
+- **R2.6** When a task ends, the sandbox service shall stop every sandbox the task created and keep it (specs/task-persistence R3.4).
+- **R2.7** When the app starts, the sandbox service shall stop every `hfr-sbx-` container a previous run left running and keep it.
 - **R2.8** If the orchestrator names a sandbox that does not exist, belongs to another task, or was stopped, then the sandbox service shall refuse the call and say which.
 - **R2.9** The sandbox service shall record as events every sandbox created, every copy, every command run, every sandbox stopped and every sandbox destroyed.
 

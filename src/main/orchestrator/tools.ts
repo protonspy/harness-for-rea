@@ -190,7 +190,11 @@ export function sandboxCopyTool(ctx: ToolContext) {
           prepared = [...read].map(([p, content]) => ({ path: name(p).slice(PREPARED.length + 1), content }))
         }
         const copied = await boxes.copy(sandbox, source, prepared)
-        return JSON.stringify({ sandbox, copied: copied.map((f) => ({ path: `/work/${f.path}`, size: f.size })) })
+        return JSON.stringify({
+          sandbox,
+          ...(copied.notice ? { note: copied.notice } : {}),
+          copied: copied.map((f) => ({ path: `/work/${f.path}`, size: f.size })),
+        })
       }),
     {
       name: SANDBOX_COPY,

@@ -21,7 +21,7 @@ only through an approved patch.
 - **R1.1** When a delegation starts, the sandbox shall create `<userData>/workspace/<uuid>/` with a random UUID and a pristine snapshot of it outside that directory.
 - **R1.2** The sandbox shall copy into the workspace only the files the context package names, at their paths relative to the source root, and record the SHA-256 of each.
 - **R1.3** If a requested path resolves outside the source root, through `..`, an absolute path, a symbolic link or a junction, then the sandbox shall reject the delegation and record the rejected path.
-- **R1.4** Where discard on completion is enabled, the sandbox shall delete the workspace, its run directory and its snapshot when the delegation ends.
+- **R1.4** The sandbox shall keep the workspace, its run directory and its snapshot under the task's folder until the task is deleted (specs/task-persistence R3.1, R3.7).
 
 ## R2 · Container
 

@@ -65,23 +65,23 @@ app.whenReady().then(async () => {
     workspace: async (task) => {
       const blocked = await preflight(dockerExec)
       if (blocked) throw new Error(blocked)
-      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot)
-      // The specialist's sandboxes the orchestrator creates go with the task (specs/specialist-sandbox R2.6).
-      const sandboxes = new SpecialistBoxes({
-        exec: dockerExecBuffer,
-        log,
-        dataDir,
-        sourceRoot: task.sourceRoot,
-        taskId: task.id,
-        discard: () => getSettings().discardOnCompletion,
-      })
+      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, join(log.taskDir(task.id), "scratch"))
+      // The specialist's sandboxes the orchestrator creates, those an earlier run recorded included (specs/task-persistence R3.6).
+      const sandboxes = new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id })
       return {
         backend: box,
         root: WORKSPACE,
         scratch: SCRATCH,
         sandboxes,
-        dispose: async () => void (await Promise.allSettled([box.dispose(), sandboxes.disposeAll()])),
+        created: box.created,
+        // Stopped and kept for when the task reopens (specs/task-persistence R3.4).
+        dispose: async () => void (await Promise.allSettled([box.dispose(), sandboxes.stopAll()])),
       }
+    },
+    // Only deleting the task removes its containers (specs/task-persistence R4.1).
+    removeContainers: async (task) => {
+      await TaskBox.remove(dockerExecBuffer, task.id)
+      await new SpecialistBoxes({ exec: dockerExecBuffer, log, taskDir: log.taskDir(task.id), sourceRoot: task.sourceRoot, taskId: task.id }).removeAll()
     },
   })
   const sandbox = new SandboxService(dockerExec, sandboxDir(), (status) => push({ type: "sandbox", status }))
@@ -142,7 +142,9 @@ app.whenReady().then(async () => {
     sendMessage: (id, message) => runner.sendMessage(id, message),
     closeTask: (id) => runner.close(id),
     stopTurn: (id) => runner.stopTurn(id),
-    continueTurn: (id) => runner.continueTurn(id),
+    // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
+    continueTurn: (id) => runner.continueTask(id),
+    deleteTask: async (id) => (await runner.remove(id), true),
     decideTool: (id, callId, decision) => runner.decideTool(id, callId, decision),
     answerQuestion: (id, questionId, answer) => runner.answerQuestion(id, questionId, answer),
   }

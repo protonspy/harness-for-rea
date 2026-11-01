@@ -195,9 +195,25 @@ export function pendingQuestions(items: ChatItem[]): QuestionItem[] {
   return items.filter((i): i is QuestionItem => i.kind === "question" && i.origin === undefined)
 }
 
-/** Whether the user can write to the task: while a turn runs or waits, on their turn, or after a stop (R7.2). */
+/** States a task ended in that it can be continued from, on Continue or a message (specs/task-persistence R2). */
+export const ENDED_STATES: TaskState[] = ["cancelled", "failed", "interrupted", "done"]
+
+/**
+  Whether the user can write to the task: while a turn runs or waits, on their turn, after a stop (R7.2), and once it
+  ended, which reopens it where it stopped (specs/task-persistence R2.2).
+*/
 export function canSend(state: TaskState): boolean {
-  return ["pending", "running", "waiting", "awaiting-user", "stopped"].includes(state)
+  return ["pending", "running", "waiting", "awaiting-user", "stopped", ...ENDED_STATES].includes(state)
+}
+
+/** Whether the task can be continued from where it stopped: a stopped turn, or a task that ended (specs/task-persistence R2.1). */
+export function canContinue(state: TaskState): boolean {
+  return state === "stopped" || ENDED_STATES.includes(state)
+}
+
+/** Whether the task can be deleted: anything but a turn under way (specs/task-persistence R4.2). */
+export function canDelete(state: TaskState): boolean {
+  return !canStop(state)
 }
 
 /** Whether a turn is under way and can be stopped (R3.1). */
@@ -235,6 +251,6 @@ export function turnLabel(state: TaskState, waitingOn: number): string {
     case "stopped":
       return "Stopped. Continue the turn, or send a message to continue with it."
     default:
-      return "This conversation is closed."
+      return "Ended. Its history and files are kept: continue it, or send a message to pick up where it stopped."
   }
 }

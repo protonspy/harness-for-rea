@@ -6,11 +6,11 @@ import { parseEvidence, type ContextPackage, type Evidence } from "@shared/conte
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
 import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflight, specialistCommand, stopArgs, type Exec, type Mode } from "./sandbox/docker"
-import { applyPatch, discardPatch, makePatch, PatchConflict } from "./sandbox/patch"
+import { applyPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
 import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
 import { SandboxError, type Box, type SpecialistBoxes } from "./sandbox/specialistbox"
-import { askDir, discardWorkspace, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
+import { askDir, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
 import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
 
 /*
@@ -192,7 +192,7 @@ export async function delegate(
   let held: { box: Box; release: () => Promise<void> } | null = null
   try {
     if (o.sandbox) {
-      held = o.sandbox.boxes.hold(o.sandbox.id)
+      held = await o.sandbox.boxes.hold(o.sandbox.id)
       ws = held.box.ws
       // The package's files the sandbox lacks come in now; what the orchestrator prepared, always as it is now.
       const missing = o.pkg.files.filter((f) => !f.startsWith(`.orchestrator/`) && !ws.files.some((c) => c.path === f))
@@ -200,7 +200,8 @@ export async function delegate(
       if (held.box.stopped) throw new SandboxError(`Sandbox ${o.sandbox.id} was stopped: ${held.box.stopped}.`)
       clearAskChannel(ws)
     } else {
-      ws = prepareWorkspace(deps.dataDir, o.sourceRoot, o.pkg.files, o.prepared)
+      // Under the task's own folder, kept until the task is deleted (specs/task-persistence R3.1, R3.7).
+      ws = prepareWorkspace(log.taskDir(o.taskId), o.sourceRoot, o.pkg.files, o.prepared)
       ev("sandbox.copy", `Copied ${ws.files.length} file(s) into workspace ${ws.id}`, {
         workspace: ws.id,
         mode: o.pkg.mode,
@@ -268,12 +269,8 @@ export async function delegate(
     log.updateStep(step.id, { state, data: { error: (e as Error).message } })
     throw e
   } finally {
-    // A sandbox outlives the delegation; the orchestrator or the task's end removes it.
+    // A sandbox outlives the delegation; its folders and a delegation's own stay with the task (specs/task-persistence R3.7).
     if (held) await held.release()
-    else if (settings.discardOnCompletion) {
-      discardWorkspace(deps.dataDir, ws.id)
-      ev("sandbox.discarded", `Discarded workspace ${ws.id}`, { workspace: ws.id })
-    }
   }
 }
 
@@ -292,7 +289,6 @@ export function approvePatch(deps: DelegationDeps, patchId: string, sourceRoot: 
     const files = applyPatch(deps.dataDir, patchId, sourceRoot)
     ev("patch.applied", `Patch applied to ${files.length} file(s)`, { patchId, files: files.map((path) => ({ path, op: "apply" })) })
     const done = deps.log.updatePatch(patchId, { state: "applied" })
-    if (deps.settings().discardOnCompletion) discardPatch(deps.dataDir, patchId)
     return done
   } catch (e) {
     if (!(e instanceof PatchConflict)) throw e
@@ -305,7 +301,6 @@ export function rejectPatch(deps: DelegationDeps, patchId: string): PatchView {
   const p = deps.log.getPatch(patchId)
   if (p.state !== "proposed") throw new Error(`The patch is already ${p.state}.`)
   deps.log.append({ taskId: p.taskId, stepId: p.stepId, agent: "sandbox", kind: "patch.rejected", summary: "Patch rejected by the user", payload: { patchId } })
-  const done = deps.log.updatePatch(patchId, { state: "rejected" })
-  discardPatch(deps.dataDir, patchId)
-  return done
+  // Kept with the task: deleting the task removes it (specs/task-persistence R4.3).
+  return deps.log.updatePatch(patchId, { state: "rejected" })
 }
