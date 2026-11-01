@@ -2256,9 +2256,7 @@ describe("tasks in a project (specs/projects R2)", () => {
       .split("\n")
       .map((l) => JSON.parse(l))
       .find((l) => l.turn === 1).prompt
-    expect(prompt).toContain(
-      `## Open unknowns from earlier analyses\n- ${open.id} [medium] Is the separator configurable? — would be settled by: the CLI flags`,
-    )
+    expect(prompt).toContain(`- ${open.id} [medium] Is the separator configurable? — would be settled by: the CLI flags`)
     expect(ledger.open(p.id)).toEqual([])
     expect(ledger.list(p.id)[0]).toMatchObject({ id: open.id, resolution: "No: it is hard-coded. (src/a.ts:1-1)" })
   })

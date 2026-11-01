@@ -100,7 +100,12 @@ interface Live {
   asked: number
   /** the task's chat model, which answers the specialist's questions first (specs/specialist-lifecycle R1) */
   model?: Answerer
+  /** the specialist's questions put to that model this turn, against MODEL_ANSWER_CAP */
+  modelAnswered: number
 }
+
+/** The specialist's questions the orchestrator's model is asked in one turn; each sends the whole context package. */
+export const MODEL_ANSWER_CAP = 10
 
 interface PendingCall {
   callId: string
@@ -325,6 +330,7 @@ export class TaskRunner {
       inbox: [],
       questions: new Map(),
       asked: 0,
+      modelAnswered: 0,
     }
     this.live.set(task.id, live)
     return live
@@ -648,6 +654,7 @@ export class TaskRunner {
   private newTurn(live: Live) {
     live.turnNo++
     live.asked = 0
+    live.modelAnswered = 0
     live.abort = new AbortController()
     live.ctx.signal = live.abort.signal
   }
@@ -729,7 +736,9 @@ export class TaskRunner {
   async ask(taskId: string, question: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }> {
     const live = this.live.get(taskId)
     const pkg = agent === "specialist" && stepId ? this.deps.log.getStep(stepId).data.context : undefined
-    if (!live || !live.model || !pkg) return this.askUser(taskId, question, agent, stepId)
+    // Past the turn's share of model calls, a question goes to the user as any other would.
+    if (!live || !live.model || !pkg || live.modelAnswered >= MODEL_ANSWER_CAP) return this.askUser(taskId, question, agent, stepId)
+    live.modelAnswered++
     const signal = live.abort.signal
     let reply: ModelReply
     try {

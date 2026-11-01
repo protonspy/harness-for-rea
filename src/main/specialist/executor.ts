@@ -36,7 +36,6 @@ export class SpecialistError extends Error {
 
 /** Turn what Claude Code reported into something the user can act on (R1.4). */
 export function classifyFailure(text: string): SpecialistError {
-  if (/violates? (our|the) usage policy|usage policy violation/i.test(text)) return new SpecialistError("refused", REFUSED)
   if (/invalid api key|please run \/login|not logged in|oauth token|authentication/i.test(text))
     return new SpecialistError("auth", "The specialist is not signed in to Claude. Sign in again in Settings.")
   if (/usage limit|hit your limit|rate.?limit|limit reached|overloaded/i.test(text)) {
@@ -111,7 +110,9 @@ export class SpecialistSession {
     const p = this.pending
     if (!r || !p) return
     this.pending = null
-    if (r.refused) p.reject(new SpecialistError("refused", REFUSED))
+    // A refusal is read from the API's stop reason, or from Claude Code's own error line on a failed turn — never from
+    // anything the specialist could be steered to write.
+    if (r.refused || (r.error && /^API Error:[^\n]*usage policy/i.test(r.text))) p.reject(new SpecialistError("refused", REFUSED))
     else if (r.error) p.reject(classifyFailure(r.text || r.reason || this.stderr))
     else p.resolve(r)
   }

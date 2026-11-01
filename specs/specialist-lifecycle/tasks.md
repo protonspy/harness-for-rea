@@ -4,6 +4,8 @@
 
 - [x] 1.1 (Unit) Answer a specialist's question from the context package with one call of the orchestrator's model, deferring on anything that does not fit — R1.1, R1.3
 - [x] 1.2 (TDD) Route the specialist's questions through the model first, recording the origin and keeping the cap to the user's questions — R1.2, R1.3
+- [x] 1.3 (Unit) Leave questions about authorization, ownership or purpose to the user, mark the question as untrusted for the model, and cap the model's answers per turn — R1.4
+  _Reason The security review found a hostile target could steer the specialist to ask the model what only the user may answer_
 
 ## 2 · Safeguard refusal
 

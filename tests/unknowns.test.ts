@@ -88,6 +88,22 @@ describe("the unknowns ledger (specs/analysis-contract R2)", () => {
     expect(ledger.list("p1")[0]).toMatchObject({ closedBy: "b", resolution: "x" })
   })
 
+  it("does not add again a question already open in the project", () => {
+    ledger.record("p1", "a", ContractSchema.parse({ unknowns: [{ question: "Which cipher?", severity: "high" }] }))
+    const again = ledger.record(
+      "p1",
+      "b",
+      ContractSchema.parse({
+        unknowns: [
+          { question: " which  CIPHER? ", severity: "low" },
+          { question: "New one", severity: "low" },
+        ],
+      }),
+    )
+    expect(again.opened).toHaveLength(1)
+    expect(ledger.open("p1").map((u) => u.question)).toEqual(["Which cipher?", "New one"])
+  })
+
   it("redacts secrets a contract carries", () => {
     ledger.record("p1", "a", ContractSchema.parse({ unknowns: [{ question: "Is sk-ant-oat01-LEAKEDTOKEN123456 live?", severity: "low" }] }))
     expect(ledger.open("p1")[0].question).not.toContain("LEAKEDTOKEN")

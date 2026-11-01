@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { EventRow, ProjectRow, Readiness, StepRow } from "@shared/types"
 import { blocks } from "../src/renderer/src/lib/chat"
 import { Timeline } from "../src/renderer/src/lib/timeline"
-import { projectLabel, questionLines, readAnswer, readCommand, setupLines, timelineLines, waiting } from "../tui/src/view"
+import { terminalSafe, projectLabel, questionLines, readAnswer, readCommand, setupLines, timelineLines, waiting } from "../tui/src/view"
 
 /* specs/tui R2.1, R3.1–R3.4: what the TUI's screens show, and how its input line is read. */
 
@@ -98,6 +98,12 @@ describe("the TUI's lines (specs/tui)", () => {
     expect(readAnswer({ prompt: "p", reason: "r", kind: "number", default: 1 }, "42")).toEqual({ answer: 42 })
     expect(readAnswer({ prompt: "p", reason: "r", kind: "number", default: 1 }, "x")).toEqual({ error: "Answer with a number." })
     expect(readAnswer({ prompt: "p", reason: "r", kind: "text", default: "" }, "  free  ")).toEqual({ answer: "free" })
+  })
+
+  it("draws no escape sequence that text from the target carries, keeping its newlines", () => {
+    const esc = String.fromCharCode(27)
+    const bel = String.fromCharCode(7)
+    expect(terminalSafe(`a${esc}]52;c;aGk=${bel}b${esc}[2Jc\nd`)).toBe("a]52;c;aGk=b[2Jc\nd")
   })
 
   it("reads a command and its argument from the input line, and anything else as text", () => {

@@ -21,6 +21,7 @@ running tasks and for the orchestrator that reads each delegation's outcome.
 - **R1.1** When the specialist asks a question, the delegation shall put it to one call of the orchestrator's model with the delegation's context package and the question, outside the task's conversation.
 - **R1.2** When the orchestrator's model answers with an answer that fits the question's kind, the delegation shall return it to the specialist and record the question and answer with the orchestrator as the origin.
 - **R1.3** If the orchestrator's model defers to the user, answers with something that does not fit the question, or the call fails, then the delegation shall put the question to the user.
+- **R1.4** If a question is about authorization, ownership or purpose, or the turn has already put its share of questions to the orchestrator's model, then the delegation shall put it to the user without asking the model.
 
 ## R2 · Safeguard refusal
 

@@ -67,7 +67,12 @@ export class UnknownsLedger {
         change.closed.push(c.id)
       }
     }
+    // The same question already open is not added again, so a repeated contract cannot grow the ledger.
+    const norm = (q: string) => q.replace(/\s+/g, " ").trim().toLowerCase()
+    const open = new Set(this.open(projectId).map((u) => norm(u.question)))
     for (const u of contract.unknowns) {
+      if (open.has(norm(redact(u.question)))) continue
+      open.add(norm(redact(u.question)))
       const id = `unk-${randomUUID().replace(/-/g, "").slice(0, 12)}`
       db.prepare(
         "INSERT INTO unknowns (id, project_id, question, severity, probes, settle, raised_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

@@ -8,6 +8,9 @@ import { stepOf, type SpecialistEntry } from "../../src/renderer/src/lib/timelin
   a command, an answer to the question that waits, or a message. Pure, so it is tested like the renderer's lib/.
 */
 
+// C0 and C1 controls but the newline, and DEL.
+const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g
+
 const mark = (ready: boolean) => (ready ? "[x]" : "[ ]")
 
 /** The first-run setup's three steps, each with its state and what readies it (R2.1). */
@@ -132,4 +135,12 @@ export function readAnswer(q: Question, text: string): { answer: Answer } | { er
 export function readCommand(line: string): { command: string; arg: string } | null {
   const m = /^\/([a-z]+)(?:\s+([\s\S]*))?$/.exec(line.trim())
   return m ? { command: m[1], arg: (m[2] ?? "").trim() } : null
+}
+
+/**
+  Text from the target, the agents or a tool, made safe to draw: every control character but the newline removed, so
+  nothing in it reaches the terminal as an escape sequence (a title, the clipboard, a cursor move).
+*/
+export function terminalSafe(text: string): string {
+  return text.replace(CONTROL, "")
 }

@@ -14,7 +14,7 @@ import { GOALS, type Goal, type Push, type StepRow, type TaskHistory } from "../
 import { blocks } from "../../src/renderer/src/lib/chat"
 import { fold } from "../../src/renderer/src/lib/store"
 import { Timeline } from "../../src/renderer/src/lib/timeline"
-import { projectLabel, projectLines, questionLines, readAnswer, readCommand, setupLines, taskLabel, timelineLines, waiting } from "./view"
+import { terminalSafe, projectLabel, projectLines, questionLines, readAnswer, readCommand, setupLines, taskLabel, timelineLines, waiting } from "./view"
 
 /*
   The TUI's screens on OpenTUI (specs/tui R2, R3): setup, projects, one project, one task. Each is a header, a
@@ -100,12 +100,12 @@ export class App {
   }
 
   private say(text: string, bad = false) {
-    this.status.content = text
+    this.status.content = terminalSafe(text)
     this.status.fg = bad ? "#f87171" : "#a3a3a3"
   }
 
   private show(lines: string[], items: { name: string; id: string }[] | null) {
-    this.body.content = lines.join("\n")
+    this.body.content = terminalSafe(lines.join("\n"))
     this.list.visible = items !== null
     this.listIds = items?.map((i) => i.id) ?? []
     this.list.options = (items ?? []).map((i) => ({ name: i.name, description: "" }))
@@ -131,7 +131,7 @@ export class App {
       }
       case "project": {
         const { project, tasks } = await this.api.getProject(screen.id)
-        this.header.content = `Harness for REA — ${project.name}`
+        this.header.content = terminalSafe(`Harness for REA — ${project.name}`)
         this.show(
           projectLines(project),
           tasks.map((t) => ({ name: taskLabel(t), id: t.id })),
@@ -153,7 +153,7 @@ export class App {
     const t = this.timeline
     if (!h || !t) return
     const state = h.turn ?? h.task.state
-    this.header.content = `[${state}] ${h.task.request.replace(/\s+/g, " ").slice(0, 100)}`
+    this.header.content = terminalSafe(`[${state}] ${h.task.request.replace(/\s+/g, " ").slice(0, 100)}`)
     const steps: StepRow[] = h.steps
     const q = waiting(t.items)
     const lines = [...(t.fromStart ? [] : ["(older events: /older)"]), ...timelineLines(blocks(t.items), steps, (id) => t.run(id))]
