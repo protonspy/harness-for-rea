@@ -49,7 +49,9 @@ describe("the data folder's lock", () => {
   })
 
   it("finds the folder the desktop app keeps its data in, on each platform", () => {
-    expect(defaultDataDir("win32", { APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "C:\\Users\\u")).toBe(join("C:\\Users\\u\\AppData\\Roaming", "Harness for REA"))
+    expect(defaultDataDir("win32", { APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "C:\\Users\\u")).toBe(
+      join("C:\\Users\\u\\AppData\\Roaming", "Harness for REA"),
+    )
     expect(defaultDataDir("darwin", {}, "/Users/u")).toBe(join("/Users/u", "Library", "Application Support", "Harness for REA"))
     expect(defaultDataDir("linux", {}, "/home/u")).toBe(join("/home/u", ".config", "Harness for REA"))
   })

@@ -57,6 +57,7 @@ app.whenReady().then(async () => {
   } catch (e) {
     // The terminal UI holds the data folder: say so, and leave it to it (plans/finish-the-harness 1.9).
     if (!(e instanceof DataFolderBusy)) throw e
+    console.error(e.message)
     dialog.showErrorBox("Harness for REA", e.message)
     app.exit(1)
     return

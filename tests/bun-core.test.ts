@@ -27,4 +27,16 @@ describe.skipIf(!process.env.HFR_BUN)("the core under Bun (plans/finish-the-harn
     expect(out.kinds).toEqual(expect.arrayContaining(["task.started", "model.call", "sandbox.copy", "specialist.result", "turn.done"]))
     expect(out.delegation).toBe("done")
   }, 300_000)
+
+  it("keeps the TUI's provider key in the OS keychain, read back at the next start and never in the database (specs/tui R1.3)", () => {
+    const r = bun(["tests/fixtures/bun-keys.ts"])
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0)
+    expect(JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "")).toEqual({
+      available: true,
+      afterRestart: "sk-or-v1-keychaintest0001",
+      inDb: false,
+      inKeychain: "sk-or-v1-keychaintest0001",
+      afterClear: null,
+    })
+  }, 120_000)
 })
