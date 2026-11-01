@@ -56,12 +56,17 @@ COPY --from=fetch /opt/ghidra /opt/ghidra
 COPY --from=fetch /opt/jadx /opt/jadx
 COPY --from=fetch /opt/apktool /opt/apktool
 
-# REA at its pinned version, its dependencies as the registry pins them, no install scripts; then its
-# whole skill, references included, where the operating guide points the specialist.
-RUN npm install --global --omit=optional --ignore-scripts "rea-agents@$REA_VERSION" \
+# REA from the lockfile beside this file: every package at its locked version and integrity hash, no optional
+# package (Frida's binding among them) and no install scripts; then its whole skill, references included,
+# where the operating guide points the specialist.
+COPY rea /opt/rea
+RUN cd /opt/rea \
+ && npm ci --omit=optional --ignore-scripts --no-audit --no-fund \
  && npm cache clean --force \
- && rea --version \
- && cp -r "$(npm root -g)/rea-agents/skills/reverse-engineer-anything" /opt/hfr/rea-skill \
+ && test ! -e node_modules/frida \
+ && ln -s /opt/rea/node_modules/.bin/rea /usr/local/bin/rea \
+ && test "$(rea --version)" = "$REA_VERSION" \
+ && cp -r /opt/rea/node_modules/rea-agents/skills/reverse-engineer-anything /opt/hfr/rea-skill \
  && test -f /opt/hfr/rea-skill/SKILL.md \
  && printf '#!/bin/sh\nexec /opt/jdk-21/bin/java -jar /opt/apktool/apktool.jar "$@"\n' > /usr/local/bin/apktool \
  && chmod 0755 /usr/local/bin/apktool

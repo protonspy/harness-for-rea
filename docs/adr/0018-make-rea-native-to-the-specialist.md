@@ -24,7 +24,8 @@ Android tools into the image, and to give REA to the specialist only. Reports ci
 **The image.** The published base image (adr:0012-pull-the-specialists-base-image-from-ghcr)
 carries, each pinned by version and checked against its SHA-256 at build:
 
-- `rea-agents` 6.8.0, installed globally with no install scripts;
+- `rea-agents` 6.8.0, with every dependency from a lockfile committed beside the Dockerfile,
+  installed with `npm ci` without optional packages or install scripts;
 - Ghidra 12.1.4;
 - Temurin JDK 21;
 - jadx-headless-mcp 0.7.1;
@@ -73,3 +74,7 @@ the same image, so the binaries are present there, unused.
   `/root/out` is gone when the run ends.
 - The orchestrator could run `rea` through `execute`; only its instructions stop it. A separate
   image is the next step if it does.
+- REA's tools take any path inside the container, so the rule that keeps Claude Code's file tools
+  out of the login volume does not bind them; with root `Bash` already able to read it, this
+  widens nothing. Several REA tools run code (process capture, Rizin commands), as `Bash` does.
+- An REA id in a report is cited, not checked: nothing compares it with the exported bundle.

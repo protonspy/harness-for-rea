@@ -67,7 +67,7 @@ export interface Evidence {
   /** the address (`0x…`) or the REA id */
   ref?: string
   claim: string
-  /** a range or address in one of the package's files, or an REA id in its exact form */
+  /** a range or address in one of the package's files; an REA id is cited, never checked against REA's ledger */
   checked: boolean
 }
 
@@ -79,7 +79,7 @@ export function parseEvidence(report: string, files: string[]): Evidence[] {
     if (line.length > LINE_CAP) continue
     const rea = /^\s*[-*]\s+`?((?:ev|unk)_[0-9a-f]{64})`?\s+[—–-]+\s+(.+)$/.exec(line)
     if (rea) {
-      out.push({ kind: "rea", path: "", startLine: 0, endLine: 0, ref: rea[1], claim: rea[2].trim(), checked: true })
+      out.push({ kind: "rea", path: "", startLine: 0, endLine: 0, ref: rea[1], claim: rea[2].trim(), checked: false })
       continue
     }
     const at = /^\s*[-*]\s+`?([^\s`@:]+)@(0x[0-9a-fA-F]{1,16})`?\s+[—–-]+\s+(.+)$/.exec(line)

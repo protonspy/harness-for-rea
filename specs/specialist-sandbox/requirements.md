@@ -39,7 +39,7 @@ specialist, not the orchestrator, does the extraction and the analysis.
 
 ## R3 · Disk limit
 
-- **R3.1** The sandbox service shall measure a sandbox's disk use as the size of its container's writable layer plus the size of its workspace.
+- **R3.1** The sandbox service shall measure a sandbox's disk use as the size of its container's writable layer plus the sizes of its workspace and its output folder.
 - **R3.2** Where the orchestrator set a sandbox's disk limit, the sandbox service shall measure its disk use after every copy, every command and every delegation in it, and at a fixed interval while it runs.
 - **R3.3** If a sandbox's disk use passes the disk limit the orchestrator set, then the sandbox service shall stop its container, record the use and the limit, and refuse every later call naming it with that reason.
 

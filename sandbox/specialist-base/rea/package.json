@@ -1,0 +1,8 @@
+{
+  "name": "hfr-rea",
+  "private": true,
+  "description": "REA for the specialist's image, installed from the lockfile beside this file (adr:0018-make-rea-native-to-the-specialist).",
+  "dependencies": {
+    "rea-agents": "6.8.0"
+  }
+}

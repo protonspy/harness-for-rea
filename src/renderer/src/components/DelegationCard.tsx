@@ -61,8 +61,8 @@ export function DelegationCard({ step, events, patches }: { step: StepRow; event
               <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Evidence</h4>
               {evidence.map((e, i) => (
                 <div key={i} className="flex items-start gap-2 text-sm">
-                  <Badge variant={e.checked ? "ok" : "bad"} className="mt-0.5 shrink-0">
-                    {e.kind === "rea" ? (e.ref?.startsWith("unk_") ? "REA unknown" : "REA evidence") : e.checked ? "in package" : "unverified"}
+                  <Badge variant={e.kind === "rea" ? "info" : e.checked ? "ok" : "bad"} className="mt-0.5 shrink-0">
+                    {e.kind === "rea" ? (e.ref?.startsWith("unk_") ? "REA unknown, cited" : "REA evidence, cited") : e.checked ? "in package" : "unverified"}
                   </Badge>
                   <Mono className="shrink-0 text-primary" title={e.ref}>
                     {evidenceLabel(e)}

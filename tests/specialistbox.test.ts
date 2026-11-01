@@ -227,6 +227,9 @@ describe("the disk limit (R3)", () => {
     await s.copy(box.id, ["src/a.bin"], [])
     expect(await s.usage(box)).toBe(4096 + 1000)
     expect(folderSize(box.ws.workspace)).toBe(1000)
+    // what the specialist extracts to /root/out lands on the host, and counts too (specs/rea-native R2.4)
+    writeFileSync(join(box.outDir, "extracted.bin"), Buffer.alloc(300))
+    expect(await s.usage(box)).toBe(4096 + 1000 + 300)
     await s.removeAll()
   })
 

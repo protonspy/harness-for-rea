@@ -68,15 +68,16 @@ export function containerEnv(): Record<string, string> {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     ENABLE_CLAUDEAI_MCP_SERVERS: "false",
     CLAUDE_CODE_DISABLE_ARTIFACT: "1",
-    // An MCP call may wait on Ghidra's cold start, up to 330 s (specs/rea-native R2.2).
+    // An MCP call may wait on Ghidra's cold start, up to 330 s, or on the user's answer to a question, up to
+    // the longest question timeout Settings allows (specs/rea-native R2.2, specs/chat R5).
     MCP_TOOL_TIMEOUT: String(MCP_TOOL_TIMEOUT_MS),
   }
 }
 
-/** How long one MCP call may take: ten minutes, past Ghidra's cold start. */
-export const MCP_TOOL_TIMEOUT_MS = 600_000
-/** REA's entry point in the base image's global npm root, run as an MCP server over stdio. */
-export const REA_ENTRY = "/usr/local/lib/node_modules/rea-agents/scripts/rea.mjs"
+/** How long one MCP call may take: a day, past Ghidra's cold start and the longest wait for the user's answer. */
+export const MCP_TOOL_TIMEOUT_MS = 86_400_000
+/** REA's entry point, installed from the base image's lockfile, run as an MCP server over stdio. */
+export const REA_ENTRY = "/opt/rea/node_modules/rea-agents/scripts/rea.mjs"
 /** The REA server's tools, as Claude Code allows them all. */
 export const REA_TOOLS = "mcp__rea"
 
@@ -242,8 +243,10 @@ export function claudeArgs(mode: Mode, model = "opus", effort: SpecialistEffort 
     tools,
     "--allowedTools",
     `${tools},${ASK_USER_TOOL},${REA_TOOLS}`,
-    // The login volume under the home directory holds the plan's token: no file tool may reach it. The shell
-    // can, as root; adr:0016-let-the-orchestrator-run-the-specialists-sandbox accepts that exposure.
+    // The login volume under the home directory holds the plan's token: Claude Code's own file tools may not
+    // reach it. This is no boundary: the shell, as root, and REA's tools, which take any path, can read it;
+    // adr:0016-let-the-orchestrator-run-the-specialists-sandbox and adr:0018-make-rea-native-to-the-specialist
+    // accept that exposure.
     "--disallowedTools",
     "Read(//home/agent/**),Edit(//home/agent/**)",
     "--system-prompt-file",

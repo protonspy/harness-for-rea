@@ -118,8 +118,9 @@ describe("evidence of three kinds (specs/rea-native R3)", () => {
 
   it("reads REA evidence and unknown ids as cited, and nothing that only looks like one", () => {
     expect(parseEvidence(`- ${ev} — the key is derived from the build id\n- \`${unk}\` — whether the server checks it`, [])).toEqual([
-      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: ev, claim: "the key is derived from the build id", checked: true },
-      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: unk, claim: "whether the server checks it", checked: true },
+      // cited, never checked: nothing compares an id with REA's ledger (R3.3)
+      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: ev, claim: "the key is derived from the build id", checked: false },
+      { kind: "rea", path: "", startLine: 0, endLine: 0, ref: unk, claim: "whether the server checks it", checked: false },
     ])
     expect(parseEvidence(`- ev_${"a".repeat(63)} — short\n- ev_${"G".repeat(64)} — not hex`, [])).toEqual([])
   })

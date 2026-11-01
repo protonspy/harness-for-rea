@@ -246,7 +246,7 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     const config = JSON.parse(after(read, "--mcp-config")[0])
     expect(Object.keys(config.mcpServers)).toEqual(["hfr", "rea"])
     expect(config.mcpServers.hfr).toEqual({ type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", "/run/hfr-ask"] })
-    expect(config.mcpServers.rea).toMatchObject({ type: "stdio", command: "node", args: ["/usr/local/lib/node_modules/rea-agents/scripts/rea.mjs", "mcp"] })
+    expect(config.mcpServers.rea).toMatchObject({ type: "stdio", command: "node", args: ["/opt/rea/node_modules/rea-agents/scripts/rea.mjs", "mcp"] })
     // the engines the image carries, given to REA whatever environment the client passes on (R1.3)
     expect(config.mcpServers.rea.env).toMatchObject({
       JAVA_HOME: "/opt/jdk-21",
@@ -260,9 +260,12 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     expect(after(claudeArgs("modify"), "--allowedTools")).toEqual(["Read,Grep,Glob,Edit,Write,Bash,mcp__hfr__ask_user,mcp__rea"])
   })
 
-  it("lets an MCP call run ten minutes, past Ghidra's cold start (specs/rea-native R2.2)", () => {
-    expect(containerEnv().MCP_TOOL_TIMEOUT).toBe("600000")
-    expect(after(dockerRunArgs(spec), "-e")).toContain("MCP_TOOL_TIMEOUT=600000")
+  it("lets an MCP call outlast Ghidra's cold start and the longest wait for the user's answer (specs/rea-native R2.2)", () => {
+    const timeout = Number(containerEnv().MCP_TOOL_TIMEOUT)
+    expect(timeout).toBeGreaterThanOrEqual(330_000)
+    // Settings allow a question to wait up to 1440 minutes
+    expect(timeout).toBeGreaterThanOrEqual(1440 * 60_000)
+    expect(after(dockerRunArgs(spec), "-e")).toContain(`MCP_TOOL_TIMEOUT=${timeout}`)
   })
 
   it("wraps the CLI so its process id is on record and the login volume goes back to the login user (specs/specialist-sandbox R4.4, R4.6)", () => {
@@ -310,7 +313,18 @@ describe("docker run arguments (R2.1–R2.3, R3.2, R3.3)", () => {
     }
     expect(dockerfile.match(/sha256sum -c -/g)).toHaveLength(4)
     expect(dockerfile).toMatch(/^ARG REA_VERSION=\d+\.\d+\.\d+$/m)
-    expect(dockerfile).toContain('npm install --global --omit=optional --ignore-scripts "rea-agents@$REA_VERSION"')
+    // every dependency from the committed lockfile, no optional package, no install script (R1.1)
+    expect(dockerfile).toContain("npm ci --omit=optional --ignore-scripts")
+    expect(dockerfile).toContain("test ! -e node_modules/frida")
+    expect(dockerfile).not.toMatch(/npm install --global/)
+    const manifest = JSON.parse(readFileSync(join(baseDir, "rea", "package.json"), "utf8"))
+    const lock = JSON.parse(readFileSync(join(baseDir, "rea", "package-lock.json"), "utf8"))
+    const version = /^ARG REA_VERSION=(\S+)$/m.exec(dockerfile)![1]
+    expect(manifest.dependencies["rea-agents"]).toBe(version)
+    expect(lock.packages["node_modules/rea-agents"].version).toBe(version)
+    const locked = Object.entries(lock.packages as Record<string, { integrity?: string; link?: boolean }>).filter(([k]) => k)
+    expect(locked.length).toBeGreaterThan(100)
+    for (const [name, p] of locked) expect(p.integrity, name).toMatch(/^sha512-/)
     expect(dockerfile).toContain("/opt/hfr/rea-skill")
     expect(dockerfile).toContain("COPY AGENTS.md /opt/hfr/AGENTS.md")
     expect(dockerfile).toMatch(/GHIDRA_INSTALL_DIR=\/opt\/ghidra/)
