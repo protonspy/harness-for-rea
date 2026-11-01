@@ -75,7 +75,7 @@ await runner.settled(task.id)
 const history = log.history(task.id)
 console.log(
   JSON.stringify({
-    runtime: `bun ${Bun.version}`,
+    runtime: `bun ${(process.versions as Record<string, string | undefined>).bun}`,
     state: log.getTask(task.id).state,
     kinds: [...new Set(history.events.map((e) => e.kind))],
     delegation: history.steps.find((s) => s.kind === "delegation")?.state,
