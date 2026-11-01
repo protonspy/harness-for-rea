@@ -1,0 +1,34 @@
+---
+autonomy: auto
+ci: wait
+---
+
+# Onboarding — requirements
+
+## Purpose
+
+A first-run setup that readies what every project needs before the user can create one: the sandbox
+images with the pinned Claude Code, Claude Code signed in on the user's own plan, and the orchestrator's
+OpenAI-compatible model, with OpenRouter as the default gateway. Settings stay where the same choices
+are changed later.
+
+## R1 · The setup
+
+- **R1.1** While the setup has never been completed, the desktop UI shall open on the setup instead of the projects.
+- **R1.2** The setup shall show three steps in order — the sandbox, Claude Code and the orchestrator's model — each with its state, what it needs and the action that readies it.
+- **R1.3** The sandbox step shall be ready when Docker answers and the sandbox images are prepared, and shall offer to prepare them, showing the build's progress.
+- **R1.4** The Claude Code step shall be ready when Claude Code is signed in, and shall offer the sign-in with the Anthropic page to open and the field for its code, showing the plan signed in.
+- **R1.5** The model step shall start on OpenRouter and let the user pick another OpenAI-compatible provider, set its key and base URL where it takes one, and choose a model from the provider's list or by name.
+- **R1.6** The model step shall be ready when the provider has a key where it needs one and a model is chosen, and the provider answered with its list of models.
+- **R1.7** If a step's check fails, then the setup shall say why and how to fix it, and keep the step not ready.
+- **R1.8** When all three steps are ready and the user finishes the setup, the desktop UI shall record the setup as completed and open the projects.
+
+## R2 · After the setup
+
+- **R2.1** While a step that was ready no longer is, the desktop UI shall show which one and a way to fix it, and shall not let a task start.
+- **R2.2** The setup shall be reachable again from Settings.
+
+## Out of scope
+
+- Installing Docker Desktop for the user.
+- A model step that runs a chat completion to test the key.

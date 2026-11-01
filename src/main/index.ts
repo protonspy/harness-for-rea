@@ -9,6 +9,7 @@ import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { makeDispatcher } from "./ipc"
 import { listModels } from "./orchestrator/models"
+import { blocking, readiness } from "./readiness"
 import { TaskRunner } from "./orchestrator/runner"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
@@ -97,8 +98,30 @@ app.whenReady().then(async () => {
     (status) => push({ type: "login", status }),
   )
 
+  // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
+  const ready = () =>
+    readiness({
+      sandbox: () => sandbox.status(),
+      login: () => login.refresh(),
+      settings: getSettings,
+      keySet: (provider) => keyStatus(provider).set,
+      listModels: () => {
+        const { provider, baseUrl } = getSettings()
+        return listModels({ provider, baseUrl, apiKey: readKey(provider) })
+      },
+    })
+
   const handlers: Handlers = {
     getSettings: () => getSettings(),
+    readiness: () => ready(),
+    // Finishing records the setup only once every step is ready (specs/onboarding R1.8).
+    completeSetup: async () => {
+      const r = await ready()
+      const blocked = blocking(r)
+      if (blocked) throw new Error(blocked)
+      saveSettings({ setupCompleted: true })
+      return { ...r, completed: true }
+    },
     saveSettings: (patch) => saveSettings(patch),
     keyStatus: (provider) => keyStatus(provider),
     saveKey: (key, provider) => saveKey(key, provider),
@@ -124,8 +147,13 @@ app.whenReady().then(async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory"] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
     },
-    // Every task runs its tool calls without asking, patches included (specs/chat R4.1).
-    startTask: (input) => runner.start({ ...input, auto: true }),
+    // Every task runs its tool calls without asking, patches included (specs/chat R4.1); none starts while a
+    // setup step is not ready (specs/onboarding R2.1).
+    startTask: async (input) => {
+      const blocked = blocking(await ready())
+      if (blocked) throw new Error(blocked)
+      return runner.start({ ...input, auto: true })
+    },
     listTasks: ({ limit }) => log.listTasks(limit),
     getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
     cancelTask: (id) => runner.cancel(id),
@@ -162,6 +190,8 @@ app.whenReady().then(async () => {
     minWidth: 960,
     minHeight: 600,
     title: "Harness for REA",
+    // The app icon, shipped with the page (plans/projects-and-onboarding.md 1.1); the installer takes resources/icon.ico.
+    icon: join(__dirname, "../renderer/icon.png"),
     backgroundColor: "#0b0d10",
     show: false,
     webPreferences: webPreferences(join(__dirname, "../preload/index.js")),

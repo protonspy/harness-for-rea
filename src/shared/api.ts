@@ -2,7 +2,7 @@ import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
 import { PROVIDER_IDS } from "./providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
-import type { KeyStatus, LoginStatus, PatchView, Push, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
+import type { KeyStatus, LoginStatus, PatchView, Push, Readiness, SandboxStatus, Settings, TaskHistory, TaskRow } from "./types"
 
 /*
   The whole renderer ⇄ main contract. Each method's arguments have a schema here, the main process
@@ -51,6 +51,8 @@ export const API_SCHEMAS = {
   clearKey: z.tuple([Provider.optional()]),
   listModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
+  readiness: z.tuple([]),
+  completeSetup: z.tuple([]),
   buildSandbox: z.tuple([]),
   loginStatus: z.tuple([]),
   startLogin: z.tuple([]),
@@ -92,6 +94,8 @@ export interface ApiResults {
   clearKey: KeyStatus
   listModels: string[]
   sandboxStatus: SandboxStatus
+  readiness: Readiness
+  completeSetup: Readiness
   buildSandbox: SandboxStatus
   loginStatus: LoginStatus
   startLogin: LoginStatus

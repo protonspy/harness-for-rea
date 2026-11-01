@@ -15,4 +15,5 @@ export const DEFAULT_SETTINGS: Settings = {
   specialistEffort: "default",
   approvalTimeoutMinutes: 30,
   questionTimeoutMinutes: 10,
+  setupCompleted: false,
 }

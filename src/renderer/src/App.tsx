@@ -1,29 +1,60 @@
-import { History, Plus, Settings as SettingsIcon } from "lucide-react"
-import { useEffect, useState } from "react"
-import type { TaskRow } from "@shared/types"
+import { AlertTriangle, History, Plus, Settings as SettingsIcon } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import type { Readiness, TaskRow } from "@shared/types"
+import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/cn"
 import { tone, usd, when } from "@/lib/format"
 import { foldTasks } from "@/lib/store"
 import { NewTask } from "@/views/NewTask"
 import { SettingsView } from "@/views/Settings"
+import { SetupView } from "@/views/Setup"
 import { TaskView } from "@/views/TaskView"
 
-/* The shell: task list and history on the left, the selected view on the right. */
+/*
+  The shell: the first-run setup until it is completed (specs/onboarding R1.1); then the task list and history on
+  the left, the selected view on the right, and a banner naming a setup step that stopped being ready (R2.1).
+*/
 
-type View = { kind: "new" } | { kind: "settings" } | { kind: "task"; id: string }
+type View = { kind: "new" } | { kind: "settings" } | { kind: "setup" } | { kind: "task"; id: string }
 
 export function App() {
+  const api = window.hfr.api
   const [view, setView] = useState<View>({ kind: "new" })
   const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [completed, setCompleted] = useState<boolean | null>(null)
+  const [readiness, setReadiness] = useState<Readiness | null>(null)
 
   useEffect(() => {
-    void window.hfr.api.listTasks({ limit: 200 }).then(setTasks)
+    void api.getSettings().then((s) => setCompleted(s.setupCompleted))
+    void api.listTasks({ limit: 200 }).then(setTasks)
     return window.hfr.onPush((p) => setTasks((list) => foldTasks(list, p)))
-  }, [])
+  }, [api])
+
+  // Once the setup is completed, its steps are checked again whenever the sandbox or the sign-in moves.
+  const check = useCallback(() => void api.readiness().then(setReadiness, () => undefined), [api])
+  useEffect(() => {
+    if (!completed) return
+    check()
+    return window.hfr.onPush((p) => (p.type === "sandbox" || p.type === "login") && check())
+  }, [completed, check])
 
   const open = (id: string) => setView({ kind: "task", id })
 
+  if (completed === null) return null
+  if (!completed)
+    return (
+      <main className="h-full overflow-y-auto">
+        <SetupView
+          onDone={() => {
+            setCompleted(true)
+            setView({ kind: "new" })
+          }}
+        />
+      </main>
+    )
+
+  const blocked = readiness && !readiness.ready ? [readiness.sandbox, readiness.claude, readiness.model].find((s) => !s.ready) : undefined
   return (
     <div className="flex h-full">
       <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
@@ -61,8 +92,26 @@ export function App() {
         </ul>
       </aside>
       <main className="min-w-0 flex-1 overflow-y-auto">
+        {blocked && view.kind !== "setup" && (
+          <div role="alert" className="flex items-center gap-3 border-b border-warning/30 bg-warning/10 px-6 py-2.5 text-sm text-warning">
+            <AlertTriangle size={15} className="shrink-0" />
+            <span className="flex-1">{blocked.reason} No task starts until it is fixed.</span>
+            <Button size="sm" variant="outline" onClick={() => setView({ kind: "setup" })}>
+              Fix it
+            </Button>
+          </div>
+        )}
+        {view.kind === "setup" && (
+          <SetupView
+            again
+            onDone={() => {
+              check()
+              setView({ kind: "new" })
+            }}
+          />
+        )}
         {view.kind === "new" && <NewTask onStarted={(t) => open(t.id)} onSettings={() => setView({ kind: "settings" })} />}
-        {view.kind === "settings" && <SettingsView />}
+        {view.kind === "settings" && <SettingsView onSetup={() => setView({ kind: "setup" })} />}
         {view.kind === "task" && <TaskView key={view.id} id={view.id} onOpen={open} onDeleted={() => setView({ kind: "new" })} />}
       </main>
     </div>

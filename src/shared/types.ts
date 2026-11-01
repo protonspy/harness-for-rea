@@ -123,6 +123,8 @@ export interface Settings {
   approvalTimeoutMinutes: number
   /** how long a question waits for an answer before its default is used (specs/chat R5.4) */
   questionTimeoutMinutes: number
+  /** the user finished the first-run setup once (specs/onboarding R1.8) */
+  setupCompleted: boolean
 }
 
 export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const
@@ -134,6 +136,23 @@ export interface KeyStatus {
   set: boolean
   hint: string
   encryption: boolean
+}
+
+/** One step of the first-run setup: whether it is ready, and why not (specs/onboarding R1). */
+export interface ReadinessStep {
+  ready: boolean
+  /** what is missing and what readies it; empty once ready */
+  reason: string
+}
+
+export interface Readiness {
+  sandbox: ReadinessStep & { building: boolean }
+  claude: ReadinessStep & { plan?: string; email?: string }
+  model: ReadinessStep & { provider: ProviderId; model: string }
+  /** all three steps are ready */
+  ready: boolean
+  /** the user finished the setup once */
+  completed: boolean
 }
 
 export interface SandboxStatus {
