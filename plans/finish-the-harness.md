@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 4f92f99d1b374c9766f4bf5b075c778ec97d6989107d6e716f143af9482653a3
+checksum: 6c01fb8a7b5e6286a7c01730693c7b4a00830f0633a02d098acc57779af3777c
 ---
 
 # Finish the harness
@@ -62,7 +62,7 @@ replayable test vectors.
 - [ ] 1.5 (Unit) Update `README.md` with the TUI, the npm install and the release downloads with the macOS first-run workaround, after the release spec is delivered
   _Depends 1.1_
   _Priority 3_
-- [ ] 1.6 (Unit) Record as an ADR the specialist question and refusal behaviour — the orchestrator's model answers first, a refusal waits on the user's choice of stop, skip or a different technical approach — superseding the user-first part of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel and the re-delegation sentence of plans/specialist-rea.md, and add the matching deltas to R5.2, R5.4 and R5.5 of the chat spec
+- [x] 1.6 (Unit) Record as an ADR the specialist question and refusal behaviour — the orchestrator's model answers first, a refusal waits on the user's choice of stop, skip or a different technical approach — superseding the user-first part of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel and the re-delegation sentence of plans/specialist-rea.md, and add the matching deltas to R5.2, R5.4 and R5.5 of the chat spec
   _Priority 1_
 - [ ] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
   _Priority 2_
