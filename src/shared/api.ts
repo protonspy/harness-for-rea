@@ -105,7 +105,17 @@ export const API_SCHEMAS = {
   pickTarget: z.tuple([z.enum(["file", "folder"])]),
   detectTarget: z.tuple([z.string().trim().min(1).max(1000)]),
   listTasks: z.tuple([z.object({ limit: z.number().int().min(1).max(200).default(50) }).strict()]),
-  getTask: z.tuple([id, z.object({ afterEvent: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(5000).default(2000) }).strict()]),
+  getTask: z.tuple([
+    id,
+    z
+      .object({
+        afterEvent: z.number().int().min(0).optional(),
+        beforeEvent: z.number().int().min(1).optional(),
+        limit: z.number().int().min(1).max(5000).default(2000),
+      })
+      .strict()
+      .refine((o) => o.afterEvent === undefined || o.beforeEvent === undefined, "Give afterEvent or beforeEvent, not both."),
+  ]),
   cancelTask: z.tuple([id]),
   retryTask: z.tuple([id]),
   decidePatch: z.tuple([id, id, z.enum(["approve", "reject"])]),

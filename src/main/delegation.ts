@@ -167,6 +167,8 @@ export async function delegate(
     sandbox?: { boxes: TaskSandboxes; id: string }
     /** the specialist's effort for this delegation, the project's; the Settings default when absent */
     specialistEffort?: SpecialistEffort
+    /** the orchestrator's tool call that started this delegation, which the timeline nests it under (specs/chat-timeline R1.1) */
+    callId?: string
   },
 ): Promise<DelegationResult> {
   const { log } = deps
@@ -177,7 +179,7 @@ export async function delegate(
     title: o.pkg.objective.slice(0, 160),
     agent: "specialist",
     state: "running",
-    data: { context: o.pkg },
+    data: { context: o.pkg, ...(o.callId ? { callId: o.callId } : {}) },
   })
   const ev = (kind: string, summary: string, payload: Record<string, unknown> = {}, state: StepRow["state"] | "" = "") =>
     log.append({ taskId: o.taskId, stepId: step.id, agent: "sandbox", kind, summary, payload, state })

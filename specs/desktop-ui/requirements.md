@@ -24,7 +24,7 @@ looks back at past tasks with what they cost.
 ## R2 · Tasks
 
 - **R2.1** When the user submits a request in a project, the desktop UI shall start a task in that project and show it under the project (specs/projects).
-- **R2.2** While a task runs, the desktop UI shall show its todos, each delegation with its agent and state, and the event log as events arrive.
+- **R2.2** (MODIFIED) While a task runs, the desktop UI shall show its todos, each delegation with its agent and state in the chat timeline, and the event log as events arrive (specs/chat-timeline R1.1).
 - **R2.3** The desktop UI shall show for each delegation its context package, the specialist's report with its evidence, and the files copied, read and written.
 - **R2.4** When a patch awaits approval, the desktop UI shall show its diff with approve and reject actions.
 - **R2.5** The desktop UI shall show tokens and cost per agent and per task, marking the specialist's cost as an estimate.

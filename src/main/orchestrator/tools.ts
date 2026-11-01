@@ -87,7 +87,7 @@ function splitFiles(ctx: ToolContext, files: string[]) {
 
 export function delegateTool(ctx: ToolContext) {
   return tool(
-    async ({ sandbox, ...input }) => {
+    async ({ sandbox, ...input }, config?: { toolCall?: { id?: string } }) => {
       if (sandbox && !ctx.sandboxes) return "ERROR: this task has no sandboxes."
       // A file from the scratch goes to the specialist under .orchestrator/ (specs/chat R6.7); the rest are the source's.
       const { scratch, name } = splitFiles(ctx, input.files)
@@ -112,6 +112,7 @@ export function delegateTool(ctx: ToolContext) {
           prepared,
           sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
           specialistEffort: ctx.specialistEffort,
+          callId: config?.toolCall?.id,
         })
         // The report goes to OpenRouter: no secret shape leaves the machine in it.
         return redactedJson({

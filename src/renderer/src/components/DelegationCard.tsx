@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { Brain, ChevronDown, ChevronRight, MessageSquareText, Wrench } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { ContextPackage, Evidence } from "@shared/context"
 import type { EventRow, PatchView, StepRow } from "@shared/types"
@@ -6,12 +6,17 @@ import Prose from "@/components/Prose"
 import { Mono } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import type { SpecialistEntry } from "@/lib/timeline"
 import { tone } from "@/lib/format"
 import { filesOfStep } from "@/lib/store"
 
-/* One delegation: its context package, the specialist's report and evidence, and the files it touched (specs/desktop-ui R2.3). */
+/*
+  One delegation: its context package, the specialist's own run nested under it (specs/chat-timeline R1.1),
+  its report and evidence, and the files it touched (specs/desktop-ui R2.3).
+*/
 
-export function DelegationCard({ step, events, patches }: { step: StepRow; events: EventRow[]; patches: PatchView[] }) {
+export function DelegationCard({ step, events, patches, run = [] }: { step: StepRow; events: EventRow[]; patches: PatchView[]; run?: SpecialistEntry[] }) {
   const [open, setOpen] = useState(step.state === "running")
   const files = useMemo(() => filesOfStep(events, step.id), [events, step.id])
   const pkg = step.data.context as ContextPackage | undefined
@@ -42,6 +47,14 @@ export function DelegationCard({ step, events, patches }: { step: StepRow; event
               <List title="Constraints" items={pkg.constraints} />
               <List title="Environment" items={pkg.environment} />
               <List title="Excerpts" items={pkg.excerpts.map((e) => `${e.path}:${e.startLine}-${e.endLine}${e.note ? ` — ${e.note}` : ""}`)} mono />
+            </section>
+          )}
+          {run.length > 0 && (
+            <section className="flex flex-col gap-1">
+              <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Specialist's run ({run.length})</h4>
+              {run.map((e) => (
+                <RunEntry key={e.id} entry={e} />
+              ))}
             </section>
           )}
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -75,6 +88,30 @@ export function DelegationCard({ step, events, patches }: { step: StepRow; event
         </div>
       )}
     </Card>
+  )
+}
+
+const ICONS = { text: MessageSquareText, thinking: Brain, tool: Wrench, result: MessageSquareText, note: ChevronRight }
+
+/** One entry of the specialist's run: a line, its payload collapsed until opened (specs/chat-timeline R1.2). */
+function RunEntry({ entry }: { entry: SpecialistEntry }) {
+  const Icon = ICONS[entry.kind]
+  const running = entry.kind === "tool" && entry.output === undefined
+  return (
+    <Collapsible className="rounded border bg-background/60">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
+        <Icon size={12} />
+        {entry.subagent && <Badge>{entry.subagent}</Badge>}
+        <span className={entry.failed ? "truncate text-destructive" : "truncate text-foreground"}>{entry.title}</span>
+        {running && <Badge variant="info">running</Badge>}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t px-2.5 py-2">
+        <pre className="max-h-64 overflow-auto font-mono text-[11.5px] leading-5 break-all whitespace-pre-wrap">{entry.body || "—"}</pre>
+        {entry.output !== undefined && (
+          <pre className="mt-2 max-h-64 overflow-auto border-t pt-2 font-mono text-[11.5px] leading-5 break-all whitespace-pre-wrap">{entry.output || "—"}</pre>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

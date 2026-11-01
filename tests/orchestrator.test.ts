@@ -258,6 +258,15 @@ describe("end to end (specs/orchestrator 3.2)", () => {
     expect(files).toEqual(expect.arrayContaining(["copy:src/a.ts", "read:src/a.ts", "write:src/a.ts", "apply:src/a.ts"]))
     expect(files).not.toContain("copy:src/b.ts")
 
+    // the delegation and its result carry the call's id (specs/chat-timeline R1.1)
+    const events = log.history(task.id).events
+    const call = events.find((e) => e.kind === "tool.call" && e.payload.tool === "delegate_to_specialist")!
+    const result = events.find((e) => e.kind === "tool.result" && e.payload.tool === "delegate_to_specialist")!
+    const step = log.history(task.id).steps.find((s) => s.kind === "delegation")!
+    expect(call.payload.callId).toMatch(/\S/)
+    expect(result.payload.callId).toBe(call.payload.callId)
+    expect(step.data.callId).toBe(call.payload.callId)
+
     // steps, usage and cost
     const steps = log.steps(task.id)
     expect(steps.filter((s) => s.kind === "todo").map((s) => s.title)).toEqual(["Find the bug in the parser", "Fix it"])

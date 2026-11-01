@@ -129,20 +129,60 @@ describe("raw output (R2.2)", () => {
   })
 })
 
-describe("history (R2.4)", () => {
-  it("returns the task, steps, patches and events in order, paged", () => {
+describe("history (R2.4, specs/chat-timeline R2.1, R3.3)", () => {
+  it("returns the task, steps, patches and the newest page of events, oldest first within it", () => {
     const t = log.createTask({ request: "r", sourceRoot: "s", model: "m" })
     log.addStep({ taskId: t.id, kind: "todo", title: "a", agent: "orchestrator" })
     for (let i = 0; i < 5; i++) log.append({ taskId: t.id, agent: "app", kind: "k", summary: `e${i}` })
     log.savePatch({ id: "00000000-0000-4000-8000-000000000001", taskId: t.id, stepId: "s", files: [], diff: "d" })
-    const first = log.history(t.id, { limit: 3 })
+    const newest = log.history(t.id, { limit: 3 })
+    expect(newest.events.map((e) => e.summary)).toEqual(["e2", "e3", "e4"])
+    expect(newest).toMatchObject({ hasOlder: true, hasMore: false })
+    expect(newest.steps).toHaveLength(1)
+    expect(newest.patches).toHaveLength(1)
+    const older = log.history(t.id, { beforeEvent: newest.events[0].id, limit: 3 })
+    expect(older.events.map((e) => e.summary)).toEqual(["e0", "e1"])
+    expect(older).toMatchObject({ hasOlder: false, hasMore: true })
+  })
+
+  it("pages forward after an event, saying whether older and newer events exist", () => {
+    const t = log.createTask({ request: "r", sourceRoot: "s", model: "m" })
+    for (let i = 0; i < 5; i++) log.append({ taskId: t.id, agent: "app", kind: "k", summary: `e${i}` })
+    const all = log.history(t.id).events
+    const first = log.history(t.id, { afterEvent: 0, limit: 3 })
     expect(first.events.map((e) => e.summary)).toEqual(["e0", "e1", "e2"])
-    expect(first.hasMore).toBe(true)
-    expect(first.steps).toHaveLength(1)
-    expect(first.patches).toHaveLength(1)
-    const next = log.history(t.id, { afterEvent: first.events[2].id, limit: 3 })
+    expect(first).toMatchObject({ hasMore: true, hasOlder: false })
+    const next = log.history(t.id, { afterEvent: all[2].id, limit: 3 })
     expect(next.events.map((e) => e.summary)).toEqual(["e3", "e4"])
-    expect(next.hasMore).toBe(false)
+    expect(next).toMatchObject({ hasMore: false, hasOlder: true })
+  })
+
+  it("does not page into another task's events", () => {
+    const a = log.createTask({ request: "a", sourceRoot: "s", model: "m" })
+    const b = log.createTask({ request: "b", sourceRoot: "s", model: "m" })
+    log.append({ taskId: a.id, agent: "app", kind: "k", summary: "a0" })
+    const b0 = log.append({ taskId: b.id, agent: "app", kind: "k", summary: "b0" })
+    log.append({ taskId: a.id, agent: "app", kind: "k", summary: "a1" })
+    expect(log.history(b.id, { beforeEvent: b0.id })).toMatchObject({ events: [], hasOlder: false, hasMore: true })
+    expect(log.history(b.id, { afterEvent: b0.id })).toMatchObject({ events: [], hasOlder: true, hasMore: false })
+  })
+
+  it("sums each agent's usage over the whole task, whatever page is read", () => {
+    const t = log.createTask({ request: "r", sourceRoot: "s", model: "m" })
+    log.append({ taskId: t.id, agent: "orchestrator", kind: "model.call", summary: "m", payload: { tokensIn: 10, tokensOut: 2, costUsd: 0.5 } })
+    for (let i = 0; i < 4; i++) log.append({ taskId: t.id, agent: "app", kind: "k", summary: `e${i}` })
+    log.append({
+      taskId: t.id,
+      agent: "specialist",
+      kind: "specialist.result",
+      summary: "r",
+      payload: { tokensIn: 5, cacheTokens: 7, tokensOut: 3, costUsd: 1.25, estimate: true },
+    })
+    log.append({ taskId: t.id, agent: "orchestrator", kind: "model.call", summary: "m", payload: { tokensIn: 1, tokensOut: 1 } })
+    expect(log.history(t.id, { limit: 1 }).usage).toEqual([
+      { agent: "orchestrator", calls: 2, tokensIn: 11, tokensOut: 3, costUsd: 0.5, estimate: false },
+      { agent: "specialist", calls: 1, tokensIn: 12, tokensOut: 3, costUsd: 1.25, estimate: true },
+    ])
   })
 
   it("lists tasks newest first", () => {

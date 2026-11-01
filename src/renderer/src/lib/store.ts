@@ -1,4 +1,4 @@
-import type { Agent, EventRow, PatchView, Push, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
+import type { AgentUsage, EventRow, PatchView, Push, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 
 /*
   The renderer's state, folded from pushed messages: the loaded task's history and the task list.
@@ -39,30 +39,24 @@ export function foldTasks(list: TaskRow[], p: Push): TaskRow[] {
   return upsert(list, p.task, (a, b) => b.createdAt - a.createdAt)
 }
 
-export interface AgentUsage {
-  agent: Agent | string
-  calls: number
-  tokensIn: number
-  tokensOut: number
-  costUsd: number
-  /** the cost is Claude Code's estimate against the plan, not a charge */
-  estimate: boolean
+/** One event's tokens and cost added to the per-agent usage, when it is a model call or a specialist's result. */
+export function addUsage(usage: AgentUsage[], e: EventRow): AgentUsage[] {
+  if (e.kind !== "model.call" && e.kind !== "specialist.result") return usage
+  const cur = usage.find((u) => u.agent === e.agent) ?? { agent: e.agent, calls: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, estimate: false }
+  const next: AgentUsage = {
+    ...cur,
+    calls: cur.calls + 1,
+    tokensIn: cur.tokensIn + (e.payload.tokensIn ?? 0) + (e.payload.cacheTokens ?? 0),
+    tokensOut: cur.tokensOut + (e.payload.tokensOut ?? 0),
+    costUsd: cur.costUsd + (e.payload.costUsd ?? 0),
+    estimate: cur.estimate || e.payload.estimate === true,
+  }
+  return usage.some((u) => u.agent === e.agent) ? usage.map((u) => (u.agent === e.agent ? next : u)) : [...usage, next]
 }
 
 /** Tokens and cost per agent, from the orchestrator's model calls and the specialist's results. */
 export function usageByAgent(events: EventRow[]): AgentUsage[] {
-  const by = new Map<string, AgentUsage>()
-  for (const e of events) {
-    if (e.kind !== "model.call" && e.kind !== "specialist.result") continue
-    const u = by.get(e.agent) ?? { agent: e.agent, calls: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, estimate: false }
-    u.calls++
-    u.tokensIn += (e.payload.tokensIn ?? 0) + (e.payload.cacheTokens ?? 0)
-    u.tokensOut += e.payload.tokensOut ?? 0
-    u.costUsd += e.payload.costUsd ?? 0
-    u.estimate ||= e.payload.estimate === true
-    by.set(e.agent, u)
-  }
-  return [...by.values()]
+  return events.reduce(addUsage, [] as AgentUsage[])
 }
 
 export interface FilesTouched {

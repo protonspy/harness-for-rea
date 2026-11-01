@@ -148,6 +148,16 @@ export interface PatchView {
   createdAt: number
 }
 
+export interface AgentUsage {
+  agent: Agent | string
+  calls: number
+  tokensIn: number
+  tokensOut: number
+  costUsd: number
+  /** the cost is Claude Code's estimate against the plan, not a charge */
+  estimate: boolean
+}
+
 export interface TaskHistory {
   task: TaskRow
   steps: StepRow[]
@@ -155,6 +165,10 @@ export interface TaskHistory {
   patches: PatchView[]
   /** more events exist after the last one returned */
   hasMore: boolean
+  /** more events exist before the first one returned (specs/chat-timeline R2.1) */
+  hasOlder: boolean
+  /** each agent's usage over the whole task, not only the page (specs/chat-timeline R3.3) */
+  usage: AgentUsage[]
   /** where the conversation stands, from the live run's checkpoint; absent when the task has no run in this process */
   turn?: TaskState
 }

@@ -244,23 +244,34 @@ export class TaskRunner {
         }),
       }))
     ready.catch(() => undefined)
-    const names = new Map<string, string>()
+    const names = new Map<string, { name: string; callId: string }>()
     const callbacks = [
       {
-        handleToolStart: (_tool: unknown, toolInput: string, runId: string, _parent?: string, _tags?: string[], _meta?: unknown, runName?: string) => {
+        handleToolStart: (
+          _tool: unknown,
+          toolInput: string,
+          runId: string,
+          _parent?: string,
+          _tags?: string[],
+          _meta?: unknown,
+          runName?: string,
+          toolCallId?: string,
+        ) => {
           const name = runName ?? "tool"
-          names.set(runId, name)
+          // The call's id pairs its result, and the delegation it starts, on a page that begins mid-task (specs/chat-timeline R1.1).
+          const callId = toolCallId ?? ""
+          names.set(runId, { name, callId })
           if (name === "write_todos") return
           log.append({
             taskId: task.id,
             agent: "orchestrator",
             kind: "tool.call",
             summary: name,
-            payload: { tool: name, input: String(toolInput ?? "").slice(0, 4000) },
+            payload: { tool: name, input: String(toolInput ?? "").slice(0, 4000), ...(callId ? { callId } : {}) },
           })
         },
         handleToolEnd: (output: unknown, runId: string) => {
-          const name = names.get(runId) ?? "tool"
+          const { name, callId } = names.get(runId) ?? { name: "tool", callId: "" }
           names.delete(runId)
           if (name === "write_todos") return
           const out = typeof output === "string" ? output : String((output as { content?: unknown })?.content ?? "")
@@ -269,18 +280,18 @@ export class TaskRunner {
             agent: "orchestrator",
             kind: "tool.result",
             summary: `${name} ${out.startsWith("ERROR:") ? "failed" : "returned"}`,
-            payload: { tool: name, output: out.slice(0, 8000) },
+            payload: { tool: name, output: out.slice(0, 8000), ...(callId ? { callId } : {}) },
           })
         },
         handleToolError: (err: unknown, runId: string) => {
-          const name = names.get(runId) ?? "tool"
+          const { name, callId } = names.get(runId) ?? { name: "tool", callId: "" }
           names.delete(runId)
           log.append({
             taskId: task.id,
             agent: "orchestrator",
             kind: "tool.error",
             summary: `${name} failed`,
-            payload: { tool: name, error: String((err as Error)?.message ?? err).slice(0, 2000) },
+            payload: { tool: name, error: String((err as Error)?.message ?? err).slice(0, 2000), ...(callId ? { callId } : {}) },
           })
         },
       },

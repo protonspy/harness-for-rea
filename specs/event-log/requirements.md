@@ -26,7 +26,7 @@ adr:0005-store-events-in-sqlite-with-raw-jsonl-per-task.
 - **R2.1** The event log shall keep tasks, steps and events in SQLite, migrated by `user_version`.
 - **R2.2** The event log shall append each agent's raw output lines, unparsed, to the task's own JSONL file.
 - **R2.3** When an event is written, the event log shall push it to the renderer.
-- **R2.4** When the renderer asks for a task's history, the event log shall return the task, its steps and its events in order, paged.
+- **R2.4** (MODIFIED) When the renderer asks for a task's history, the event log shall return the task, its steps, its usage per agent, and a page of its events in order, before or after a given event, the newest page when no event is given (specs/chat-timeline R2.1).
 
 ## R3 · Recovery
 

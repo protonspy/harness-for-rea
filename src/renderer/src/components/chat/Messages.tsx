@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { AgentItem, NoticeItem, ToolItem, UserItem } from "@/lib/chat"
+import { stepOf, type SpecialistEntry } from "@/lib/timeline"
 import { cn } from "@/lib/cn"
 import { clock } from "@/lib/format"
 
@@ -49,9 +50,17 @@ export function AgentMessage({ item }: { item: AgentItem }) {
   )
 }
 
-export function ToolCall({ item, steps, events, patches }: { item: ToolItem; steps: StepRow[]; events: EventRow[]; patches: PatchView[] }) {
-  const step = item.stepId ? steps.find((s) => s.id === item.stepId) : undefined
-  if (step) return <DelegationCard step={step} events={events} patches={patches} />
+/** What a tool call needs to show the delegation it started: the steps, the loaded events, the patches and each run. */
+export interface ToolContext {
+  steps: StepRow[]
+  events: EventRow[]
+  patches: PatchView[]
+  run(stepId: string): SpecialistEntry[]
+}
+
+export function ToolCall({ item, ctx }: { item: ToolItem; ctx: ToolContext }) {
+  const step = item.name === "delegate_to_specialist" ? stepOf(item, ctx.steps) : undefined
+  if (step) return <DelegationCard step={step} events={ctx.events} patches={ctx.patches} run={ctx.run(step.id)} />
   return (
     <Collapsible className="rounded-md border bg-card/60">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
@@ -75,11 +84,11 @@ export function ToolCall({ item, steps, events, patches }: { item: ToolItem; ste
 }
 
 /** A run of the orchestrator's tool calls, folded into one line until opened. */
-export function ToolRun({ items, steps, events, patches }: { items: ToolItem[]; steps: StepRow[]; events: EventRow[]; patches: PatchView[] }) {
+export function ToolRun({ items, ctx }: { items: ToolItem[]; ctx: ToolContext }) {
   if (items.length === 1)
     return (
       <div className="ml-10">
-        <ToolCall item={items[0]} steps={steps} events={events} patches={patches} />
+        <ToolCall item={items[0]} ctx={ctx} />
       </div>
     )
   const last = items.at(-1)!
@@ -99,7 +108,7 @@ export function ToolRun({ items, steps, events, patches }: { items: ToolItem[]; 
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1.5 flex flex-col gap-1.5">
         {items.map((i) => (
-          <ToolCall key={i.id} item={i} steps={steps} events={events} patches={patches} />
+          <ToolCall key={i.id} item={i} ctx={ctx} />
         ))}
       </CollapsibleContent>
     </Collapsible>
