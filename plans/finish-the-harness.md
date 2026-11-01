@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 5cbd7df15c76e71122a2d1d5d775fecb567b1b096fde5ed82d31814eee7e1fb0
+checksum: cacad848caf0085b69f6a45c9b54ebacb29bc4ff655f67786038a91e46536a4b
 ---
 
 # Finish the harness
@@ -70,7 +70,7 @@ replayable test vectors.
   _Priority 3_
 - [x] 1.6 (Unit) Record as an ADR the specialist question and refusal behaviour — the orchestrator's model answers first, a refusal waits on the user's choice of stop, skip or a different technical approach — superseding the user-first part of adr:0008-ask-the-user-from-the-specialist-over-the-run-channel and the re-delegation sentence of plans/specialist-rea.md, and add the matching deltas to R5.2, R5.4 and R5.5 of the chat spec
   _Priority 1_
-- [ ] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
+- [x] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
   _Priority 2_
 - [ ] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
   _Depends 1.7_
