@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import type { Push } from "@shared/types"
@@ -6,6 +7,7 @@ import { closeDb, openDb } from "./db"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog } from "./events/log"
 import { registerSecret } from "./events/redact"
+import { lockDataFolder, type AppName } from "./lock"
 import { listModels } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
@@ -28,6 +30,8 @@ import { UnknownsLedger } from "./unknowns"
 
 /** What the app the core runs in provides. */
 export interface CoreHost {
+  /** which app this is, named to the other when it holds the data folder (plans/finish-the-harness 1.9) */
+  app: AppName
   /** the app's data folder: the database, the projects and their tasks */
   dataDir: string
   /** where the specialist's image sources are: `sandbox/` in the repository or the packaged resources */
@@ -51,8 +55,12 @@ export interface Core {
   shutdown(): Promise<void>
 }
 
+/** Starts the core; throws `DataFolderBusy` when the other app holds the data folder, before anything is touched. */
 export async function startCore(host: CoreHost): Promise<Core> {
   const { dataDir, push } = host
+  mkdirSync(dataDir, { recursive: true })
+  // Taken before the database opens, so recover() below never interrupts the other app's live tasks.
+  const unlock = lockDataFolder(dataDir, host.app)
   openDb(join(dataDir, "hfr.db"))
   useKeyStore(host.keys)
   onKey(registerSecret)
@@ -220,6 +228,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
         await runner.stopAll()
       } finally {
         closeDb()
+        unlock()
       }
     },
   }

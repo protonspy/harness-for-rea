@@ -5,6 +5,7 @@ import { startCore } from "./core"
 import { contentSecurityPolicy } from "./csp"
 import { makeDispatcher } from "./ipc"
 import { electronKeyStore } from "./keys-electron"
+import { DataFolderBusy } from "./lock"
 import { lockNavigation, webPreferences } from "./window"
 
 /*
@@ -41,15 +42,25 @@ app.whenReady().then(async () => {
     const r = await dialog.showOpenDialog(win!, { properties })
     return r.canceled ? null : (r.filePaths[0] ?? null)
   }
-  const core = await startCore({
-    dataDir: app.getPath("userData"),
-    sandboxDir: sandboxDir(),
-    push,
-    keys: electronKeyStore(),
-    pickFolder: () => pick(["openDirectory"]),
-    pickTarget: (kind) => pick([kind === "file" ? "openFile" : "openDirectory"]),
-    openExternal: (url) => shell.openExternal(url),
-  })
+  let core: Awaited<ReturnType<typeof startCore>>
+  try {
+    core = await startCore({
+      app: "desktop",
+      dataDir: app.getPath("userData"),
+      sandboxDir: sandboxDir(),
+      push,
+      keys: electronKeyStore(),
+      pickFolder: () => pick(["openDirectory"]),
+      pickTarget: (kind) => pick([kind === "file" ? "openFile" : "openDirectory"]),
+      openExternal: (url) => shell.openExternal(url),
+    })
+  } catch (e) {
+    // The terminal UI holds the data folder: say so, and leave it to it (plans/finish-the-harness 1.9).
+    if (!(e instanceof DataFolderBusy)) throw e
+    dialog.showErrorBox("Harness for REA", e.message)
+    app.exit(1)
+    return
+  }
   const dispatch = makeDispatcher(core.handlers, page)
   ipcMain.handle("api", (e, method: unknown, ...args: unknown[]) => dispatch(e.senderFrame?.url ?? "", method, args))
 

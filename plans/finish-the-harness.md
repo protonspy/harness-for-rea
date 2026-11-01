@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 450fcf1d042e5bb471087f5bb7f1023b7fbe00dbc6c1ca6b688a473cf7b86bd9
+checksum: f955e3eaa841fb5e6e4c3759089d3d01e73668a084b524a253fecaf8951e7755
 ---
 
 # Finish the harness
@@ -74,7 +74,7 @@ replayable test vectors.
   _Priority 2_
 - [x] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
   _Depends 1.7_
-- [ ] 1.9 (Unit) Guard the data folder with a lock both apps take at start, so the second one says which app holds it and exits, and `log.recover()` never interrupts a live task
+- [x] 1.9 (Unit) Guard the data folder with a lock both apps take at start, so the second one says which app holds it and exits, and `log.recover()` never interrupts a live task
   _Depends 1.8_
 
 ## Done when
