@@ -32,8 +32,16 @@ themselves. -->
 - **evidence** — a claim in a report tied to a file and line range, or to a captured tool output, that the orchestrator can check
 - **event** — one normalized, redacted record of an agent action, stored in SQLite and shown in the UI
 - **patch approval** — the user's explicit decision to apply a change produced in the sandbox to the original files
-- **task** — one request from the user about one source folder, run by the orchestrator from start to its consolidated answer. Avoid: job
+- **task** — one request from the user in a project, run by the orchestrator from start to its consolidated answer. Avoid: job
 - **step** — one unit of a task: a todo the orchestrator wrote, or a delegation
 - **workspace** — `workspace/<uuid>/` under the app's data folder, the copies a delegation's sandbox mounts at `/work`, with its snapshot and run directory beside it
 - **base image** — `hfr-specialist-base` on GHCR: the specialist image without Claude Code, pinned by digest in `sandbox/images.json`
 - **specialist image** — `hfr-specialist:<version>`, built locally from the base image plus the verified Claude Code CLI
+- **project** — a target with a goal, a model and its tasks, which share the project's sandboxes and analyses (adr:0020-group-tasks-into-projects-that-share-their-analyses)
+- **target** — the file or folder a project analyses: a file is copied into the project's folder, a folder is read in place
+- **analysis** — a delegation's report with its evidence, kept with the project so every later task of it can read it
+- **safeguard refusal** — the specialist declining a step under its usage policy: its own state, never a failure to retry or a request to reword
+- **unknowns ledger** — the project's list of what an analysis left open, each item tied to the analysis that raised it and the one that closed it
+- **test vector** — an input and the output the target produced for it, recorded by an analysis and replayed against a reimplementation
+- **chat timeline** — the task view: each agent's turns, tool calls and delegations, the specialist's own tool calls nested under its delegation
+- **TUI** — the terminal UI on OpenTUI under Bun, beside the desktop app
