@@ -20,6 +20,9 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The pull request's code runs here: it gets no token left in .git/config.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
