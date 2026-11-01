@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/finish-the-harness
-delivery: in-progress
+delivery: in-review
+pr: 13
 ---
 
 # Release — requirements

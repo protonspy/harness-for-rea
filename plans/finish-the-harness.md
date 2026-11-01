@@ -2,7 +2,9 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 54cd0ee36f34eb7c6f2b23d3d838e93b1ac01402dd021ac8ac90727145f454ab
+pr: per-plan
+merge: manual
+checksum: 76ccfa9414d64af7e02c3ca38c83a74a9894b3ee2e4f268999b3acad95feac67
 ---
 
 # Finish the harness
