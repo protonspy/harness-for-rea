@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/finish-the-harness
+delivery: in-progress
 ---
 
 # Analysis contract — requirements
