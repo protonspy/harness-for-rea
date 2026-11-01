@@ -19,6 +19,7 @@ import { rejectPatch, type DelegationDeps } from "../delegation"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { makeModel } from "./model"
+import type { SpecialistBoxes } from "../sandbox/specialistbox"
 import { APPLY_PATCH, type ToolContext } from "./tools"
 
 /*
@@ -35,6 +36,8 @@ export interface TaskWorkspace {
   root: string
   /** the writable place for the agent's own code, when the backend has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
+  /** the sandboxes the orchestrator creates for the specialist, removed with the workspace (specs/specialist-sandbox R2.6) */
+  sandboxes?: SpecialistBoxes
   dispose(): Promise<void>
 }
 
@@ -112,7 +115,7 @@ export class TaskRunner {
     this.checkpointer = deps.checkpointer ?? new MemorySaver()
   }
 
-  start(input: { request: string; sourceRoot: string; gated?: GateableTool[] }): TaskRow {
+  start(input: { request: string; sourceRoot: string; gated?: GateableTool[]; auto?: boolean }): TaskRow {
     let dir = false
     try {
       dir = statSync(input.sourceRoot).isDirectory()
@@ -151,7 +154,9 @@ export class TaskRunner {
       signal: abort.signal,
       ask: (q, agent, stepId) => this.ask(task.id, q, agent, stepId),
     }
-    const gated = [...new Set<GateableTool>([ALWAYS_GATED, ...(input.gated ?? [])])]
+    const auto = input.auto === true
+    ctx.auto = auto
+    const gated = auto ? [] : [...new Set<GateableTool>([ALWAYS_GATED, ...(input.gated ?? [])])]
     const ready = this.deps.workspace(task).then((ws) => ({
       ws,
       agent: buildAgent({
@@ -159,12 +164,14 @@ export class TaskRunner {
         ctx: Object.assign(ctx, {
           root: ws.root,
           scratch: ws.scratch,
+          sandboxes: ws.sandboxes,
           readScratch: async (paths: string[]) => (await ws.backend.downloadFiles(paths)).map((f) => ({ path: f.path, content: f.content ?? null })),
         }),
         checkpointer: this.checkpointer,
         backend: ws.backend,
         inbox: () => this.drainInbox(task.id),
         gated,
+        auto,
         scratch: ws.scratch,
       }),
     }))
@@ -233,7 +240,7 @@ export class TaskRunner {
       kind: "task.started",
       state: "running",
       summary: "Task started",
-      payload: { input: task.request, model: task.model, gated },
+      payload: { input: task.request, model: task.model, gated, auto },
     })
     this.userMessage(task.id, task.request)
     live.run = this.drive(task.id, { messages: [new HumanMessage(task.request)] }, callbacks)
@@ -662,10 +669,10 @@ export class TaskRunner {
     const t = this.deps.log.getTask(taskId)
     if (!["interrupted", "failed", "cancelled"].includes(t.state))
       throw new Error(`Only an interrupted, failed or cancelled task can be retried; this one is ${t.state}.`)
-    // The tools the user chose to gate carry over, as recorded when the task started (specs/chat R4.1).
+    // A task runs its calls without asking unless it was started with gates; one from before that choice existed runs without (specs/chat R4.1).
     const started = this.deps.log.history(taskId).events.find((e) => e.kind === "task.started")
     const gated = (started?.payload.gated as unknown[] | undefined)?.filter((g): g is GateableTool => (GATEABLE_TOOLS as readonly unknown[]).includes(g))
-    return this.start({ request: t.request, sourceRoot: t.sourceRoot, gated })
+    return this.start({ request: t.request, sourceRoot: t.sourceRoot, gated, auto: started?.payload.auto !== false })
   }
 
   /** Settles when the task's current turn stops: at its end, at an approval pause, or awaiting the user. */

@@ -9,6 +9,7 @@ import {
   BUFFER_CAP,
   dockerExecBuffer,
   OUTPUT_CAP,
+  RESTARTED,
   TaskBox,
   taskBoxArgs,
   taskBoxName,
@@ -25,10 +26,8 @@ import { SPECIALIST_IMAGE } from "../src/main/sandbox/docker"
   (specs/task-sandbox R3.1, R3.2).
 */
 
-const limits = { memoryMb: 1024, cpus: 1, pidsLimit: 128 }
-
 describe("task container arguments (R2.2)", () => {
-  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo", limits)
+  const args = taskBoxArgs("t1", "C:\\Users\\me\\repo")
   const after = (flag: string) => args.filter((_, i) => args[i - 1] === flag)
 
   it("binds the whole source folder read-only at /workspace and nothing else", () => {
@@ -37,24 +36,28 @@ describe("task container arguments (R2.2)", () => {
     expect(after("-w")).toEqual([WORKSPACE])
   })
 
-  it("has Docker's default network, no privileges, a read-only root and limits (specs/sandbox-images R4.1)", () => {
+  it("has Docker's default network, root with a writable root to install software, and no limit (specs/sandbox-images R4.1, specs/specialist-sandbox R6.1)", () => {
     expect(args).not.toContain("--network")
+    expect(after("--user")).toEqual(["0:0"])
     expect(after("--cap-drop")).toEqual(["ALL"])
+    expect(after("--cap-add")).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETUID", "SETGID", "KILL"])
+    expect(args).not.toContain("--read-only")
+    expect(args).not.toContain("--privileged")
     expect(after("--security-opt")).toEqual(["no-new-privileges"])
-    expect(after("--user")).toEqual(["1000:1000"])
-    expect(args).toContain("--read-only")
-    expect(after("--memory")).toEqual(["1024m"])
+    expect(args.join(" ")).not.toMatch(/docker\.sock/)
+    for (const flag of ["--memory", "--memory-swap", "--cpus", "--pids-limit", "--storage-opt"]) expect(args).not.toContain(flag)
     expect(after("--name")).toEqual([taskBoxName("t1")])
-    expect(args.slice(-2)).toEqual([SPECIALIST_IMAGE, "infinity"])
+    expect(args.slice(-3)).toEqual([SPECIALIST_IMAGE, "-c", `mkdir -p ${SCRATCH} && exec sleep infinity`])
+    expect(after("--entrypoint")).toEqual(["sh"])
     expect(args.join(" ")).not.toMatch(/ -e |--env/)
   })
 
   it("refuses a source path that would add mount options", () => {
-    expect(() => taskBoxArgs("t", "C:/a,b", limits)).toThrow(/comma or quote/)
+    expect(() => taskBoxArgs("t", "C:/a,b")).toThrow(/comma or quote/)
   })
 
-  it("gives the orchestrator a writable, executable /scratch apart from the read-only source (specs/chat R6.3)", () => {
-    expect(after("--tmpfs")).toEqual(["/tmp:rw,nosuid,nodev,size=256m", `${SCRATCH}:rw,exec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=0700`])
+  it("gives the orchestrator a writable /scratch on disk apart from the read-only source, with no size cap (specs/chat R6.3, specs/specialist-sandbox R6.2)", () => {
+    expect(args).not.toContain("--tmpfs")
     expect(SCRATCH).toBe("/scratch")
     expect(after("--mount")).toHaveLength(1)
     expect(after("--mount")[0]).toContain(",readonly")
@@ -152,13 +155,41 @@ describe("TaskBox", () => {
 
   it("starts the container or says why it could not, and removes it", async () => {
     const ok = fake(() => ({}))
-    const box = await TaskBox.start(ok.exec, "t1", "C:/repo", limits)
+    const box = await TaskBox.start(ok.exec, "t1", "C:/repo")
     expect(ok.calls[0].slice(0, 2)).toEqual(["run", "-d"])
     await box.dispose()
     expect(ok.calls.at(-1)).toEqual(["rm", "-f", "hfr-orch-t1"])
     await expect(
-      TaskBox.start(fake(() => ({ code: 125, stderr: "docker: Error response from daemon: invalid mount\n" })).exec, "t2", "C:/repo", limits),
+      TaskBox.start(fake(() => ({ code: 125, stderr: "docker: Error response from daemon: invalid mount\n" })).exec, "t2", "C:/repo"),
     ).rejects.toThrow(/invalid mount/)
+  })
+
+  it("starts a container that went away again, once, and says the scratch was reset (specs/orchestrator R2.2)", async () => {
+    let alive = true
+    const f = fake((a) => {
+      if (a[0] === "run") return ((alive = true), {})
+      if (a[0] === "exec" && !alive) return { code: 1, stderr: "Error response from daemon: No such container: hfr-orch-t1\n" }
+      return { stdout: Buffer.from("ok\n") }
+    })
+    const box = await TaskBox.start(f.exec, "t1", "C:/repo")
+    alive = false
+    const r = await box.execute("echo ok")
+    expect(r).toMatchObject({ exitCode: 0 })
+    expect(r.output).toBe(`${RESTARTED} ok\n`)
+    expect(f.calls.filter((c) => c[0] === "run")).toHaveLength(2)
+    alive = false
+    expect((await box.downloadFiles(["/workspace/a"]))[0].content).toEqual(new Uint8Array(Buffer.from("ok\n")))
+    // Once disposed, a gone container stays gone.
+    await box.dispose()
+    alive = false
+    expect((await box.execute("echo ok")).output).toMatch(/No such container/)
+    expect(f.calls.filter((c) => c[0] === "run")).toHaveLength(3)
+  })
+
+  it("reports a container that cannot be started again as the error it was", async () => {
+    const f = fake((a) => (a[0] === "run" ? { code: 125, stderr: "no space" } : { code: 1, stderr: "Error response from daemon: No such container: x\n" }))
+    const box = new TaskBox(f.exec, "t1", async () => (await f.exec(["run"])).code === 0)
+    expect((await box.execute("ls")).output).toMatch(/No such container/)
   })
 })
 
@@ -215,22 +246,26 @@ describe("relativeTo", () => {
 
 /* Against the real Docker and the built image: HFR_DOCKER=1 npx vitest run tests/taskbox.test.ts */
 describe.skipIf(!process.env.HFR_DOCKER)("TaskBox on Docker", () => {
-  it("serves the source read-only and runs nothing with network", async () => {
+  it("serves the source read-only to root, reaches the internet, and comes back when removed", async () => {
     const src = mkdtempSync(join(tmpdir(), "hfr-box-"))
     mkdirSync(join(src, "src"))
     writeFileSync(join(src, "src", "a.js"), "one\ntwo\n")
-    const box = await TaskBox.start(dockerExecBuffer, `smoke-${Date.now()}`, src, limits)
+    const id = `smoke-${Date.now()}`
+    const box = await TaskBox.start(dockerExecBuffer, id, src)
     try {
       expect((await box.read("/workspace/src/a.js")).error).toBeUndefined()
       expect(JSON.stringify(await box.read("/workspace/src/a.js"))).toContain("two")
       const write = await box.execute("echo x > /workspace/new.txt")
       expect(write.exitCode).not.toBe(0)
-      expect((await box.execute("getent hosts example.com || echo no-dns")).output).toContain("no-dns")
-      expect((await box.execute("id -u")).output.trim()).toBe("1000")
+      expect((await box.execute("getent hosts example.com || echo no-dns")).output).not.toContain("no-dns")
+      expect((await box.execute("id -u")).output.trim()).toBe("0")
       // the scratch takes writes and runs them; the source still refuses them (specs/chat R6.3)
       expect((await box.write("/scratch/probe.sh", "echo probed")).error).toBeUndefined()
       expect((await box.execute("sh /scratch/probe.sh")).output.trim()).toBe("probed")
       expect((await box.write("/workspace/probe.sh", "x")).error).toBeDefined()
+      // removed from outside, it is started again with a fresh scratch, and the source is still there
+      await dockerExecBuffer(["rm", "-f", taskBoxName(id)])
+      expect((await box.execute("ls /scratch; cat /workspace/src/a.js")).output).toBe(`${RESTARTED} one\ntwo\n`)
     } finally {
       await box.dispose()
     }

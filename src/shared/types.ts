@@ -115,9 +115,6 @@ export interface Settings {
   baseUrl: string
   model: string
   timeoutMinutes: number
-  memoryMb: number
-  cpus: number
-  pidsLimit: number
   discardOnCompletion: boolean
   /** `reasoning.effort` for the orchestrator (OpenRouter's, or `reasoning_effort` on other providers); "default" sends none */
   orchestratorEffort: OrchestratorEffort

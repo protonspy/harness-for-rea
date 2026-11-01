@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-/* Settings: the orchestrator's provider, key and endpoint, the model, the sandbox limits, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
+/* Settings: the orchestrator's provider, key and endpoint, the model, the delegation timeout, Docker, images and the Claude sign-in (specs/desktop-ui R1). */
 
 const message = (e: unknown) => (e as Error).message.replace(/^Error invoking remote method 'api': (\w*Error: )?/, "")
 
@@ -227,31 +227,6 @@ export function SettingsView() {
                 max={240}
                 defaultValue={settings.timeoutMinutes}
                 onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ timeoutMinutes: num(e.target.value) })}
-              />
-            </Field>
-            <Field label="Memory (MB)">
-              <Input
-                type="number"
-                min={256}
-                defaultValue={settings.memoryMb}
-                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ memoryMb: num(e.target.value) })}
-              />
-            </Field>
-            <Field label="CPUs">
-              <Input
-                type="number"
-                min={0.5}
-                step={0.5}
-                defaultValue={settings.cpus}
-                onBlur={(e) => !Number.isNaN(num(e.target.value)) && save({ cpus: num(e.target.value) })}
-              />
-            </Field>
-            <Field label="Process limit">
-              <Input
-                type="number"
-                min={32}
-                defaultValue={settings.pidsLimit}
-                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ pidsLimit: num(e.target.value) })}
               />
             </Field>
           </div>

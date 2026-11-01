@@ -20,6 +20,7 @@ build, format, lint and test commands the delivery gate runs.
 - **R1.1** The app shell shall create its window with context isolation, the renderer sandbox, web security on, and Node integration and web views off.
 - **R1.2** If the renderer navigates away from the app's page or opens a new window, then the app shell shall block it.
 - **R1.3** The app shell shall load the renderer under a Content Security Policy that allows scripts only from the app itself.
+- **R1.4** (ADDED) When the app is launched while it is already running, the app shell shall focus the running window and quit the second launch before it starts any service.
 
 ## R2 · IPC
 

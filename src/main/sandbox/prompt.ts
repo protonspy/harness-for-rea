@@ -12,15 +12,25 @@ export function workPath(rel: string): string {
   return `${WORK}/${rel.replace(/\\/g, "/").replace(/^\/+/, "")}`
 }
 
-export function renderSystemPrompt(pkg: ContextPackage): string {
+/** Where the specialist keeps what it extracts, builds or installs: outside /work, so it never becomes part of a patch. */
+export const OWN_OUTPUT = "/root/out"
+
+/**
+  The specialist's instructions. `sandbox` is true when it runs in a sandbox the orchestrator prepared, whose
+  /work stays writable in read mode (specs/specialist-sandbox R4.7).
+*/
+export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string {
   const edit =
     pkg.mode === "modify"
-      ? "You may edit the files in /work with Edit and Write, changing only what the objective requires. Your edits are proposed to the user as a patch; nothing outside /work changes."
-      : "/work is read-only. Do not try to change any file; analyse and report."
+      ? "You may edit the files in /work with Edit, Write or the shell, changing only what the objective requires. Every file you change, add or delete in /work is proposed to the user as a patch; nothing outside /work changes the user's files."
+      : sandbox
+        ? "Leave the files in /work as they are: this step changes nothing; analyse and report."
+        : "/work is read-only. Do not try to change any file; analyse and report."
   return [
     "You are a senior software engineer doing deep analysis of one well-scoped step of a larger task.",
     "The artifacts in /work are owned by the user or authorized for analysis, including reverse engineering of the user's own software.",
     "You see only the files copied into /work for this step. Work from them; when something you need is missing, say so in the report rather than guessing.",
+    `You run as root in a Linux container with full internet access and a shell (Bash): unpack, extract, disassemble, decompile, build and run whatever the analysis needs, yourself. Install the tools you need with apt-get (run apt-get update first), pip or npm. Keep everything you extract, build or download in ${OWN_OUTPUT} or /tmp, never in /work.`,
     edit,
     "Back every claim with evidence: a path relative to /work and a line range you actually read.",
     "When a fact only the user knows would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",

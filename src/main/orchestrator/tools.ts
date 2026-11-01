@@ -6,7 +6,9 @@ import { ContextPackageSchema } from "@shared/context"
 import { approvePatch, delegate, DelegationRefused, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
 import { makePatchFrom, PATCH_CAP } from "../sandbox/patch"
-import { PREPARED, WORKSPACE_CAP, type PreparedFile } from "../sandbox/workspace"
+import { PathRejected } from "../sandbox/paths"
+import { COMMAND_DEFAULT_S, COMMAND_MAX_S, SandboxError, type SpecialistBoxes } from "../sandbox/specialistbox"
+import { PREPARED, type PreparedFile } from "../sandbox/workspace"
 import { SpecialistError } from "../specialist/executor"
 
 /*
@@ -21,6 +23,12 @@ export const DELEGATE = "delegate_to_specialist"
 export const APPLY_PATCH = "apply_patch"
 export const ASK_USER = "ask_user"
 export const PROPOSE_PATCH = "propose_patch"
+export const SANDBOX_CREATE = "sandbox_create"
+/** Most bytes read out of the scratch at once: they pass through the app's own memory on the way. */
+export const PREPARED_CAP = 512 * 1024 * 1024
+export const SANDBOX_COPY = "sandbox_copy"
+export const SANDBOX_EXEC = "sandbox_exec"
+export const SANDBOX_DESTROY = "sandbox_destroy"
 
 export interface ToolContext {
   deps: DelegationDeps
@@ -33,8 +41,12 @@ export interface ToolContext {
   ask?(q: Question, agent: "orchestrator" | "specialist", stepId?: string): Promise<{ answer: Answer; origin: Origin }>
   /** the agent's writable scratch in its sandbox, when it has one (adr:0009-give-the-orchestrator-a-writable-scratch) */
   scratch?: string
+  /** the task runs its calls without asking, so nobody approves a patch it applies (specs/chat R4.1) */
+  auto?: boolean
   /** reads files out of the scratch; one it cannot read comes back with no content */
   readScratch?(paths: string[]): Promise<{ path: string; content: Uint8Array | null }[]>
+  /** the sandboxes the orchestrator creates for the specialist (specs/specialist-sandbox) */
+  sandboxes?: SpecialistBoxes
 }
 
 function redactedJson(v: unknown): string {
@@ -48,12 +60,30 @@ export function relativeTo(root: string, p: string): string {
   return (r && (s === r || s.startsWith(`${r}/`)) ? s.slice(r.length) : s).replace(/^\/+/, "")
 }
 
+/** The package plus the sandbox to run in, which the package itself never carries. */
+const DelegateSchema = ContextPackageSchema.extend({
+  sandbox: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      `A sandbox from ${SANDBOX_CREATE} to run the specialist in, with what you prepared there; the package's files it lacks are copied in. Without it the specialist gets a fresh container of its own.`,
+    ),
+})
+
+/** Source files by their path relative to the source folder, and scratch files by their path under .orchestrator/. */
+function splitFiles(ctx: ToolContext, files: string[]) {
+  const scratch = files.filter((f) => inScratch(f, ctx.scratch))
+  const name = (p: string) => (inScratch(p, ctx.scratch) ? `${PREPARED}/${posix.normalize(p).slice(ctx.scratch!.length + 1)}` : relativeTo(ctx.root, p))
+  return { scratch, name, source: files.filter((f) => !inScratch(f, ctx.scratch)).map(name) }
+}
+
 export function delegateTool(ctx: ToolContext) {
   return tool(
-    async (input) => {
+    async ({ sandbox, ...input }) => {
+      if (sandbox && !ctx.sandboxes) return "ERROR: this task has no sandboxes."
       // A file from the scratch goes to the specialist under .orchestrator/ (specs/chat R6.7); the rest are the source's.
-      const scratch = input.files.filter((f) => inScratch(f, ctx.scratch))
-      const name = (p: string) => (inScratch(p, ctx.scratch) ? `${PREPARED}/${posix.normalize(p).slice(ctx.scratch!.length + 1)}` : relativeTo(ctx.root, p))
+      const { scratch, name } = splitFiles(ctx, input.files)
       const pkg = ContextPackageSchema.parse({
         ...input,
         files: input.files.map(name),
@@ -61,12 +91,20 @@ export function delegateTool(ctx: ToolContext) {
       })
       let prepared: PreparedFile[] = []
       if (scratch.length) {
-        const read = await readScratchFiles(ctx, scratch, WORKSPACE_CAP)
+        const read = await readScratchFiles(ctx, scratch, PREPARED_CAP)
         if (typeof read === "string") return `ERROR: ${read}.`
         prepared = [...read].map(([p, content]) => ({ path: name(p).slice(PREPARED.length + 1), content }))
       }
       try {
-        const r = await delegate(ctx.deps, { taskId: ctx.taskId, sourceRoot: ctx.sourceRoot, pkg, signal: ctx.signal, ask: ctx.ask, prepared })
+        const r = await delegate(ctx.deps, {
+          taskId: ctx.taskId,
+          sourceRoot: ctx.sourceRoot,
+          pkg,
+          signal: ctx.signal,
+          ask: ctx.ask,
+          prepared,
+          sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
+        })
         // The report goes to OpenRouter: no secret shape leaves the machine in it.
         return redactedJson({
           report: r.report,
@@ -88,13 +126,121 @@ export function delegateTool(ctx: ToolContext) {
     {
       name: DELEGATE,
       description: [
-        "Delegate one well-scoped step to the specialist, Claude Opus running in a sandbox that sees only the files you list.",
+        "Delegate one well-scoped step to the specialist, Claude Opus running as root with a shell in a sandbox that sees only the files you list (and, in a sandbox you prepared, what you put there).",
         "Files may come from the source or from your scratch area; the specialist gets the scratch ones under .orchestrator/, and they are never part of a patch.",
         "It sees nothing else: not the user's request, not this conversation. State the objective and questions so they stand on their own.",
         "Use mode 'modify' only when the step must change files; the change comes back as a patch.",
         "Returns the specialist's report, its evidence lines (path:start-end — claim) and any patch.",
       ].join(" "),
-      schema: ContextPackageSchema,
+      schema: DelegateSchema,
+    },
+  )
+}
+
+/** A sandbox call's refusal goes back to the agent as its error; anything else is the app's. */
+async function sandboxCall(ctx: ToolContext, run: (boxes: SpecialistBoxes) => Promise<string>): Promise<string> {
+  if (!ctx.sandboxes) return "ERROR: this task has no sandboxes."
+  try {
+    return await run(ctx.sandboxes)
+  } catch (e) {
+    if (e instanceof SandboxError) return `ERROR: ${e.message}`
+    if (e instanceof PathRejected) return `ERROR: ${e.path} cannot be copied: ${e.message}`
+    throw e
+  }
+}
+
+export function sandboxCreateTool(ctx: ToolContext) {
+  return tool(
+    ({ cpus, memoryMb, diskMb, pidsLimit }) =>
+      sandboxCall(ctx, async (boxes) => {
+        const limits = { cpus, memoryMb, diskMb, pidsLimit }
+        const box = await boxes.create(limits)
+        return JSON.stringify({
+          sandbox: box.id,
+          limits,
+          note: `Copy files in with ${SANDBOX_COPY}, install tools with ${SANDBOX_EXEC}, delegate into it with ${DELEGATE} and sandbox "${box.id}", and call ${SANDBOX_DESTROY} when no step needs it.`,
+        })
+      }),
+    {
+      name: SANDBOX_CREATE,
+      description: [
+        "Create a sandbox for the specialist: a Linux container where it works as root with a shell, with full internet access, the CPUs, memory and disk you choose, and /work holding only the files you copy in.",
+        "Every limit is optional and none is the default: leave them out and the sandbox can use all the machine's CPUs, memory and disk. Set one only to hold the sandbox back; past a disk limit you set, the sandbox is stopped.",
+        "Returns the sandbox id.",
+      ].join(" "),
+      schema: z.object({
+        cpus: z.number().positive().optional().describe("Most CPUs it may use; no limit when left out."),
+        memoryMb: z.number().int().min(64).optional().describe("Most memory in MB; no limit when left out."),
+        diskMb: z.number().int().min(64).optional().describe("Most disk in MB for /work and everything written or installed in it; no limit when left out."),
+        pidsLimit: z.number().int().min(32).optional().describe("Most processes at once; no limit when left out."),
+      }),
+    },
+  )
+}
+
+export function sandboxCopyTool(ctx: ToolContext) {
+  return tool(
+    ({ sandbox, files }) =>
+      sandboxCall(ctx, async (boxes) => {
+        const { scratch, name, source } = splitFiles(ctx, files)
+        let prepared: PreparedFile[] = []
+        if (scratch.length) {
+          const read = await readScratchFiles(ctx, scratch, PREPARED_CAP)
+          if (typeof read === "string") return `ERROR: ${read}.`
+          prepared = [...read].map(([p, content]) => ({ path: name(p).slice(PREPARED.length + 1), content }))
+        }
+        const copied = await boxes.copy(sandbox, source, prepared)
+        return JSON.stringify({ sandbox, copied: copied.map((f) => ({ path: `/work/${f.path}`, size: f.size })) })
+      }),
+    {
+      name: SANDBOX_COPY,
+      description: [
+        "Copy files into a sandbox's /work: files of the source folder go to /work/<path in the source>, files of your scratch to /work/.orchestrator/<path in the scratch>.",
+        "Only the source folder and your scratch can be copied; a path anywhere else is refused and nothing of the call is copied.",
+      ].join(" "),
+      schema: z.object({
+        sandbox: z.string().uuid().describe("The sandbox id from sandbox_create."),
+        files: z
+          .array(z.string().min(1).max(1024))
+          .min(1)
+          .max(500)
+          .describe("Files of the source folder, as you see them, or of your scratch, as absolute paths."),
+      }),
+    },
+  )
+}
+
+export function sandboxExecTool(ctx: ToolContext) {
+  return tool(
+    ({ sandbox, command, timeoutSeconds }) =>
+      // The output goes to OpenRouter, and the sandbox holds the login volume: no secret shape leaves the machine in it.
+      sandboxCall(ctx, async (boxes) => redactedJson(await boxes.run(sandbox, command, timeoutSeconds))),
+    {
+      name: SANDBOX_EXEC,
+      description: [
+        "Run a shell command as root in a sandbox, in /work, with full internet access: install what the specialist will need (apt-get update && apt-get install -y ..., pip, npm), set up its environment, check what is there.",
+        `It stops after timeoutSeconds (default ${COMMAND_DEFAULT_S}, at most ${COMMAND_MAX_S}). Returns the exit code and the output.`,
+      ].join(" "),
+      schema: z.object({
+        sandbox: z.string().uuid().describe("The sandbox id from sandbox_create."),
+        command: z.string().min(1).max(20_000).describe("The command, run with sh -c."),
+        timeoutSeconds: z.number().int().min(1).max(COMMAND_MAX_S).optional(),
+      }),
+    },
+  )
+}
+
+export function sandboxDestroyTool(ctx: ToolContext) {
+  return tool(
+    ({ sandbox }) =>
+      sandboxCall(ctx, async (boxes) => {
+        await boxes.destroy(sandbox)
+        return `Destroyed sandbox ${sandbox}.`
+      }),
+    {
+      name: SANDBOX_DESTROY,
+      description: "Remove a sandbox and everything in it. Sandboxes left at the end of the task are removed with it.",
+      schema: z.object({ sandbox: z.string().uuid().describe("The sandbox id from sandbox_create.") }),
     },
   )
 }
@@ -109,7 +255,7 @@ export function applyPatchTool(ctx: ToolContext) {
         return `ERROR: there is no patch ${patchId}.`
       }
       if (p.taskId !== ctx.taskId) return `ERROR: patch ${patchId} does not belong to this task.`
-      const done = approvePatch(ctx.deps, patchId, ctx.sourceRoot)
+      const done = approvePatch(ctx.deps, patchId, ctx.sourceRoot, ctx.auto ? "auto" : "user")
       if (done.state === "conflict")
         return `ERROR: the patch was not applied because these files changed since they were copied: ${done.conflicts.join(", ")}. Re-delegate with the current files if the change is still needed.`
       return `Applied the approved patch to ${done.files.map((f) => f.path).join(", ")}.`
