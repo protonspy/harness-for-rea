@@ -1,13 +1,21 @@
-import { safeStorage } from "electron"
 import { PROVIDER_IDS, type ProviderId } from "@shared/providers"
 import type { KeyStatus } from "@shared/types"
-import { getSetting, setSetting } from "./db"
 
 /*
-  One API key per orchestrator provider, encrypted with the OS keychain through `safeStorage` (DPAPI
-  on Windows). With encryption unavailable the key is refused, never stored in plain text. The renderer
-  only ever learns whether a key is set and a masked hint. OpenRouter's key keeps the slot it always had.
+  One API key per orchestrator provider, kept by the host's key store: the desktop app's encrypts it with the OS
+  keychain through `safeStorage` (DPAPI on Windows), the TUI's keeps it in the OS keychain itself. With the store
+  unavailable the key is refused, never stored in plain text. The renderer only ever learns whether a key is set
+  and a masked hint. OpenRouter's key keeps the slot it always had.
 */
+
+/** Where a host keeps the keys (plans/finish-the-harness 1.8): read and written whole, by slot. */
+export interface KeyStore {
+  /** whether keys can be kept protected by the OS; when not, none is stored */
+  available(): boolean
+  read(slot: string): Promise<string | null>
+  /** `null` removes the slot */
+  write(slot: string, key: string | null): Promise<void>
+}
 
 const slot = (provider: ProviderId) => (provider === "openrouter" ? "openrouter.key" : `${provider}.key`)
 
@@ -18,8 +26,19 @@ export class CredentialError extends Error {
   }
 }
 
+let store: KeyStore | null = null
 const cached = new Map<ProviderId, string>()
 const listeners = new Set<(key: string) => void>()
+
+/** The host's key store, set once at start before `initKey`. */
+export function useKeyStore(s: KeyStore) {
+  store = s
+}
+
+function keys(): KeyStore {
+  if (!store) throw new CredentialError("No key store is set.")
+  return store
+}
 
 /** Called with every key whenever one is loaded or saved, so the redactor can register it. */
 export function onKey(fn: (key: string) => void) {
@@ -32,32 +51,31 @@ function loaded(provider: ProviderId, key: string) {
   for (const fn of listeners) fn(key)
 }
 
-/** Decrypt the stored keys once; afterwards `readKey` is a synchronous read. */
-export function initKey() {
+/** Read the stored keys once; afterwards `readKey` is a synchronous read. A key that cannot be read is left unset. */
+export async function initKey() {
   cached.clear()
-  if (!safeStorage.isEncryptionAvailable()) return
+  if (!keys().available()) return
   for (const provider of PROVIDER_IDS) {
-    const v = getSetting<string | null>(slot(provider), null)
-    if (!v) continue
     try {
-      loaded(provider, safeStorage.decryptString(Buffer.from(v, "base64")))
+      const v = await keys().read(slot(provider))
+      if (v) loaded(provider, v)
     } catch {
       cached.delete(provider)
     }
   }
 }
 
-export function saveKey(key: string, provider: ProviderId = "openrouter"): KeyStatus {
+export async function saveKey(key: string, provider: ProviderId = "openrouter"): Promise<KeyStatus> {
   const trimmed = key.trim()
-  if (!safeStorage.isEncryptionAvailable())
+  if (!keys().available())
     throw new CredentialError("The OS keychain is not available, so the key was not stored. Harness for REA never keeps it in plain text.")
-  setSetting(slot(provider), safeStorage.encryptString(trimmed).toString("base64"))
+  await keys().write(slot(provider), trimmed)
   loaded(provider, trimmed)
   return keyStatus(provider)
 }
 
-export function clearKey(provider: ProviderId = "openrouter"): KeyStatus {
-  setSetting(slot(provider), null)
+export async function clearKey(provider: ProviderId = "openrouter"): Promise<KeyStatus> {
+  await keys().write(slot(provider), null)
   cached.delete(provider)
   return keyStatus(provider)
 }
@@ -68,5 +86,5 @@ export function readKey(provider: ProviderId = "openrouter"): string | null {
 
 export function keyStatus(provider: ProviderId = "openrouter"): KeyStatus {
   const k = cached.get(provider)
-  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: safeStorage.isEncryptionAvailable() }
+  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: keys().available() }
 }

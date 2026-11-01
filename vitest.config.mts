@@ -17,8 +17,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/main/**/*.ts", "src/shared/**/*.ts", "src/renderer/src/lib/**/*.ts"],
-      // The Electron entry point and the bridge only run inside Electron; the app run exercises them.
-      exclude: ["src/main/index.ts", "src/preload/**"],
+      // The Electron entry point, the core's wiring it shares with the TUI, and the bridge start Docker services and
+      // a window; the app run exercises them.
+      exclude: ["src/main/index.ts", "src/main/core.ts", "src/preload/**"],
       reporter: ["text-summary", "json-summary"],
     },
   },

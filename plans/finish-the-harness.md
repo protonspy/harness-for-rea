@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: cacad848caf0085b69f6a45c9b54ebacb29bc4ff655f67786038a91e46536a4b
+checksum: 450fcf1d042e5bb471087f5bb7f1023b7fbe00dbc6c1ca6b688a473cf7b86bd9
 ---
 
 # Finish the harness
@@ -72,7 +72,7 @@ replayable test vectors.
   _Priority 1_
 - [x] 1.7 (TDD) Spike: run the core under Bun — `node:sqlite`, DeepAgents and LangGraph, the event log and a scripted delegation — with the Electron-only parts behind interfaces; record the TUI runtime as an ADR with its `docs/stack.md` entries, Bun with OpenTUI if it holds, or Node with a terminal renderer that runs there if it does not
   _Priority 2_
-- [ ] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
+- [x] 1.8 (Unit) Split `src/main/index.ts` into a wiring module the TUI shares and an Electron shell, behind an interface for the key store and the transport, keeping the desktop app's behaviour unchanged
   _Depends 1.7_
 - [ ] 1.9 (Unit) Guard the data folder with a lock both apps take at start, so the second one says which app holds it and exits, and `log.recover()` never interrupts a live task
   _Depends 1.8_
