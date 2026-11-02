@@ -1,24 +1,30 @@
-import { AlertTriangle, CheckCircle2, Plug, RefreshCw, XCircle } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { AlertTriangle, ArrowLeft, CheckCircle2, Plug, RefreshCw, Settings2, XCircle } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { IntegrationActionResult, IntegrationSettings, IntegrationStatus, IntegrationView } from "@shared/integrations"
 import type { Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { settingsOf, toolRows, withChoice } from "@/lib/integrations"
+import { Switch } from "@/components/ui/switch"
+import { integrationRow, settingsOf, toolRows, withChoice, type Connection } from "@/lib/integrations"
 import { message } from "./panels"
 
 /*
-  The MCP section of Settings (specs/mcp-integrations R1, R2): every integration the app carries, each off by default,
-  with its settings, its switch, its checks and their fixes, its actions, whether it is connected, and its tools with
-  one checkbox per agent. There is no way to add another.
+  The MCP tab of Settings (specs/mcp-integrations R1, R2): the list of every integration the app carries, each off by
+  default, with whether it is on and connected; Configure opens the integration's own page, with its settings, its
+  switch, its checks and their fixes, its actions, and its tools with one toggle per agent. There is no way to add
+  another.
 */
 
 export function IntegrationsPanel({ settings, onSaved }: { settings: Settings; onSaved(s: Settings): void }) {
   const api = window.hfr.api
   const [views, setViews] = useState<IntegrationView[] | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  // Each integration's last status, fetched once per visit to the tab and kept while its page is open.
+  const [statuses, setStatuses] = useState<Record<string, IntegrationStatus>>({})
+  const asked = useRef(new Set<string>())
+  const onStatus = useCallback((st: IntegrationStatus) => setStatuses((m) => ({ ...m, [st.id]: st })), [])
   const [error, setError] = useState("")
   useEffect(() => {
     void api
@@ -26,21 +32,75 @@ export function IntegrationsPanel({ settings, onSaved }: { settings: Settings; o
       .then(setViews)
       .catch((e: unknown) => setError(message(e)))
   }, [api])
+  useEffect(() => {
+    for (const v of views ?? []) {
+      if (!settingsOf(v, settings.integrations).enabled || asked.current.has(v.id)) continue
+      asked.current.add(v.id)
+      void api
+        .integrationStatus(v.id)
+        .then(onStatus)
+        // A status that could not be read shows as not connected, never as checking for ever.
+        .catch(() => onStatus({ id: v.id, enabled: true, checks: [], connected: false }))
+    }
+  }, [api, views, settings.integrations, onStatus])
   if (!views) return <ErrorText>{error}</ErrorText>
+  const page = open ? views.find((v) => v.id === open) : undefined
+  if (page) return <IntegrationPage view={page} settings={settings} onSaved={onSaved} onStatus={onStatus} onBack={() => setOpen(null)} />
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Engines on this machine the agents can use only through the app. Each is off until you turn it on, and every target they work on is yours to approve.
       </p>
-      {views.map((v) => (
-        <Integration key={v.id} view={v} settings={settings} onSaved={onSaved} />
-      ))}
+      <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
+        {views.map((v) => (
+          <ListRow key={v.id} view={v} settings={settings} status={statuses[v.id]} onConfigure={() => setOpen(v.id)} />
+        ))}
+      </ul>
       <ErrorText>{error}</ErrorText>
     </div>
   )
 }
 
-function Integration({ view, settings, onSaved }: { view: IntegrationView; settings: Settings; onSaved(s: Settings): void }) {
+const CONNECTION: Record<Connection, { label: string; variant: "neutral" | "ok" | "warn" }> = {
+  off: { label: "off", variant: "neutral" },
+  checking: { label: "checking…", variant: "neutral" },
+  connected: { label: "connected", variant: "ok" },
+  "not connected": { label: "not connected", variant: "warn" },
+}
+
+function ListRow({ view, settings, status, onConfigure }: { view: IntegrationView; settings: Settings; status?: IntegrationStatus; onConfigure(): void }) {
+  const row = integrationRow(view, settingsOf(view, settings.integrations), status)
+  const c = CONNECTION[row.connection]
+  return (
+    <li className="flex items-center justify-between gap-4 p-4">
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <Plug size={14} />
+          <span className="font-medium">{row.title}</span>
+          <Badge variant={c.variant}>{c.label}</Badge>
+        </div>
+        <p className="text-sm text-muted-foreground">{row.description}</p>
+      </div>
+      <Button size="sm" variant="outline" className="shrink-0" onClick={onConfigure}>
+        <Settings2 size={13} /> Configure
+      </Button>
+    </li>
+  )
+}
+
+function IntegrationPage({
+  view,
+  settings,
+  onSaved,
+  onStatus,
+  onBack,
+}: {
+  view: IntegrationView
+  settings: Settings
+  onSaved(s: Settings): void
+  onStatus(s: IntegrationStatus): void
+  onBack(): void
+}) {
   const api = window.hfr.api
   const s = settingsOf(view, settings.integrations)
   const [status, setStatus] = useState<IntegrationStatus | null>(null)
@@ -48,14 +108,20 @@ function Integration({ view, settings, onSaved }: { view: IntegrationView; setti
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
-  const refresh = useCallback(async () => setStatus(await api.integrationStatus(view.id)), [api, view.id])
+  const show = useCallback(
+    (st: IntegrationStatus) => {
+      setStatus(st)
+      onStatus(st)
+    },
+    [onStatus],
+  )
+  const refresh = useCallback(async () => show(await api.integrationStatus(view.id)), [api, view.id, show])
   useEffect(() => {
-    if (s.enabled)
-      void api
-        .integrationStatus(view.id)
-        .then(setStatus)
-        .catch(() => undefined)
-  }, [api, view.id, s.enabled])
+    void api
+      .integrationStatus(view.id)
+      .then(show)
+      .catch((e: unknown) => setError(message(e)))
+  }, [api, view.id, show])
 
   const run = async (f: () => Promise<void>) => {
     setBusy(true)
@@ -72,34 +138,33 @@ function Integration({ view, settings, onSaved }: { view: IntegrationView; setti
     run(async () => {
       onSaved(await api.saveSettings({ integrations: { [view.id]: next } }))
       // Turning it on ran its checks: show each, the failed ones with their fix (R1.2, R1.3).
-      if (next.enabled || status) await refresh()
+      await refresh()
     })
 
   const rows = toolRows(view, s)
   return (
-    <section className="flex flex-col gap-4 rounded-md border border-border p-4">
+    <div className="flex flex-col gap-5">
+      <Button size="sm" variant="ghost" className="w-fit" onClick={onBack}>
+        <ArrowLeft size={13} /> MCP integrations
+      </Button>
+
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <Plug size={14} />
-            <span className="font-medium">{view.title}</span>
+            <Plug size={15} />
+            <h2 className="font-medium">{view.title}</h2>
             {s.enabled && status && <Badge variant={status.connected ? "ok" : "warn"}>{status.connected ? "connected" : "not connected"}</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">{view.description}</p>
         </div>
         <label className="flex shrink-0 items-center gap-2 text-sm">
-          <Checkbox
-            checked={s.enabled}
-            disabled={busy}
-            onCheckedChange={(v) => void save({ ...s, enabled: v === true })}
-            aria-label={`Turn ${view.title} on`}
-          />
+          <Switch checked={s.enabled} disabled={busy} onCheckedChange={(v) => void save({ ...s, enabled: v })} aria-label={`Turn ${view.title} on`} />
           {s.enabled ? "On" : "Off"}
         </label>
       </div>
 
       {view.fields.map((f) => (
-        <Field key={f.label} label={f.label} hint={f.hint}>
+        <Field key={f.key} label={f.label} hint={f.hint}>
           <Input
             defaultValue={String(s.config[f.key] ?? "")}
             disabled={busy}
@@ -166,7 +231,7 @@ function Integration({ view, settings, onSaved }: { view: IntegrationView; setti
         <tbody>
           {rows.map((r) => (
             <tr key={r.name} className="border-t border-border align-top">
-              <td className="py-1.5 pr-3">
+              <td className="py-2 pr-3">
                 <Mono>{r.name}</Mono>
                 {r.target && <span className="ml-2 text-xs text-muted-foreground">on the approved target</span>}
                 <span className="block text-xs text-muted-foreground">{r.description}</span>
@@ -178,12 +243,12 @@ function Integration({ view, settings, onSaved }: { view: IntegrationView; setti
                 )}
               </td>
               {(["orchestrator", "specialist"] as const).map((agent) => (
-                <td key={agent} className="py-1.5 text-center">
-                  <Checkbox
+                <td key={agent} className="py-2 text-center">
+                  <Switch
                     checked={r[agent]}
                     disabled={busy}
                     aria-label={`${r.name} for the ${agent}`}
-                    onCheckedChange={(v) => void save(withChoice(view, s, r.name, agent, v === true))}
+                    onCheckedChange={(v) => void save(withChoice(view, s, r.name, agent, v))}
                   />
                 </td>
               ))}
@@ -192,6 +257,6 @@ function Integration({ view, settings, onSaved }: { view: IntegrationView; setti
         </tbody>
       </table>
       <ErrorText>{error}</ErrorText>
-    </section>
+    </div>
   )
 }

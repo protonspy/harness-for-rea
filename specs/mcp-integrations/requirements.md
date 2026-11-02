@@ -1,8 +1,8 @@
 ---
-autonomy: gated
+autonomy: auto
 ci: wait
-branch: feat/cheat-engine-mcp
-delivery: in-review
+branch: feat/settings-tabs
+delivery: in-progress
 pr: 20
 ---
 
@@ -17,17 +17,18 @@ the user decides, tool by tool, whether the orchestrator, the specialist, both o
 
 ## R1 · The list
 
-- **R1.1** The Settings view shall hold an MCP section listing every integration the app carries, each off by default, with its own settings.
+- **R1.1** (MODIFIED) The Settings view's MCP tab shall list every integration the app carries, each off by default, with its title, whether it is on and a way to configure it.
 - **R1.2** When the user turns an integration on, the app shall run that integration's checks and show the result of each.
 - **R1.3** If any check fails, then the app shall leave the integration off and show the failed check with the step that fixes it.
 - **R1.4** While an integration is on, the Settings view shall show whether it is connected.
 - **R1.5** The Settings view shall offer no way to add an MCP server the app does not carry.
+- **R1.6** (ADDED) When the user chooses to configure an integration, the Settings view shall show a page for that integration alone, with its settings, its switch, its checks, its actions and its tools, and a way back to the list.
 
 ## R2 · Tools
 
-- **R2.1** The MCP section shall list each tool of an integration with one checkbox for the orchestrator and one for the specialist.
-- **R2.2** The app shall start every specialist checkbox checked and every orchestrator checkbox at the integration's default for that tool.
-- **R2.3** When the user checks a tool that works on a target for the orchestrator, the Settings view shall warn that what it returns goes to the orchestrator's model and provider.
+- **R2.1** (MODIFIED) The integration's page shall list each of its tools with one toggle for the orchestrator and one for the specialist.
+- **R2.2** (MODIFIED) The app shall start every specialist toggle on and every orchestrator toggle at the integration's default for that tool.
+- **R2.3** (MODIFIED) When the user turns on a tool that works on a target for the orchestrator, the Settings view shall warn that what it returns goes to the orchestrator's model and provider.
 - **R2.4** The app shall accept a call to an integration's tool only from an agent the tool is checked for, and only when the tool is in that integration's catalog.
 
 ## R3 · Targets

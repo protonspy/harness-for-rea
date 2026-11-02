@@ -36,3 +36,12 @@
 ## 5 · The record
 
 - [x] 5.1 (Unit) Add the MCP integration's term to `docs/glossary.md` and accept adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations — R1.1
+
+
+## 6 · The list and a page per integration
+
+- [x] 6.1 (Unit) List the integrations in the MCP tab with their title, on or off and connection, each with Configure opening its own page and a way back — R1.1, R1.4, R1.6
+  _Reason Settings moved to tabs, and the user asked for a list of the MCPs with a page for each_
+
+- [x] 6.2 (Unit) Use a toggle for the integration's switch and for each tool's choice per agent, from a shadcn Switch on Radix — R1.2, R2.1, R2.2
+  _Reason The user asked for toggles rather than checkboxes on the MCP tools_
