@@ -93,8 +93,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: npm ci --no-audit --no-fund
-      - name: OpenTUI's x64 library, for the binary cross-compiled on this arm64 runner
-        run: npm install --no-save --force "@opentui/core-darwin-x64@$(node -p "require('@opentui/core/package.json').version")"
+      - name: The x64 native libraries — OpenTUI's and the keychain binding — for the x64 builds made on this arm64 runner
+        run: >-
+          npm install --no-save --force
+          "@opentui/core-darwin-x64@$(node -p "require('@opentui/core/package.json').version")"
+          "@napi-rs/keyring-darwin-x64@$(node -p "require('@napi-rs/keyring/package.json').version")"
       - name: Desktop app (R1.2)
         run: npm run build && npx electron-builder --mac --publish never
       - name: CLI (R1.3, R1.4)
