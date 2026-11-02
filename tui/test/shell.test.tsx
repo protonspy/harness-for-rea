@@ -85,10 +85,14 @@ describe("the shell (specs/tui-shell)", () => {
     expect(s.quits).toHaveLength(1)
   })
 
-  test("quits with Ctrl+C twice while a dialog is open (R2.5)", async () => {
+  test.each([
+    ["an empty prompt", ""],
+    ["a prompt holding text", "draft"],
+  ])("quits with Ctrl+C twice while a dialog is open over %s (R2.5)", async (_, draft) => {
     const { api } = scriptedApi()
     s = await render({ api, start: { kind: "task", id: task().id } })
     await s.until("[awaiting-user]")
+    if (draft) await s.type(draft)
     await s.press("p", { ctrl: true })
     await s.until("Commands")
     await s.press("c", { ctrl: true })
