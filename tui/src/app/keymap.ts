@@ -18,8 +18,11 @@ export interface Binding {
   /** `ctrl+p`, `escape`, `?`, `shift+tab`, `pageup` */
   key: string
   label: string
-  /** returns false to leave the key to the layers below and to the focused input, as `?` does in a typed message */
-  run(): void | boolean
+  /**
+    Returns false to leave the key to the layers below, or "input" to give it to the focused input and stop there, as
+    `?` does inside a typed message.
+  */
+  run(): void | boolean | "input"
   /** shown in the hint line under the prompt */
   hint?: boolean
 }
@@ -74,7 +77,10 @@ export class Keymap {
     const key = keyOf(e)
     for (const layer of this.reachable()) {
       const b = layer.bindings.find((x) => x.key === key)
-      if (b && b.run() !== false) return true
+      if (!b) continue
+      const r = b.run()
+      if (r === "input") return false
+      if (r !== false) return true
     }
     return false
   }
@@ -85,10 +91,10 @@ export class Keymap {
   }
 
   /** The bindings a key reaches now, topmost layer first, each key once: what the help lists (R2.1). */
-  active(): { title: string; bindings: Binding[] }[] {
+  active(except?: string): { title: string; bindings: Binding[] }[] {
     const seen = new Set<string>()
     const out: { title: string; bindings: Binding[] }[] = []
-    for (const layer of this.reachable()) {
+    for (const layer of this.reachable(except)) {
       const bindings = layer.bindings.filter((b) => !seen.has(b.key))
       for (const b of bindings) seen.add(b.key)
       if (bindings.length) out.push({ title: layer.title, bindings })
@@ -96,12 +102,26 @@ export class Keymap {
     return out
   }
 
+  /** The bindings marked as hints that a key reaches, each key once: the line under the prompt. */
+  hints(): Binding[] {
+    const seen = new Set<string>()
+    const out: Binding[] = []
+    for (const layer of this.reachable())
+      for (const b of layer.bindings)
+        if (b.hint && !seen.has(b.key)) {
+          seen.add(b.key)
+          out.push(b)
+        }
+    return out
+  }
+
   /** The layers a key can reach, topmost first: down to the lowest layer at the height of the topmost modal one. */
-  private reachable(): Layer[] {
+  private reachable(except?: string): Layer[] {
     const out: Layer[] = []
     let floor = -Infinity
     for (let i = this.layers.length - 1; i >= 0; i--) {
       const layer = this.layers[i]
+      if (layer.id === except) continue
       if ((layer.z ?? 0) < floor) break
       out.push(layer)
       if (layer.modal) floor = Math.max(floor, layer.z ?? 0)

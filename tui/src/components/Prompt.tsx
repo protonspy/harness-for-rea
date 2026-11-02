@@ -43,7 +43,7 @@ export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; 
   const paths = useMemo(() => (mention && root ? suggestPaths(root, mention.query).slice(0, 8) : []), [mention, root])
   const cmds = completions(commands, text)
   let popup: Popup | null = null
-  if (cmds.length) popup = { kind: "cmd", items: cmds.slice(0, 8) }
+  if (cmds.length) popup = { kind: "cmd", items: cmds.slice(0, 12) }
   else if (mention && paths.length) popup = { kind: "path", items: paths, mention }
   if (dismissed === text) popup = null
   const count = popup?.items.length ?? 0
@@ -137,15 +137,17 @@ export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; 
       },
       { key: "escape", label: "Close the list", run: () => (popup ? void setDismissed(text) : false) },
       { key: "ctrl+c", label: "Clear the prompt", run: () => (text ? set("") : false) },
+      // `?` in a message being typed is a character; with the prompt empty it opens the help (specs/tui-shell R2.1).
+      { key: "?", label: "Keys, with the prompt empty", run: () => ((ta.current?.plainText ?? text) ? "input" : false) },
     ],
     { active: focused },
   )
 
   const lines = Math.min(8, Math.max(1, text.split("\n").length))
   return (
-    <box flexDirection="column">
+    <box flexDirection="column" flexShrink={0}>
       {popup && (
-        <box flexDirection="column" border borderStyle="rounded" borderColor={theme.border} backgroundColor={theme.card}>
+        <box flexDirection="column" flexShrink={0} border borderStyle="rounded" borderColor={theme.border} backgroundColor={theme.card}>
           {popup.kind === "cmd"
             ? popup.items.map((c, i) => (
                 <text key={c.name} bg={i === at ? theme.selection : undefined} wrapMode="none">

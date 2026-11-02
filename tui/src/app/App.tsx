@@ -76,8 +76,22 @@ class ShellMemory {
   latest(): ScreenSpec {
     return this.screen
   }
+  private timers = new Set<ReturnType<typeof setTimeout>>()
+
   nextId() {
     return ++this.ids
+  }
+  later(fn: () => void, ms: number) {
+    const t = setTimeout(() => {
+      this.timers.delete(t)
+      fn()
+    }, ms)
+    t.unref?.()
+    this.timers.add(t)
+  }
+  clearTimers() {
+    for (const t of this.timers) clearTimeout(t)
+    this.timers.clear()
   }
   leave(r: Route) {
     this.trail.push(r)
@@ -128,10 +142,12 @@ export function App(props: AppProps) {
       const id = mem.nextId()
       setToasts((t) => [...t.slice(-3), { id, text, kind }])
       // An error stays longer than a success (R3.2).
-      setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 8000 : 3500).unref?.()
+      mem.later(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 8000 : 3500)
     },
     [mem],
   )
+  // Toasts still timing out when the shell goes are dropped with it.
+  useEffect(() => () => mem.clearTimers(), [mem])
 
   const app: AppState = useMemo(() => {
     const state: AppState = {
@@ -279,11 +295,7 @@ export function App(props: AppProps) {
 
   const { width } = useTerminalDimensions()
   const overlay = dialogs.length > 0 || help
-  const hints = keymap
-    .active()
-    .flatMap((l) => l.bindings)
-    .filter((b) => b.hint)
-    .map((b) => `${keyLabel(b.key)} ${b.label.toLowerCase()}`)
+  const hints = keymap.hints().map((b) => `${keyLabel(b.key)} ${b.label.toLowerCase()}`)
 
   return (
     <AppContext.Provider value={app}>
@@ -391,7 +403,7 @@ function Help({ close, commands }: { close(): void; commands: Command[] }) {
     { modal: true },
   )
   // The help's own layer is left out of what it lists.
-  const groups = keymap.active().filter((g) => g.title !== "Help")
+  const groups = keymap.active("help")
   return (
     <Frame title="Keys" width={80} footer="Esc or ? closes">
       {groups.map((g) => (

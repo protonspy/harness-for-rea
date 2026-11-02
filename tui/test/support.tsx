@@ -90,14 +90,55 @@ export const READY: Readiness = {
   completed: true,
 }
 
+/** A conversation with a delegation: messages in markdown, a tool call, the specialist's run, a plan and usage. */
+export function conversation(): { steps: StepRow[]; events: EventRow[] } {
+  const delegation = step({
+    data: {
+      callId: "c1",
+      context: {
+        brief: "An ELF parser.",
+        objective: "Map the parser",
+        mode: "read",
+        files: ["src/main.c"],
+        questions: ["Where is the header read?"],
+        constraints: [],
+        environment: [],
+        excerpts: [],
+      },
+      report: "The header is read in **parse_header**.",
+      evidence: [{ path: "src/main.c", startLine: 3, endLine: 9, claim: "the header is read here" }],
+    },
+  })
+  return {
+    steps: [
+      delegation,
+      step({ id: "t1", kind: "todo", title: "Read the parser", state: "done" }),
+      step({ id: "t2", kind: "todo", title: "Write the client", state: "running" }),
+    ],
+    events: [
+      event("message.user", { output: "Map the protocol" }, { agent: "app" }),
+      event("message.agent", { output: "Here is **what** I found:\n\n```c\nint main(void) { return 0; }\n```" }),
+      event("tool.call", { tool: "read_file", callId: "r1", input: JSON.stringify({ file_path: "/workspace/src/main.c" }) }),
+      event("tool.result", { tool: "read_file", callId: "r1", output: "int main(void) { return 0; }" }),
+      event("tool.call", { tool: "delegate_to_specialist", callId: "c1", input: JSON.stringify({ objective: "Map the parser" }) }),
+      event("specialist.thinking", { output: "The header comes first." }, { agent: "specialist", stepId: "s1", summary: "The header comes first." }),
+      event("specialist.tool.call", { tool: "Bash", callId: "b1", input: '{"command":"make"}' }, { agent: "specialist", stepId: "s1", summary: "Bash make" }),
+      event("specialist.tool.progress", { tool: "Bash", callId: "b1", elapsedSeconds: 30 }, { agent: "specialist", stepId: "s1" }),
+      event("tool.result", { tool: "delegate_to_specialist", callId: "c1", output: "{}" }),
+    ],
+  }
+}
+
 export const history = (o: Partial<TaskHistory> = {}): TaskHistory => ({
   task: task(),
-  steps: [],
-  events: [],
+  ...conversation(),
+  usage: [
+    { agent: "orchestrator", calls: 3, tokensIn: 1200, tokensOut: 300, costUsd: 0.02, estimate: false },
+    { agent: "specialist", calls: 1, tokensIn: 9000, tokensOut: 800, costUsd: 0.05, estimate: true },
+  ],
   patches: [],
   hasMore: false,
   hasOlder: false,
-  usage: [],
   ...o,
 })
 
@@ -166,7 +207,7 @@ export async function render(o: {
       quit={() => quits.push(1)}
       start={o.start}
     />,
-    { width: o.width ?? 120, height: o.height ?? 40 },
+    { width: o.width ?? 120, height: o.height ?? 40, exitOnCtrlC: false },
   )
   const frame = () => t.captureCharFrame()
   /** Waits until the frame shows `text` (or the predicate holds), drawing frames as it goes. */
@@ -190,8 +231,20 @@ export async function render(o: {
     await t.mockInput.typeText(text)
     await settle()
   }
+  const NAMES: Record<string, string> = {
+    escape: "ESCAPE",
+    tab: "TAB",
+    return: "RETURN",
+    up: "ARROW_UP",
+    down: "ARROW_DOWN",
+    left: "ARROW_LEFT",
+    right: "ARROW_RIGHT",
+    backspace: "BACKSPACE",
+    home: "HOME",
+    end: "END",
+  }
   const press = async (key: string, mods?: { ctrl?: boolean; shift?: boolean; meta?: boolean }) => {
-    t.mockInput.pressKey(key as never, mods)
+    t.mockInput.pressKey((NAMES[key] ?? key) as never, mods)
     await settle()
   }
   const enter = async () => {

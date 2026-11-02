@@ -109,7 +109,18 @@ export function SelectDialog({
       {body ? <text fg={theme.foreground}>{safe(body)}</text> : null}
       {filter && (
         <box border borderStyle="rounded" borderColor={theme.border} height={3}>
-          <input value={query} focused placeholder="Filter…" textColor={theme.foreground} onInput={setQuery} onSubmit={() => void (sel && done(sel))} />
+          <input
+            value={query}
+            focused
+            placeholder="Filter…"
+            textColor={theme.foreground}
+            onInput={(v: string) => {
+              setQuery(v)
+              // A new filter starts from its best match.
+              setSelected(null)
+            }}
+            onSubmit={() => void (sel && done(sel))}
+          />
         </box>
       )}
       <List id="dialog" items={shown} selected={sel} onMove={setSelected} onPick={(id) => done(id)} height={height} empty="Nothing matches." />
