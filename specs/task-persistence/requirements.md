@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/task-persistence
-delivery: in-review
+delivery: merged
 pr: 7
 ---
 

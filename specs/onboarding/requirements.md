@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/projects
-delivery: in-review
+delivery: merged
 pr: 11
 ---
 

@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/chat-hitl
-delivery: in-review
+delivery: merged
 pr: 4
 ---
 

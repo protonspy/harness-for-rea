@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/specialist-sandbox
-delivery: in-review
+delivery: merged
 pr: 6
 ---
 

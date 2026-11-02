@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/rea-native
-delivery: in-review
+delivery: merged
 pr: 10
 ---
 
