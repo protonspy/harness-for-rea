@@ -56,6 +56,22 @@ describe("the timeline (specs/chat-timeline)", () => {
     expect(t.run("s1").map((e) => `${e.kind}:${e.output ?? e.body}`)).toEqual(["note:", "thinking:hmm", "tool:contents", "text:found it"])
   })
 
+  it("shows how long a running specialist tool has run from its heartbeats, without an entry of their own (R1.4)", () => {
+    const t = new Timeline(
+      [step("s1")],
+      [
+        ev("specialist.tool.call", { tool: "Bash", callId: "b1", input: "{}" }, { agent: "specialist", stepId: "s1" }),
+        ev("specialist.tool.progress", { tool: "Bash", callId: "b1", elapsedSeconds: 30 }, { agent: "specialist", stepId: "s1" }),
+      ],
+      true,
+    )
+    expect(t.run("s1")).toHaveLength(1)
+    expect(t.run("s1")[0]).toMatchObject({ kind: "tool", elapsedSeconds: 30 })
+    t.append([ev("specialist.tool.result", { tool: "Bash", callId: "b1", output: "done" }, { agent: "specialist", stepId: "s1" })])
+    t.append([ev("specialist.tool.progress", { tool: "Bash", callId: "b1", elapsedSeconds: 45 }, { agent: "specialist", stepId: "s1" })])
+    expect(t.run("s1")[0]).toMatchObject({ output: "done", elapsedSeconds: 30 })
+  })
+
   it("folds only events newer than the last one, adding a specialist's event under its delegation as it arrives", () => {
     const steps = [step("s1", { callId: "c" })]
     const first = [ev("tool.call", { tool: "delegate_to_specialist", callId: "c" })]

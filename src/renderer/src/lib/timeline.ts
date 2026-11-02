@@ -19,6 +19,8 @@ export interface SpecialistEntry {
   body: string
   /** a tool's result, once it returned */
   output?: string
+  /** how long a tool still running has run, in seconds, from Claude Code's heartbeats (specs/chat-timeline R1.4) */
+  elapsedSeconds?: number
   failed: boolean
   /** the subagent of the specialist that made it, when not the specialist itself */
   subagent?: string
@@ -92,6 +94,12 @@ export class Timeline {
         entry = { ...base, kind: "tool", title: e.summary, body: text(p.input) }
         if (typeof p.callId === "string") this.calls.set(p.callId, entry)
         break
+      case "specialist.tool.progress": {
+        // A heartbeat updates the call it belongs to; it is not an entry of its own (R1.4).
+        const call = typeof p.callId === "string" ? this.calls.get(p.callId) : undefined
+        if (call && call.output === undefined && typeof p.elapsedSeconds === "number") call.elapsedSeconds = p.elapsedSeconds
+        return
+      }
       case "specialist.tool.result": {
         const call = typeof p.callId === "string" ? this.calls.get(p.callId) : undefined
         if (call) {

@@ -20,6 +20,7 @@ delegation that ran it. It is for the user watching or reviewing a task.
 - **R1.1** The task view shall show the task as a chat timeline: the user's messages, the orchestrator's turns, tool calls and delegations in order, and each specialist's text, thinking and tool calls nested under the delegation that ran them.
 - **R1.2** (MODIFIED) The task view shall show each tool call's input and output, each delegation, and each specialist entry's payload — its text, reasoning and tool calls — expanded from the start, each collapsible by the user.
 - **R1.3** When a specialist event arrives for a delegation on screen, the task view shall add it under that delegation.
+- **R1.4** (ADDED) While a specialist's tool call runs, the task view shall show how long it has run, from Claude Code's progress heartbeats, which shall never appear as entries of their own.
 
 ## R2 · Paging
 

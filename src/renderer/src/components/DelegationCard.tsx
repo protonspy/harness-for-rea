@@ -105,7 +105,7 @@ function RunEntry({ entry }: { entry: SpecialistEntry }) {
         <Icon size={12} />
         {entry.subagent && <Badge>{entry.subagent}</Badge>}
         <span className={entry.failed ? "truncate text-destructive" : "truncate text-foreground"}>{entry.title}</span>
-        {running && <Badge variant="info">running</Badge>}
+        {running && <Badge variant="info">running{entry.elapsedSeconds ? ` · ${entry.elapsedSeconds}s` : ""}</Badge>}
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t px-2.5 py-2">
         <pre className="max-h-64 overflow-auto font-mono text-[11.5px] leading-5 break-all whitespace-pre-wrap">{entry.body || "—"}</pre>
