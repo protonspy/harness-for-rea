@@ -25,7 +25,14 @@ describe("the key map (specs/tui-shell R2.1)", () => {
   it("sends a key to the topmost layer binding it, stops at a modal layer, and lists what is reachable", () => {
     const map = new Keymap()
     const ran: string[] = []
-    map.push({ id: "global", title: "Everywhere", bindings: [{ key: "ctrl+p", label: "Commands", run: () => void ran.push("palette") }, { key: "escape", label: "Back", run: () => void ran.push("back") }] })
+    map.push({
+      id: "global",
+      title: "Everywhere",
+      bindings: [
+        { key: "ctrl+p", label: "Commands", run: () => void ran.push("palette") },
+        { key: "escape", label: "Back", run: () => void ran.push("back") },
+      ],
+    })
     const off = map.push({ id: "dialog", title: "Dialog", modal: true, bindings: [{ key: "escape", label: "Close", run: () => void ran.push("close") }] })
     expect(map.dispatch({ name: "escape" })).toBe(true)
     expect(map.dispatch({ name: "p", ctrl: true })).toBe(false)
@@ -159,7 +166,15 @@ describe("markdown as the TUI draws it (specs/tui-conversation R1.2)", () => {
 })
 
 describe("the transcript's text (specs/tui-conversation R1.3, R1.4, R2.1, R2.2)", () => {
-  const tool = (o: Partial<{ name: string; input: string; output: string; failed: boolean }>) => ({ kind: "tool" as const, id: "t", at: 0, name: "read_file", input: "{}", failed: false, ...o })
+  const tool = (o: Partial<{ name: string; input: string; output: string; failed: boolean }>) => ({
+    kind: "tool" as const,
+    id: "t",
+    at: 0,
+    name: "read_file",
+    input: "{}",
+    failed: false,
+    ...o,
+  })
 
   it("shows a call on one line by its telling argument, and its state", () => {
     expect(toolLine(tool({ input: JSON.stringify({ file_path: "/workspace/a.c", limit: 10 }) }))).toBe("read_file(/workspace/a.c)")
@@ -183,7 +198,16 @@ describe("the transcript's text (specs/tui-conversation R1.3, R1.4, R2.1, R2.2)"
     const step = {
       id: "s",
       data: {
-        context: { brief: "b", objective: "Map it", mode: "read", files: ["a.c"], questions: ["q1"], constraints: [], environment: [], excerpts: [{ path: "a.c", startLine: 1, endLine: 3 }] },
+        context: {
+          brief: "b",
+          objective: "Map it",
+          mode: "read",
+          files: ["a.c"],
+          questions: ["q1"],
+          constraints: [],
+          environment: [],
+          excerpts: [{ path: "a.c", startLine: 1, endLine: 3 }],
+        },
         report: "Found it",
         evidence: [{ path: "a.c", startLine: 1, endLine: 2, claim: "here" }],
       },
@@ -193,14 +217,18 @@ describe("the transcript's text (specs/tui-conversation R1.3, R1.4, R2.1, R2.2)"
     expect(s[0].lines).toEqual(expect.arrayContaining(["Objective: Map it", "Questions:", "  • q1", "  a.c:1-3"]))
     expect(s[2].lines).toEqual(["a.c:1-2 — here"])
     expect(s[3].lines).toEqual(["copy: a.c", "read: a.c"])
-    expect(delegationSections({ id: "x", data: { error: "boom" } } as unknown as StepRow, { copy: [], read: [], write: [], apply: [] })).toEqual([{ title: "Error", lines: ["boom"] }])
+    expect(delegationSections({ id: "x", data: { error: "boom" } } as unknown as StepRow, { copy: [], read: [], write: [], apply: [] })).toEqual([
+      { title: "Error", lines: ["boom"] },
+    ])
   })
 
   it("says how long a turn works and what the task spent", () => {
     expect(elapsed(42_000)).toBe("42s")
     expect(elapsed(65_000)).toBe("1m 05s")
     expect(elapsed(3_720_000)).toBe("1h 02m")
-    expect(workingLine({ tokensIn: 12_000, tokensOut: 345, costUsd: 0.03, specialistCostUsd: 0.01 }, "running", 0, 83_000)).toBe("Working · 1m 23s · 12k tokens · $0.04")
+    expect(workingLine({ tokensIn: 12_000, tokensOut: 345, costUsd: 0.03, specialistCostUsd: 0.01 }, "running", 0, 83_000)).toBe(
+      "Working · 1m 23s · 12k tokens · $0.04",
+    )
     expect(workingLine({ tokensIn: 0, tokensOut: 0, costUsd: 0, specialistCostUsd: 0 }, "pending", 0, 0)).toBe("Starting the sandbox · 0s · 0 tokens · $0.00")
   })
 

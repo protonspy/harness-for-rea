@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: b3d8ec3b3fe6a79bbaa4e177b372726feb23662e188ed31c86ffe90178dcf281
+checksum: 635b64cb2cc5260677dc2dc49d2a4520f048c1abdeffbcee1775b53dbf154e14
 ---
 
 # TUI revamp
@@ -85,6 +85,13 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       reasoning and run expanded by default, in the desktop app and the TUI, each still
       collapsible, recorded as a delta to specs/chat-timeline
   _Reason Asked by the user during the run: tool calls and reasoning are collapsed today_
+- [x] 1.10 (Unit) Remove a task's containers, and its project's sandboxes once no task
+      of it is open, on a forced stop — cancelling a task, quitting the app with tasks
+      open, and the start-up sweep of a gone process — keeping every file under the
+      task's folder and its conversation, so the task reopens over them; recorded as an
+      ADR amending adr:0017 with deltas to specs/task-persistence and
+      specs/specialist-sandbox
+  _Reason Asked by the user during the run: a forced stop removes the instances while persistence is kept_
 
 ## Done when
 

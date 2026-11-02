@@ -31,10 +31,11 @@ and every file it analysed, until the user deletes it
 - **R3.1** The task runner shall keep every file of a task under `<userData>/tasks/<taskId>/`: the orchestrator's scratch, each delegation's workspace, run directory and snapshot, and each sandbox's workspace and the specialist's output.
 - **R3.2** The task container shall bind the task's `scratch` folder writable at `/scratch`.
 - **R3.3** The sandbox service shall bind the sandbox's `out` folder writable at `/root/out`.
-- **R3.4** (MODIFIED) When a task is cancelled or closed, or the app running it quits, the task runner shall stop the task's containers and keep them and their folders, leaving the containers of tasks another app runs alone.
+- **R3.4** (MODIFIED) When a task is closed, the task runner shall stop the task's containers and keep them and their folders, leaving the containers of tasks another app runs alone.
 - **R3.5** When a task reopens, the task runner shall start its stopped containers, or create them again over the same folders when Docker no longer has them, and tell the orchestrator which were created again.
 - **R3.6** The sandbox service shall record each sandbox in the database, so a reopened task reaches it by the same id.
 - **R3.7** The delegation shall keep its workspace, run directory and snapshot when it ends.
+- **R3.8** (ADDED) When a task is stopped by force, by a cancel, by the app quitting with it open or by its process being gone, the task runner shall remove its containers, and its project's sandboxes once no task of the project is open, keeping every file of the task, its conversation and the sandboxes' records, so the task reopens over them.
 
 ## R4 · Deleting
 

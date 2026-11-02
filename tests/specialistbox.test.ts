@@ -205,17 +205,28 @@ describe("creating, controlling and destroying sandboxes (R1.4, R1.5, R2)", () =
     expect(existsSync(a.ws.workspace)).toBe(true)
   })
 
+  it("removes every sandbox after a forced stop, keeping its record and folders to create it again (specs/task-persistence R3.8)", async () => {
+    const f = fake()
+    const s = boxes(f)
+    const a = await s.create(limits)
+    await s.dropAll()
+    expect(f.calls.at(-1)!.args).toEqual(["rm", "-f", a.name])
+    expect(existsSync(a.ws.workspace)).toBe(true)
+    expect(getDb().prepare("SELECT 1 FROM sandboxes WHERE id = ?").get(a.id)).toBeTruthy()
+    await s.removeAll()
+  })
+
   it("stops, and keeps, the sandboxes a previous run of the app left running", async () => {
     const f = fake({ "ps --filter": { stdout: Buffer.from("hfr-sbx-aaa\nhfr-sbx-bbb\n") } })
     expect(await SpecialistBoxes.sweep(f.exec)).toBe(2)
     expect(f.calls[0].args).toEqual(["ps", "--filter", "name=^hfr-sbx-", "--format", "{{.Names}}"])
-    expect(f.calls[1].args).toEqual(["stop", "-t", "2", "hfr-sbx-aaa", "hfr-sbx-bbb"])
+    expect(f.calls[1].args).toEqual(["rm", "-f", "hfr-sbx-aaa", "hfr-sbx-bbb"])
   })
 
   it("leaves running the sandboxes of a project a live app holds (specs/shared-data-folder R2.3)", async () => {
     const f = fake({ "ps --filter": { stdout: Buffer.from("hfr-sbx-aaa\nhfr-sbx-bbb\n") } })
     expect(await SpecialistBoxes.sweep(f.exec, (id) => id === "aaa")).toBe(1)
-    expect(f.calls[1].args).toEqual(["stop", "-t", "2", "hfr-sbx-bbb"])
+    expect(f.calls[1].args).toEqual(["rm", "-f", "hfr-sbx-bbb"])
   })
 
   it("holds a sandbox for one delegation at a time", async () => {

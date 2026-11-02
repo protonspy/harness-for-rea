@@ -440,6 +440,23 @@ export class SpecialistBoxes {
   }
 
   /**
+    Remove every container of the project after a forced stop, keeping their records and their folders, so the next
+    task to open creates them again over the same `/work` and `/root/out` (specs/task-persistence R3.8).
+  */
+  async dropAll(): Promise<void> {
+    this.ended = true
+    for (const box of [...this.boxes.values()]) {
+      if (box.timer) clearInterval(box.timer)
+      box.timer = null
+      box.up = false
+    }
+    const recorded = (getDb().prepare("SELECT id FROM sandboxes WHERE project_id = ?").all(this.d.projectId) as Record<string, unknown>[]).map((r) =>
+      sandboxName(String(r.id)),
+    )
+    if (recorded.length) await this.exec(["rm", "-f", ...recorded])
+  }
+
+  /**
     Remove every container of a project being deleted, every one its records name included (specs/projects R3.2);
     throws, keeping the records, when Docker fails to remove one it still has.
   */
@@ -461,8 +478,9 @@ export class SpecialistBoxes {
   }
 
   /**
-    Stop, and keep, the sandboxes a gone process left running (R2.7, specs/task-persistence R3.4); those of a
-    project a live app holds are left alone (specs/shared-data-folder R2.3). `heldByLive` answers for a sandbox id.
+    Remove the sandboxes a gone process left running, keeping their records and folders (R2.7, specs/task-persistence
+    R3.8); those of a project a live app holds are left alone (specs/shared-data-folder R2.3). `heldByLive` answers
+    for a sandbox id.
   */
   static async sweep(exec: ExecBuffer, heldByLive: (sandboxId: string) => boolean = () => false): Promise<number> {
     const r = await exec(["ps", "--filter", "name=^hfr-sbx-", "--format", "{{.Names}}"])
@@ -474,7 +492,8 @@ export class SpecialistBoxes {
             .filter((n) => n.startsWith("hfr-sbx-"))
         : []
     const stale = names.filter((n) => !heldByLive(n.slice("hfr-sbx-".length)))
-    if (stale.length) await exec(["stop", "-t", "2", ...stale])
+    // Their records stay: a reopened task creates them again over their folders (specs/task-persistence R3.8).
+    if (stale.length) await exec(["rm", "-f", ...stale])
     return stale.length
   }
 }
@@ -490,7 +509,7 @@ export class SandboxRegistry {
   private readonly stopping = new Map<string, Promise<void>>()
   constructor(private readonly make: (project: { id: string; folder: string; sourceRoot: string }, after?: Promise<void>) => SpecialistBoxes) {}
 
-  acquire(project: { id: string; folder: string; sourceRoot: string }): { boxes: SpecialistBoxes; release: () => Promise<void> } {
+  acquire(project: { id: string; folder: string; sourceRoot: string }): { boxes: SpecialistBoxes; release: (o?: { remove?: boolean }) => Promise<void> } {
     let entry = this.open.get(project.id)
     if (!entry) {
       // A task opening while the last one's stop is in flight waits for it, so the stop cannot take its sandbox down.
@@ -502,13 +521,16 @@ export class SandboxRegistry {
     let released = false
     return {
       boxes: held.boxes,
-      release: async () => {
+      // The last task to close stops the sandboxes; after a forced stop it removes them, records kept (specs/task-persistence R3.8).
+      release: async (o = {}) => {
         if (released) return
         released = true
         held.refs--
         if (held.refs > 0 || this.open.get(project.id) !== held) return
         this.open.delete(project.id)
-        const stop = held.boxes.stopAll().finally(() => this.stopping.get(project.id) === stop && this.stopping.delete(project.id))
+        const stop = (o.remove ? held.boxes.dropAll() : held.boxes.stopAll()).finally(
+          () => this.stopping.get(project.id) === stop && this.stopping.delete(project.id),
+        )
         this.stopping.set(project.id, stop)
         await stop
       },

@@ -174,8 +174,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
           sandboxes: held?.boxes.forTask(task.id),
           created: box.created,
           // Stopped and kept for when the task reopens (specs/task-persistence R3.4); the sandboxes once no task of the project is open.
-          dispose: async () => {
-            await Promise.allSettled([box.dispose(), held?.release()])
+          dispose: async (o) => {
+            await Promise.allSettled([box.dispose(o), held?.release(o)])
             unclaim()
           },
         }

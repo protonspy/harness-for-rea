@@ -83,7 +83,10 @@ describe("what the TUI opens first (R1.2–R1.6, R2.1–R2.3)", () => {
     expect(launchPlan({ ...base, risk: { kind: "confirm", why: "your home folder" }, projects: [] })).toEqual({ kind: "create", confirm: "your home folder" })
     expect(launchPlan({ ...base, risk: { kind: "refuse", why: "x" }, projects: [] })).toEqual({ kind: "refuse", why: "x" })
     // a project already on it opens: it was confirmed when it was created
-    expect(launchPlan({ ...base, risk: { kind: "confirm", why: "your home folder" }, projects: [project("a", "C:/s/app")] })).toEqual({ kind: "open", projectId: "a" })
+    expect(launchPlan({ ...base, risk: { kind: "confirm", why: "your home folder" }, projects: [project("a", "C:/s/app")] })).toEqual({
+      kind: "open",
+      projectId: "a",
+    })
   })
 
   it("opens the last task with continue, and the task picker with resume", () => {

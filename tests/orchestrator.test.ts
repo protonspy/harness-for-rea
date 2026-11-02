@@ -147,12 +147,21 @@ function runner(key: string | null = "sk-or-v1-testkey000000", asked?: (p: strin
     workspace: async () => {
       await workspaceGate
       if (workspaceFails) throw new Error(workspaceFails)
-      return { backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => void disposed++ }
+      return {
+        backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
+        root: "/",
+        dispose: async (o?: { remove?: boolean }) => {
+          disposed++
+          if (o?.remove) forcedRemovals++
+        },
+      }
     },
   })
 }
 
 let disposed = 0
+/** of the disposals, those a forced stop made, which remove the containers (specs/task-persistence R3.8) */
+let forcedRemovals = 0
 let workspaceFails = ""
 let workspaceGate: Promise<void> = Promise.resolve()
 
@@ -177,6 +186,7 @@ beforeEach(() => {
   fakeContract = ""
   fakeQuestion = JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
   disposed = 0
+  forcedRemovals = 0
   workspaceFails = ""
   workspaceGate = Promise.resolve()
   refusal = null
@@ -519,6 +529,8 @@ describe("the task's workspace is removed when the task ends (R2.2)", () => {
     r.close(done.id)
     await settle(r, done.id)
     expect(disposed).toBe(1)
+    // closing keeps the containers, stopped
+    expect(forcedRemovals).toBe(0)
     status = 402
     const failed = r.start({ request: "y", sourceRoot: root })
     await settle(r, failed.id)
@@ -536,6 +548,21 @@ describe("the task's workspace is removed when the task ends (R2.2)", () => {
     r.cancel(task.id)
     await settle(r, task.id)
     expect(disposed).toBe(1)
+    // a cancel is a forced stop: the containers go, the task's files and conversation stay (specs/task-persistence R3.8)
+    expect(forcedRemovals).toBe(1)
+    script = [{ content: "picked up" }]
+    r.continueTask(task.id)
+    await settle(r, task.id)
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+  })
+
+  it("removes the containers of every open task when the app quits (specs/task-persistence R3.8)", async () => {
+    script = [{ content: "done" }]
+    const r = runner()
+    const t = r.start({ request: "x", sourceRoot: root })
+    await settle(r, t.id)
+    await r.stopAll()
+    expect(forcedRemovals).toBe(1)
   })
 
   it("on cancel while the workspace is still starting, once it is up", async () => {

@@ -154,7 +154,7 @@ describe("TaskBox", () => {
     expect(await TaskBox.sweep(f.exec)).toBe(2)
     expect(f.calls).toEqual([
       ["ps", "--filter", "name=^hfr-orch-", "--format", "{{.Names}}"],
-      ["stop", "-t", "2", "hfr-orch-abc", "hfr-orch-def"],
+      ["rm", "-f", "hfr-orch-abc", "hfr-orch-def"],
     ])
     const none = fake(() => ({ stdout: Buffer.from("") }))
     expect(await TaskBox.sweep(none.exec)).toBe(0)
@@ -164,7 +164,7 @@ describe("TaskBox", () => {
   it("leaves running the task containers of a task a live app has open (specs/shared-data-folder R2.3)", async () => {
     const f = fake((a) => (a[0] === "ps" ? { stdout: Buffer.from("hfr-orch-mine\nhfr-orch-gone\n") } : {}))
     expect(await TaskBox.sweep(f.exec, (id) => id === "mine")).toBe(1)
-    expect(f.calls[1]).toEqual(["stop", "-t", "2", "hfr-orch-gone"])
+    expect(f.calls[1]).toEqual(["rm", "-f", "hfr-orch-gone"])
     const all = fake((a) => (a[0] === "ps" ? { stdout: Buffer.from("hfr-orch-mine\n") } : {}))
     expect(await TaskBox.sweep(all.exec, () => true)).toBe(0)
     expect(all.calls).toHaveLength(1)
@@ -186,6 +186,9 @@ describe("TaskBox", () => {
     expect(existsSync(scratch)).toBe(true)
     await box.dispose()
     expect(gone.calls.at(-1)).toEqual(["stop", "-t", "2", "hfr-orch-t1"])
+    // a forced stop removes it; /scratch is the task's folder on the host (specs/task-persistence R3.8)
+    await box.dispose({ remove: true })
+    expect(gone.calls.at(-1)).toEqual(["rm", "-f", "hfr-orch-t1"])
     await expect(
       TaskBox.start(
         fake((a) =>
