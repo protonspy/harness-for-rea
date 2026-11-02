@@ -2,7 +2,7 @@
 autonomy: gated
 ci: wait
 branch: feat/cheat-engine-mcp
-delivery: in-review
+delivery: merged
 pr: 20
 ---
 
