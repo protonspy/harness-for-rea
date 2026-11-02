@@ -1,11 +1,28 @@
 import { randomUUID } from "node:crypto"
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
 import { readContract, type Contract } from "@shared/contract"
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
+import type { IntegrationGate } from "./integrations/gate"
+import type { IntegrationRegistry } from "./integrations/registry"
+import { mcpListing, type OfferedIntegration, type TaskIntegrations } from "./integrations/task"
 import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflight, specialistCommand, stopArgs, type Exec, type Mode } from "./sandbox/docker"
 import { applyPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
@@ -37,26 +54,79 @@ const QUESTIONS_PER_RUN = 64
   A question file the container wrote, read through one descriptor and never past the cap: a link,
   or anything but a regular file, is refused, and a file grown after the check is cut off.
 */
-function readQuestion(file: string): unknown {
+function readQuestion(file: string, cap = QUESTION_FILE_CAP): unknown {
   if (!lstatSync(file).isFile()) return undefined
   const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
   try {
     if (!fstatSync(fd).isFile()) return undefined
-    const buf = Buffer.alloc(QUESTION_FILE_CAP + 1)
+    const buf = Buffer.alloc(cap + 1)
     const n = readSync(fd, buf, 0, buf.length, 0)
-    return n > QUESTION_FILE_CAP ? TOO_LARGE : JSON.parse(buf.subarray(0, n).toString("utf8"))
+    return n > cap ? TOO_LARGE : JSON.parse(buf.subarray(0, n).toString("utf8"))
   } finally {
     closeSync(fd)
   }
 }
 
+/** One kind of file the run channel carries: its request and reply prefixes, how many a run reads, and the largest. */
+export interface Channel {
+  request: string
+  reply: string
+  perRun: number
+  fileCap: number
+}
+
+/** The specialist's questions to the user (specs/chat R5.2). */
+export const QUESTIONS: Channel = { request: "q", reply: "a", perRun: QUESTIONS_PER_RUN, fileCap: QUESTION_FILE_CAP }
+/** Largest tool call file read from the sandbox. */
+export const TOOL_CALL_FILE_CAP = 64 * 1024
+/** The specialist's integration calls (specs/mcp-integrations R4.2): far more per run than questions, each a small file. */
+export const TOOL_CALLS: Channel = { request: "t", reply: "r", perRun: 1024, fileCap: TOOL_CALL_FILE_CAP }
+/** A delegation's integration calls that run at once; the rest wait their turn, so a flood never queues on the engine. */
+export const CALLS_IN_FLIGHT = 2
+
+/**
+  Runs at most `n` jobs at once, in order. Once ended, a job still waiting answers with an error and never runs: a
+  delegation that ends leaves nothing queued on the engine.
+*/
+export function limited(n: number) {
+  let running = 0
+  let ended = false
+  const waiting: (() => void)[] = []
+  const next = () => {
+    if (running < n) waiting.shift()?.()
+  }
+  return {
+    run(job: () => Promise<object>): Promise<object> {
+      return new Promise((resolve) => {
+        waiting.push(() => {
+          if (ended) return resolve({ error: "The delegation ended before the call ran." })
+          running++
+          job()
+            .catch(() => ({ error: "The call could not be carried out." }))
+            .then(resolve)
+            .finally(() => {
+              running--
+              next()
+            })
+        })
+        next()
+      })
+    },
+    end() {
+      ended = true
+      while (waiting.length) waiting.shift()?.()
+    },
+  }
+}
+
 /**
   Watch a run's ask channel (adr:0008-ask-the-user-from-the-specialist-over-the-run-channel): each new
-  `q-<id>.json` is read once, bounded, and answered with `a-<id>.json`, written whole by a rename.
-  Returns the function that stops watching.
+  `<request>-<id>.json` is read once, bounded, and answered with `<reply>-<id>.json`, written whole by a rename.
+  Questions are `q-`/`a-`, integration calls `t-`/`r-`. Returns the function that stops watching.
 */
-export function watchAskChannel(dir: string, answer: (question: unknown) => Promise<object>, everyMs = 200): () => void {
+export function watchAskChannel(dir: string, answer: (question: unknown) => Promise<object>, everyMs = 200, channel: Channel = QUESTIONS): () => void {
   const seen = new Set<string>()
+  const pattern = new RegExp(`^${channel.request}-([A-Za-z0-9-]{1,64})\\.json$`)
   const tick = () => {
     let names: string[] = []
     try {
@@ -65,24 +135,34 @@ export function watchAskChannel(dir: string, answer: (question: unknown) => Prom
       return
     }
     for (const name of names) {
-      const id = /^q-([A-Za-z0-9-]{1,64})\.json$/.exec(name)?.[1]
-      if (!id || seen.has(name) || seen.size >= QUESTIONS_PER_RUN) continue
+      const id = pattern.exec(name)?.[1]
+      if (!id || seen.has(name)) continue
+      // A question past the cap is left unread, as before; a call past it is answered, so the server never waits on it.
+      const over = seen.size >= channel.perRun
+      // Past twice the cap the channel is read no further, so a container making files without end cannot grow this set.
+      if ((over && channel === QUESTIONS) || seen.size >= channel.perRun * 2) continue
       seen.add(name)
       let body: unknown
       try {
-        body = readQuestion(join(dir, name))
+        body = over ? undefined : readQuestion(join(dir, name), channel.fileCap)
       } catch {
         body = undefined
       }
       void Promise.resolve()
-        .then(() => answer(body))
-        .catch(() => ({ error: "The question could not be put to the user." }))
+        .then(() =>
+          over
+            ? { error: `This delegation made more than ${channel.perRun} calls; delegate again to go on.` }
+            : body === TOO_LARGE && channel !== QUESTIONS
+              ? { error: `The call is larger than ${channel.fileCap / 1024} KB.` }
+              : answer(body),
+        )
+        .catch(() => ({ error: channel === QUESTIONS ? "The question could not be put to the user." : "The call could not be carried out." }))
         .then((reply) => {
           try {
             // A fresh name, created exclusively: the container cannot plant a link the reply would follow.
-            const tmp = join(dir, `.a-${id}-${randomUUID()}.tmp`)
+            const tmp = join(dir, `.${channel.reply}-${id}-${randomUUID()}.tmp`)
             writeFileSync(tmp, JSON.stringify(reply), { flag: "wx" })
-            renameSync(tmp, join(dir, `a-${id}.json`))
+            renameSync(tmp, join(dir, `${channel.reply}-${id}.json`))
           } catch {
             // the run ended and its directory went with it
           }
@@ -110,14 +190,14 @@ export interface Launcher {
   /** the reason to refuse, or null */
   preflight(): Promise<string | null>
   /** `box` names the orchestrator's sandbox to run in; without it the run gets a container of its own */
-  launch(ws: Workspace, mode: Mode, o: { specialistEffort?: SpecialistEffort }, box?: string): Launch
+  launch(ws: Workspace, mode: Mode, o: { specialistEffort?: SpecialistEffort; integrations?: string[] }, box?: string): Launch
 }
 
 export function dockerLauncher(exec: Exec = dockerExec): Launcher {
   return {
     preflight: () => preflight(exec),
     launch: (ws, mode, o, box) => {
-      const cli = claudeArgs(mode, undefined, o.specialistEffort)
+      const cli = claudeArgs(mode, undefined, o.specialistEffort, o.integrations)
       // In a sandbox the stop ends the CLI and leaves the sandbox up (specs/specialist-sandbox R4.4).
       if (box) return { command: "docker", args: execArgs(box, cli), stop: async () => void (await exec(stopArgs(box))) }
       return {
@@ -134,6 +214,8 @@ export interface DelegationDeps {
   dataDir: string
   launcher: Launcher
   settings: () => Settings
+  /** the MCP integrations the app carries, the gate every call passes, and the container's server script (specs/mcp-integrations) */
+  integrations?: { gate: IntegrationGate; registry: IntegrationRegistry; serverScript: string }
 }
 
 export class DelegationRefused extends Error {
@@ -178,6 +260,25 @@ function contractFeedback(problems: string[]): string {
   ].join("\n")
 }
 
+/** Where a delegation's integration servers and their tool lists are, under the run directory the container reads at /run/hfr. */
+export function integrationsDir(runDir: string): string {
+  return join(runDir, "mcp")
+}
+
+/**
+  The container's MCP server and each offered integration's tools, written into the run directory for this delegation
+  alone (specs/mcp-integrations R4.1, R4.2): copied per delegation, never baked into the image, and cleared when a
+  sandbox's next delegation offers none.
+*/
+export function writeIntegrations(runDir: string, offered: OfferedIntegration[], server = "") {
+  const dir = integrationsDir(runDir)
+  rmSync(dir, { recursive: true, force: true })
+  if (!offered.length) return
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  copyFileSync(server, join(dir, "server.mjs"))
+  for (const i of offered) writeFileSync(join(dir, `${i.id}.json`), JSON.stringify(mcpListing(i.tools)))
+}
+
 /** Empty a sandbox's ask channel, so an earlier delegation's questions are not answered again (specs/specialist-sandbox R4.8). */
 function clearAskChannel(ws: Workspace) {
   const dir = askDir(ws.runDir)
@@ -201,6 +302,8 @@ export async function delegate(
     callId?: string
     /** the task's project, whose unknowns ledger this delegation reads and feeds (specs/analysis-contract R2) */
     projectId?: string | null
+    /** the task's integrations and the targets this delegation was approved for (specs/mcp-integrations R3.1, R4) */
+    integrations?: { task: TaskIntegrations; targets: Record<string, unknown> }
   },
 ): Promise<DelegationResult> {
   const { log } = deps
@@ -258,14 +361,40 @@ export async function delegate(
     throw e
   }
 
+  // The integrations this delegation offers, each named target open before the container runs (specs/mcp-integrations R4.1, R4.5).
+  let offered: OfferedIntegration[] = []
+  if (o.integrations) {
+    const r = await o.integrations.task.forDelegation(o.integrations.targets).catch((e: Error) => ({ error: e.message }))
+    if ("error" in r) {
+      await held?.release()
+      return refuse(r.error, { integrations: Object.keys(o.integrations.targets) })
+    }
+    offered = r
+  }
+  try {
+    writeIntegrations(ws.runDir, offered, o.integrations?.task.d.serverScript ?? "")
+  } catch (e) {
+    await held?.release()
+    return refuse(`The integrations' server could not be written into the run directory: ${(e as Error).message}`)
+  }
+  if (offered.length)
+    ev("integrations.offered", `Offered ${offered.map((i) => `${i.title} (${i.tools.length} tools)`).join(", ")}`, {
+      integrations: offered.map((i) => ({ id: i.id, tools: i.tools.map((t) => t.name), target: i.target ?? null })),
+    })
+
   try {
     const pkg = scrubPaths(o.pkg, o.sourceRoot)
-    writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null))
+    writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null, offered))
     // What earlier analyses of the project left open goes into this one's package (specs/analysis-contract R2.4).
     const open = o.projectId ? ledger.open(o.projectId) : []
     if (open.length) log.updateStep(step.id, { data: { unknowns: open.map((u) => u.id) } })
     const session = new SpecialistSession(
-      deps.launcher.launch(ws, o.pkg.mode, { specialistEffort: o.specialistEffort ?? settings.specialistEffort }, held?.box.name),
+      deps.launcher.launch(
+        ws,
+        o.pkg.mode,
+        { specialistEffort: o.specialistEffort ?? settings.specialistEffort, ...(offered.length ? { integrations: offered.map((i) => i.id) } : {}) },
+        held?.box.name,
+      ),
       {
         timeoutMs: settings.timeoutMinutes * 60_000,
         signal: o.signal,
@@ -280,6 +409,16 @@ export async function delegate(
       },
     )
     const stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
+    const task = o.integrations?.task
+    const calls = limited(CALLS_IN_FLIGHT)
+    const stopWatching =
+      task && offered.length
+        ? watchAskChannel(askDir(ws.runDir), (c) => calls.run(() => task.fromSpecialist(c, offered, step.id)), 100, TOOL_CALLS)
+        : () => undefined
+    const stopCalls = () => {
+      stopWatching()
+      calls.end()
+    }
     let result
     let check: ReturnType<typeof readContract>
     try {
@@ -296,6 +435,7 @@ export async function delegate(
       }
     } finally {
       stopAsking()
+      stopCalls()
       await session.close()
     }
     const contract = "contract" in check ? check.contract : null

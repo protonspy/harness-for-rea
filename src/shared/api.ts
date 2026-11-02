@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
+import { IntegrationIdSchema, IntegrationSettingsSchema, type IntegrationActionResult, type IntegrationStatus, type IntegrationView } from "./integrations"
 import { PROVIDER_IDS } from "./providers"
 import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
@@ -61,6 +62,8 @@ const SettingsPatch = z
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
     questionTimeoutMinutes: z.number().int().min(1).max(1440),
+    // Each integration's whole settings; the main process holds them to the integration the app carries (specs/mcp-integrations R1.5).
+    integrations: z.record(IntegrationIdSchema, IntegrationSettingsSchema),
   })
   .partial()
   .strict()
@@ -150,6 +153,10 @@ export const API_SCHEMAS = {
   setTaskModel: z.tuple([id, ModelName]),
   decideTool: z.tuple([id, id, DecisionSchema]),
   answerQuestion: z.tuple([id, id, AnswerSchema]),
+  // The MCP integrations the app carries, each with its catalog; one's checks and connection; one of its actions (specs/mcp-integrations R1).
+  integrations: z.tuple([]),
+  integrationStatus: z.tuple([IntegrationIdSchema]),
+  runIntegrationAction: z.tuple([IntegrationIdSchema, z.string().regex(/^[a-z][a-z0-9-]{0,40}$/)]),
 } as const
 
 export type ApiMethod = keyof typeof API_SCHEMAS
@@ -194,6 +201,9 @@ export interface ApiResults {
   setTaskModel: TaskRow
   decideTool: TaskRow
   answerQuestion: TaskRow
+  integrations: IntegrationView[]
+  integrationStatus: IntegrationStatus
+  runIntegrationAction: IntegrationActionResult
 }
 
 /** What the renderer passes: the schema's input, so defaulted fields may be left out. */

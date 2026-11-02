@@ -55,6 +55,8 @@ themselves. -->
 - **@napi-rs/keyring** — the one OS-keychain store both apps read provider keys from, prebuilt per platform with no install script ([adr:0024-share-the-data-folder-between-processes]).
 - **web-tree-sitter** — OpenTUI's required peer, which `.npmrc`'s `legacy-peer-deps` does not install by itself; the TUI's binary and package carry it.
 - **GitHub Container Registry** — hosts the specialist's base image, everything but Claude Code, published by the Images workflow and pulled by digest ([adr:0012-pull-the-specialists-base-image-from-ghcr]).
+- **Cheat Engine** (on the user's Windows machine, not shipped) — the first MCP integration: the agents read a live process's memory through it, only through the app ([adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations]).
+- **The bridge** (`sandbox/cheat-engine/hfr-bridge.lua`) — the app's own read-only fork of `miscusi-peek/cheatengine-mcp-bridge` (MIT) at commit `6bd7ce90`, its write, injection, execution and debugging handlers deleted; upstream fixes come in by hand ([adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations]).
 
 ## Development
 

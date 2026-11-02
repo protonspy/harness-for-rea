@@ -19,6 +19,7 @@ import type { ContextPackage } from "@shared/context"
 import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
+import { TaskIntegrations } from "../integrations/task"
 import { baseUrlFor } from "../readiness"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
@@ -251,12 +252,31 @@ export class TaskRunner {
       specialistEffort: run.specialistEffort,
     }
     ctx.auto = auto
+    const integ = this.deps.integrations
+    // A target is the user's to approve, in an automatic task too, outside the turn's question cap (specs/mcp-integrations R3.2).
+    if (integ)
+      ctx.integrations = new TaskIntegrations({
+        taskId: task.id,
+        gate: integ.gate,
+        registry: integ.registry,
+        serverScript: integ.serverScript,
+        log,
+        settings: this.deps.settings,
+        ask: (q, stepId) => this.askUser(task.id, q, "orchestrator", stepId, { uncapped: true }),
+      })
     // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
     const ready = (this.disposing.get(task.id) ?? Promise.resolve())
       .then(() => this.deps.workspace(task))
-      .then((ws) => ({
+      .then(async (ws) => {
+        // The integration tools the orchestrator has, and what a delegation can target, as Settings has them now (R5.1).
+        const [own, targetable] = await Promise.all([ctx.integrations?.orchestratorTools() ?? [], ctx.integrations?.targetable() ?? []])
+        ctx.targetable = targetable.map((h) => h.info)
+        return { ws, own }
+      })
+      .then(({ ws, own }) => ({
         ws,
         agent: buildAgent({
+          integrations: own.map(({ host, tools }) => ({ info: host.info, tools })),
           model,
           ctx: Object.assign(ctx, {
             root: ws.root,
@@ -787,13 +807,15 @@ export class TaskRunner {
     question: Question,
     agent: "orchestrator" | "specialist",
     stepId?: string,
-    o: { deferred?: string; unbounded?: boolean } = {},
+    o: { deferred?: string; unbounded?: boolean; uncapped?: boolean } = {},
   ): Promise<{ answer: Answer; origin: Origin }> {
     const live = this.live.get(taskId)
     const { log } = this.deps
     const { deferred, unbounded } = o
+    // An uncapped question still times out; it just never counts against, or is cut by, the turn's cap.
+    const capped = !unbounded && !o.uncapped
     if (!live || live.abort.signal.aborted) return Promise.resolve({ answer: question.default, origin: "stopped" })
-    if (!unbounded && live.asked >= QUESTION_CAP) {
+    if (capped && live.asked >= QUESTION_CAP) {
       log.append({
         taskId,
         stepId,
@@ -804,7 +826,7 @@ export class TaskRunner {
       })
       return Promise.resolve({ answer: question.default, origin: "cap" })
     }
-    if (!unbounded) live.asked++
+    if (capped) live.asked++
     const questionId = randomUUID()
     const signal = live.abort.signal
     log.append({
@@ -1000,6 +1022,7 @@ export class TaskRunner {
   private end(taskId: string): Promise<void> {
     const live = this.live.get(taskId)
     this.live.delete(taskId)
+    this.deps.integrations?.gate.release(taskId)
     clearTimeout(live?.approvalTimer)
     const done = live ? live.ready.then(({ ws }) => ws.dispose({ remove: live.forced === true })).catch(() => undefined) : Promise.resolve()
     this.disposals.add(done)

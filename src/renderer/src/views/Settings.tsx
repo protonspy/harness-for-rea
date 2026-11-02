@@ -2,6 +2,7 @@ import { Wand2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "@shared/types"
 import { ErrorText, Field, PanelHeader } from "@/components/common"
+import { IntegrationsPanel } from "@/components/setup/IntegrationsPanel"
 import { ClaudePanel, EffortSelect, message, ModelPanel, SandboxPanel } from "@/components/setup/panels"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -9,7 +10,8 @@ import { Input } from "@/components/ui/input"
 
 /*
   Settings: the orchestrator's provider, key, endpoint, model and effort, the sandbox images and the delegation
-  timeout, the Claude sign-in and the specialist's effort, and the waits on the user (specs/desktop-ui R1); the
+  timeout, the Claude sign-in and the specialist's effort, the MCP integrations (specs/mcp-integrations R1, R2), and
+  the waits on the user (specs/desktop-ui R1); the
   first-run setup is reachable again from here (specs/onboarding R2.2).
 */
 
@@ -88,6 +90,13 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
               <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
             </Field>
           </ClaudePanel>
+        </div>
+      </Card>
+
+      <Card>
+        <PanelHeader title="MCP integrations" />
+        <div className="p-4">
+          <IntegrationsPanel settings={settings} onSaved={setSettings} />
         </div>
       </Card>
 

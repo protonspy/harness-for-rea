@@ -1,3 +1,4 @@
+import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
 import type { ProviderId } from "./providers"
@@ -214,6 +215,8 @@ export interface Settings {
   questionTimeoutMinutes: number
   /** the user finished the first-run setup once (specs/onboarding R1.8) */
   setupCompleted: boolean
+  /** each MCP integration the user touched, by id; one left out is off, at its defaults (specs/mcp-integrations R1.1) */
+  integrations: Record<string, IntegrationSettings>
 }
 
 export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const

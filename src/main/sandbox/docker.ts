@@ -205,12 +205,21 @@ export const ASK_CHANNEL = "/run/hfr-ask"
 /** The ask-user MCP server's one tool, as Claude Code names it. */
 export const ASK_USER_TOOL = "mcp__hfr__ask_user"
 
-/** The specialist's MCP servers, both baked into its image: ask-user, and REA (adr:0018-make-rea-native-to-the-specialist). */
-export function mcpConfig(): string {
+/** Where a delegation's integration servers are in the container: the run directory, read-only (specs/mcp-integrations R4.2). */
+export const INTEGRATIONS_DIR = "/run/hfr/mcp"
+
+/**
+  The specialist's MCP servers: ask-user and REA, both baked into its image (adr:0018-make-rea-native-to-the-specialist),
+  and one per integration the delegation offers, from its run directory (adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations).
+*/
+export function mcpConfig(integrations: string[] = []): string {
   return JSON.stringify({
     mcpServers: {
       hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] },
       rea: { type: "stdio", command: "node", args: [REA_ENTRY, "mcp"], env: reaEnv() },
+      ...Object.fromEntries(
+        integrations.map((id) => [id, { type: "stdio", command: "node", args: [`${INTEGRATIONS_DIR}/server.mjs`, id, INTEGRATIONS_DIR, ASK_CHANNEL] }]),
+      ),
     },
   })
 }
@@ -219,8 +228,10 @@ export function mcpConfig(): string {
 /** The specialist's model, by its full id so an alias moving to a newer model never changes it (specs/specialist-lifecycle R3.2). */
 export const SPECIALIST_MODEL = "claude-opus-5-5"
 
-export function claudeArgs(mode: Mode, model = SPECIALIST_MODEL, effort: SpecialistEffort = "default"): string[] {
+export function claudeArgs(mode: Mode, model = SPECIALIST_MODEL, effort: SpecialistEffort = "default", integrations: string[] = []): string[] {
   const tools = [...READ_TOOLS, ...(mode === "modify" ? WRITE_TOOLS : []), ...SHELL_TOOLS].join(",")
+  // Each integration's server offers only the tools checked for the specialist, so its whole prefix is allowed (R4.1).
+  const allowed = [tools, ASK_USER_TOOL, REA_TOOLS, ...integrations.map((id) => `mcp__${id}`)].join(",")
   return [
     "claude",
     "-p",
@@ -228,7 +239,7 @@ export function claudeArgs(mode: Mode, model = SPECIALIST_MODEL, effort: Special
     "",
     "--strict-mcp-config",
     "--mcp-config",
-    mcpConfig(),
+    mcpConfig(integrations),
     // File tools confined to the working directory, Bash the one command-running tool, nothing that would prompt.
     "--restricted",
     "--permission-prompts",
@@ -245,7 +256,7 @@ export function claudeArgs(mode: Mode, model = SPECIALIST_MODEL, effort: Special
     "--tools",
     tools,
     "--allowedTools",
-    `${tools},${ASK_USER_TOOL},${REA_TOOLS}`,
+    allowed,
     // The login volume under the home directory holds the plan's token: Claude Code's own file tools may not
     // reach it. This is no boundary: the shell, as root, and REA's tools, which take any path, can read it;
     // adr:0016-let-the-orchestrator-run-the-specialists-sandbox and adr:0018-make-rea-native-to-the-specialist

@@ -175,6 +175,19 @@ for await (const line of createInterface({ input: process.stdin })) {
     log({ heard })
     out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: `tu_q${turn}`, content: heard }] } })
   }
+  // Mode "integration" makes HFR_FAKE_CALL (or a default call) over the channel, as an integration's MCP server does
+  // (specs/mcp-integrations R4.2), and reports the app's answer.
+  if (mode === "integration") {
+    const channel = join(process.env.HFR_RUN ?? ".", "ask")
+    const call = process.env.HFR_FAKE_CALL ?? JSON.stringify({ integration: "fake", tool: "lookup", arguments: { key: "k" } })
+    writeFileSync(join(channel, ".t-1.tmp"), call)
+    renameSync(join(channel, ".t-1.tmp"), join(channel, "t-1.json"))
+    const r = join(channel, "r-1.json")
+    while (!existsSync(r)) await new Promise((res) => setTimeout(res, 20))
+    heard = readFileSync(r, "utf8")
+    rmSync(r)
+    log({ heard })
+  }
   // The analysis contract (specs/analysis-contract): HFR_FAKE_CONTRACT, or an empty one; "no-contract" never
   // writes one and "bad-contract-once" writes an invalid one on the first turn only.
   const contract =
