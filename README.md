@@ -1,30 +1,87 @@
 # Harness for REA
 
 A desktop app and a terminal UI for deep analysis of software you own or are authorized to study:
-legacy-system comprehension, debugging, reverse engineering, and porting or reimplementing a target.
+understanding a legacy system, debugging, reverse engineering a binary or an app, and porting or
+reimplementing what it does.
 
-Two agents split the work:
+You describe what you want in a chat. Two agents do the work:
 
-- **The orchestrator** — a [DeepAgents](https://github.com/langchain-ai/deepagentsjs) agent on a model
-  from OpenRouter, DeepSeek or any OpenAI-compatible provider. It plans the task, prepares each step,
-  writes and runs its own code in a scratch area, and talks to you. It never analyses the target
-  itself ([adr:0011](docs/adr/0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code.md)).
-- **The specialist** — Claude Opus running the pinned Claude Code CLI on your own Claude plan, inside a
-  Docker container per delegation that sees only the files it was given, with
-  [REA](https://github.com/morluto/rea), the reverse engineering MCP server, built in
-  ([adr:0006](docs/adr/0006-run-the-specialist-inside-a-container-per-task.md),
-  [adr:0018](docs/adr/0018-make-rea-native-to-the-specialist.md)).
+- **The orchestrator** is the agent you talk to. It runs on a model from OpenRouter, DeepSeek or any
+  OpenAI-compatible provider. It plans the task, prepares each step, writes and runs its own code
+  (a decoder, a reimplementation, a probe) and answers you. It does not analyse the target itself.
+- **The specialist** does the deep analysis. It is Claude Opus running the Claude Code CLI on your
+  own Claude plan, inside a Docker container that holds only the files a step needs, with
+  [REA](https://github.com/morluto/rea) — a reverse engineering MCP server for native binaries,
+  Android, .NET, Electron and JavaScript targets — built in, and a root shell to install any other tool.
 
-Every report ends with a machine-readable contract — functions, constants with their sources,
-unknowns, and test vectors the specialist observed by running the target — which the app checks,
-keeps per project, and lets the orchestrator replay against its own reimplementation.
+The split keeps the expensive, careful work with the specialist and the cheap planning and coding
+with the orchestrator, and keeps the target away from your machine: the specialist only ever sees
+copies of the files it was handed.
+
+## How a task runs
+
+```
+ you ──chat──▶ orchestrator (your provider's model, in the app)
+                  │  plans the steps, reads your code, writes its own in /scratch
+                  │  (its tools run in a task container: /workspace read-only, /scratch writable)
+                  │
+                  ├─ delegate a step ──▶ specialist (Claude Code in a container per step)
+                  │    context package:      /work = copies of the files listed
+                  │    brief, objective,     REA, a shell, internet
+                  │    files, questions      ── report + evidence + contract ──▶ back
+                  │
+                  ├─ replay test vectors ─▶ its own code, in the task container
+                  └─ propose a patch ─────▶ you approve, then it is applied to your files
+```
+
+1. **You start a task** in a project with a request. The orchestrator breaks it into steps.
+2. **For each analysis**, the orchestrator writes a *context package*: a technical brief (what the
+   artifact is, what is already known), the objective, the files, the questions and the report
+   format. The specialist sees that package and nothing else — not your request, not the chat.
+3. **The specialist runs** in a fresh container (or a sandbox the orchestrator prepared with tools
+   and files), with the files copied into `/work`. It answers with a report whose claims cite
+   evidence: a line range, an address in a binary, or an REA evidence id.
+4. **Every report ends with a contract**, a JSON block the app validates: the functions mapped with
+   their inputs, outputs and side effects; the constants found, each with a source or marked
+   estimated; the questions left open; and *test vectors* — inputs given to the target and the
+   output it produced, observed by running it. A report whose contract fails is sent back to the
+   specialist for a correction, up to twice.
+5. **The orchestrator writes its code** from the report and checks it with `replay_vectors`, which
+   runs the vectors against its reimplementation and compares outputs byte for byte.
+6. **Changes to your files** come back as patches. Nothing outside the task's containers changes
+   until a patch is applied.
+
+**Questions.** Either agent can ask you a question mid-run. The specialist's questions go first to
+the orchestrator's model, which answers from the context package when it can; questions about
+authorization, ownership or purpose always come to you.
+
+**Refusals.** If the specialist declines a step under its usage policy, the task waits for you to
+stop it, skip the step, or ask for a different technical approach. The request is never reworded to
+get past the refusal.
+
+**Projects.** A project is one target — a file (an APK, an executable, an archive) or a folder —
+with a goal and the model its tasks use. Tasks in a project share its sandboxes and everything
+earlier tasks found, and the questions one analysis left open are handed to the next.
+
+## Isolation
+
+- The specialist runs in a container per delegation, or in a sandbox the orchestrator created for
+  the project; it sees only the files copied into it, as root, with internet access. Its Claude
+  Code runs with no user or project settings, so a `CLAUDE.md` or settings left in `/work` by an
+  earlier step are never loaded.
+- The orchestrator's tools run in a task container where your source is mounted read-only; it
+  writes only to its own scratch area.
+- The specialist signs in with your Claude plan once; the token lives in a Docker volume.
+- Provider API keys are kept in the OS keychain — encrypted with it by the desktop app, stored in it
+  by the terminal UI — and redacted from everything the app records or sends to a model.
+- Everything the agents do is recorded per task: an event log in SQLite and each agent's raw output
+  as JSONL, in the app's data folder.
 
 ## What you need
 
-- **Docker** (Docker Desktop on Windows and macOS), running. The app pulls the specialist's base
-  image from GHCR and builds the specialist image on it at the first start.
-- **A Claude plan** (Pro or Max) for the specialist. You sign in once, from the app, inside a
-  container; the token stays in a Docker volume.
+- **Docker** (Docker Desktop on Windows and macOS), running. At the first start the app pulls the
+  specialist's base image from GHCR and builds the specialist image on it.
+- **A Claude plan** (Pro or Max) for the specialist.
 - **An API key** for the orchestrator's provider: OpenRouter by default, DeepSeek, or any
   OpenAI-compatible endpoint.
 
@@ -69,34 +126,52 @@ harness-for-rea
 
 Both apps open on a setup of three steps, and nothing else opens until all three are ready:
 
-1. **Sandbox images** — Docker running, and the specialist image prepared (it is prepared at start;
-   preparing it again is one action).
-2. **Claude sign-in** — the sign-in runs in a container: open the link it shows, sign in with your
-   Claude plan, and paste the code back.
-3. **Orchestrator** — the provider, its API key and the model. The desktop app keeps the key encrypted
-   with the OS keychain; the terminal UI keeps it in the OS keychain itself.
+1. **Sandbox images** — Docker running and the specialist image prepared.
+2. **Claude sign-in** — runs in a container: open the link it shows, sign in with your Claude plan,
+   and paste the code back.
+3. **Orchestrator** — the provider, its API key and the model.
 
-In the terminal UI the steps are commands typed on the input line: `/images`, `/login`, then
+In the terminal UI the steps are commands on the input line: `/images`, `/login`, then
 `/code <code>`, `/key <key>`, `/model <model id>`, and `/done` once every step is ready.
 
-## Projects and tasks
+## Using it
 
-A **project** is one target — a file (an APK, an executable, an archive) or a folder — with a goal
-(understand, reimplement, integrate or debug) and the model its tasks run with. A **task** is one
-request inside a project, run as a conversation: you can send messages while it works, stop and
-continue it, and answer the questions either agent asks. The specialist's questions go to the
-orchestrator's model first, and reach you only when they need a fact only you have
-([adr:0021](docs/adr/0021-answer-the-specialist-from-the-orchestrator-and-let-the-user-decide-a-refusal.md)).
+**Desktop app.** Create a project from a target and a goal, then start tasks in it. A task shows as
+a chat: the messages, each tool call, and each delegation as a card with the specialist's own steps
+inside it. Long tasks load their history in pages as you scroll up. The side panel has the plan,
+the delegations with their reports and evidence, the cost per agent, and the raw event log. The
+project page lists its tasks, what the specialist found, and the questions still open.
 
-Tasks of a project share its sandboxes, outputs and analyses: a later task reads what an earlier one
-found, and the questions an analysis left open are handed to the next one
-([adr:0020](docs/adr/0020-group-tasks-into-projects-that-share-their-analyses.md)).
+**Terminal UI.** The same projects and tasks in a terminal. Tab moves between the list and the input
+line, Enter opens, Escape goes back. On a task, the input line sends a message or answers the
+question that waits, and takes `/stop`, `/cancel`, `/continue` and `/older`.
 
-The terminal UI shows the same projects and tasks: Tab moves between the list and the input line,
-Enter opens, Escape goes back, and on a task the input line sends a message or answers the question
-that waits, with `/stop`, `/cancel`, `/continue` and `/older`. The desktop app and the terminal UI
-use the same data folder, so only one of them can be open at a time; the second one names the first
-and exits.
+The two apps share one data folder, so only one can be open at a time; the second names the first
+and exits. `harness-for-rea --version` and `--help` work at any time.
+
+## How the code is organized
+
+```
+src/main/            the core (Node): Electron shell and everything behind it
+  core.ts            wires the database, event log, projects, sandboxes, runner and API handlers
+  index.ts           the Electron shell: window, IPC, dialogs
+  orchestrator/      the orchestrator agent, its tools, the task runner, the model
+  delegation.ts      one delegation: workspace, specialist run, contract check, patch
+  specialist/        running Claude Code and reading its stream-json output
+  sandbox/           Docker: images, containers, sandboxes, prompts, patches
+  events/            the event log (SQLite + JSONL) and redaction
+  unknowns.ts        the per-project ledger of open questions
+src/shared/          types and the IPC contract (zod schemas) shared with the views
+src/renderer/        the desktop UI (React, Tailwind, shadcn/ui on Radix)
+tui/                 the terminal UI (OpenTUI on Bun) and its npm package
+sandbox/             the specialist's images: the published base and the local layer with Claude Code
+scripts/             test gate, image pinning, CLI build
+tests/               Vitest suite; the specialist is faked by tests/fixtures/fake-claude.mjs
+```
+
+The desktop app and the terminal UI run the same core: `startCore()` takes the data folder, how to
+deliver updates to the view, and where keys are kept, and returns the API handlers. Every call from
+either UI goes through the same validating dispatcher.
 
 ## Development
 
@@ -107,16 +182,16 @@ Node 24 and npm; Docker for the sandboxes; Bun 1.4 for the terminal UI.
 npm install
 node node_modules/electron/install.js
 
-# Build — typecheck the Node, web and TUI tsconfigs, then electron-vite builds main, preload and renderer into out/
+# Typecheck, then build main, preload and renderer into out/
 npm run typecheck && npm run build
 
 # Run the desktop app in development
 npm run dev
 
-# Run the terminal UI from source (needs Bun)
+# Run the terminal UI from source
 npm run tui
 
-# Test — the whole suite, one file, and the report the gate reads
+# Tests: the suite, one file, and the coverage report the CI gate reads
 npm test
 npx vitest run tests/orchestrator.test.ts
 node scripts/test-gate.mjs
@@ -129,40 +204,19 @@ HFR_BUN=1 npx vitest run tests/bun-core.test.ts
 npm run lint
 npm run format:check
 
-# Package the desktop app (Windows installer, macOS disk images) and the CLI
+# Package: Windows installer, macOS disk images, the CLI's npm package and a standalone binary
 npm run dist
 npm run dist:mac
 bun scripts/build-cli.ts package
 bun scripts/build-cli.ts binary bun-windows-x64 cli
 ```
 
-A release is a maintainer's manual run of the **Release** workflow on `main`, after bumping
-`version` in `package.json`; it needs the `NPM_TOKEN` repository secret to publish the CLI.
+Tests run the TypeScript sources directly. The specialist is `tests/fixtures/fake-claude.mjs`, which
+speaks Claude Code's stream-json; the orchestrator's provider is a scripted `fetch`.
 
-The specifications live in `specs/`, the plans in `plans/`, and the decisions in `docs/adr/`:
-
-- [0001 · Use DeepAgents on OpenRouter for orchestration](docs/adr/0001-use-deepagents-on-openrouter-for-orchestration.md)
-- [0002 · Run the specialist through the pinned Claude Code CLI](docs/adr/0002-run-the-specialist-through-the-pinned-claude-code-cli.md)
-- [0003 · Authenticate the specialist with the user's Claude plan](docs/adr/0003-authenticate-the-specialist-with-the-users-claude-plan.md)
-- [0004 · Sandbox delegated work in a read-only copy](docs/adr/0004-sandbox-delegated-work-in-a-read-only-copy.md) (superseded)
-- [0005 · Store events in SQLite with raw JSONL per task](docs/adr/0005-store-events-in-sqlite-with-raw-jsonl-per-task.md)
-- [0006 · Run the specialist inside a container per task](docs/adr/0006-run-the-specialist-inside-a-container-per-task.md)
-- [0007 · Run the orchestrator's tools in a task container](docs/adr/0007-run-the-orchestrators-tools-in-a-task-container.md)
-- [0008 · Ask the user from the specialist over the run channel](docs/adr/0008-ask-the-user-from-the-specialist-over-the-run-channel.md)
-- [0009 · Give the orchestrator a writable scratch](docs/adr/0009-give-the-orchestrator-a-writable-scratch.md)
-- [0010 · Build the renderer on shadcn/ui and Radix](docs/adr/0010-build-the-renderer-on-shadcn-ui-and-radix.md)
-- [0011 · Limit the orchestrator to planning, delegation and its own code](docs/adr/0011-limit-the-orchestrator-to-planning-delegation-and-its-own-code.md)
-- [0012 · Pull the specialist's base image from GHCR](docs/adr/0012-pull-the-specialists-base-image-from-ghcr.md)
-- [0013 · Give the sandboxes full internet access](docs/adr/0013-give-the-sandboxes-full-internet-access.md)
-- [0014 · Add OpenAI-compatible orchestrator providers](docs/adr/0014-add-openai-compatible-orchestrator-providers.md)
-- [0015 · Run the task container as root](docs/adr/0015-run-the-task-container-as-root.md)
-- [0016 · Let the orchestrator run the specialist's sandbox](docs/adr/0016-let-the-orchestrator-run-the-specialists-sandbox.md)
-- [0017 · Keep a task's conversation, containers and files until it is deleted](docs/adr/0017-keep-a-tasks-conversation-containers-and-files-until-it-is-deleted.md)
-- [0018 · Make REA native to the specialist](docs/adr/0018-make-rea-native-to-the-specialist.md)
-- [0019 · Keep the specialist's brief technical](docs/adr/0019-keep-the-specialists-brief-technical.md)
-- [0020 · Group tasks into projects that share their analyses](docs/adr/0020-group-tasks-into-projects-that-share-their-analyses.md)
-- [0021 · Answer the specialist from the orchestrator, and let the user decide a refusal](docs/adr/0021-answer-the-specialist-from-the-orchestrator-and-let-the-user-decide-a-refusal.md)
-- [0022 · Run the TUI on Bun with OpenTUI](docs/adr/0022-run-the-tui-on-bun-with-opentui.md)
+To release, bump `version` in `package.json` and run the **Release** workflow on `main`. It builds
+everything above for Windows and macOS, publishes a GitHub Release, and publishes the CLI to npm
+with the `NPM_TOKEN` repository secret.
 
 ## License
 
