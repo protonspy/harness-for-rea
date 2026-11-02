@@ -27,6 +27,18 @@ function copySandbox(to: string) {
   cpSync(join(root, "sandbox", "specialist"), join(to, "sandbox", "specialist"), { recursive: true })
 }
 
+/**
+  OpenTUI React's devtools and their WebSocket, imported only when its DEV switch is on, which the TUI never sets:
+  built as empty modules rather than installed (adr:0023-build-the-tui-on-opentuis-react-layer).
+*/
+const devtools: BunPlugin = {
+  name: "devtools",
+  setup(build) {
+    build.onResolve({ filter: /^(react-devtools-core|ws)$/ }, (a) => ({ path: a.path, namespace: "devtools" }))
+    build.onLoad({ filter: /.*/, namespace: "devtools" }, () => ({ contents: "export default { initialize() {}, connectToDevTools() {} }", loader: "js" }))
+  },
+}
+
 function check(r: { success: boolean; logs: unknown[] }) {
   if (r.success) return
   for (const l of r.logs) console.error(l)
@@ -38,7 +50,16 @@ if (mode === "package") {
   const tui = join(root, "tui")
   rmSync(join(tui, "dist"), { recursive: true, force: true })
   // OpenTUI stays a dependency: npm installs its library for the user's platform.
-  check(await Bun.build({ entrypoints: [entry], target: "bun", outdir: join(tui, "dist"), naming: "main.js", external: ["@opentui/core"], plugins: [raw] }))
+  check(
+    await Bun.build({
+      entrypoints: [entry],
+      target: "bun",
+      outdir: join(tui, "dist"),
+      naming: "main.js",
+      external: ["@opentui/core", "@napi-rs/keyring"],
+      plugins: [raw, devtools],
+    }),
+  )
   copySandbox(tui)
   const manifest = JSON.parse(readFileSync(join(tui, "package.json"), "utf8"))
   writeFileSync(join(tui, "package.json"), `${JSON.stringify({ ...manifest, version }, null, 2)}\n`)
@@ -46,7 +67,7 @@ if (mode === "package") {
 } else if (mode === "binary" && target && out) {
   mkdirSync(out, { recursive: true })
   const outfile = join(out, target.includes("windows") ? "harness-for-rea.exe" : "harness-for-rea")
-  check(await Bun.build({ entrypoints: [entry], compile: { target: target as Bun.Build.CompileTarget, outfile }, plugins: [raw] }))
+  check(await Bun.build({ entrypoints: [entry], compile: { target: target as Bun.Build.CompileTarget, outfile }, plugins: [raw, devtools] }))
   copySandbox(out)
   console.log(`${outfile} built for ${target}`)
 } else {
