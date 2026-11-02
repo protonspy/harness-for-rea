@@ -2,7 +2,8 @@
 autonomy: gated
 ci: wait
 branch: feat/cheat-engine-mcp
-delivery: in-progress
+delivery: in-review
+pr: 20
 ---
 
 # Mcp integrations — requirements
