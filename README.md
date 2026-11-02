@@ -72,8 +72,8 @@ earlier tasks found, and the questions one analysis left open are handed to the 
 - The orchestrator's tools run in a task container where your source is mounted read-only; it
   writes only to its own scratch area.
 - The specialist signs in with your Claude plan once; the token lives in a Docker volume.
-- Provider API keys are kept in the OS keychain — encrypted with it by the desktop app, stored in it
-  by the terminal UI — and redacted from everything the app records or sends to a model.
+- Provider API keys are kept in the OS keychain, in one entry per provider both apps read, and
+  redacted from everything the app records or sends to a model.
 - Everything the agents do is recorded per task: an event log in SQLite and each agent's raw output
   as JSONL, in the app's data folder.
 
@@ -119,6 +119,7 @@ The terminal UI is also on npm, for Windows and macOS:
 
 ```bash
 npm install -g harness-for-rea
+cd path/to/what/you/analyse
 harness-for-rea
 ```
 
@@ -131,8 +132,11 @@ Both apps open on a setup of three steps, and nothing else opens until all three
    and paste the code back.
 3. **Orchestrator** — the provider, its API key and the model.
 
-In the terminal UI the steps are commands on the input line: `/images`, `/login`, then
-`/code <code>`, `/key <key>`, `/model <model id>`, and `/done` once every step is ready.
+In the terminal UI the setup opens inline and each step is a command: `/images` prepares the
+images again, `/login` opens the sign-in in your browser and `/code <code>` sends the code back,
+`/provider`, `/base-url <url>`, `/key <key>` and `/model` (a list to pick from) set the
+orchestrator, and `/done` finishes once every step is ready. A step readied in either app is ready
+in the other.
 
 ## Using it
 
@@ -142,12 +146,43 @@ inside it. Long tasks load their history in pages as you scroll up. The side pan
 the delegations with their reports and evidence, the cost per agent, and the raw event log. The
 project page lists its tasks, what the specialist found, and the questions still open.
 
-**Terminal UI.** The same projects and tasks in a terminal. Tab moves between the list and the input
-line, Enter opens, Escape goes back. On a task, the input line sends a message or answers the
-question that waits, and takes `/stop`, `/cancel`, `/continue` and `/older`.
+**Terminal UI.** Run `harness-for-rea` in the folder you want to analyse, or give its path:
+`harness-for-rea C:\samplespp`. The folder is the target of the project it opens — the one
+project on it, a choice when there are several, or a new one prefilled with the folder's name, its
+detected kind and your Settings model. A home folder, a drive, a Downloads folder or one holding the
+app's data asks you to type its path before it is mounted; the app's data folder itself is refused.
+`--continue` reopens the folder's last task and `--resume` lists its tasks.
 
-The two apps share one data folder, so only one can be open at a time; the second names the first
-and exits. `harness-for-rea --version` and `--help` work at any time.
+A task is a conversation: the agent's messages as markdown with colored code, each tool call on one
+line with its arguments and output under it, each delegation with its context package, report,
+evidence, files and the specialist's own steps, and a working line with the elapsed time, tokens and
+cost. Questions and gated tool calls open as dialogs; a proposed patch shows as a diff. The sidebar
+has the plan, the delegations, the cost per agent and the files touched.
+
+| Key | Does |
+|---|---|
+| Enter | send the message; Shift+Enter or Ctrl+J starts a new line |
+| ↑ ↓ | the messages sent this session, at the prompt's first and last line |
+| `/` | the screen's commands, completed with Tab |
+| `@` | a path from the project's folder, completed with Tab |
+| Ctrl+P | every command, searchable |
+| Tab | move between the prompt and the transcript or list |
+| Ctrl+O | expand or collapse every tool call and delegation |
+| Ctrl+B | show or hide the sidebar |
+| Esc | stop the running turn, close a dialog, or go back |
+| Ctrl+C | clear the prompt; twice to quit |
+| `?` | every key on the screen |
+
+Commands on a task: `/stop`, `/continue`, `/close`, `/cancel`, `/start-over`, `/delete`, `/answer`,
+`/decide`, `/approve-patch`, `/reject-patch`, `/events` (the event log, filtered by agent) and
+`/older`. Everywhere: `/projects`, `/tasks`, `/new`, `/settings`, `/setup`, `/sidebar`, `/quit`.
+`--theme light` (or `HFR_THEME=light`) switches to the light colors.
+
+**Side by side.** Any number of terminal UIs, each in its own folder, run beside the desktop app on
+the same data folder. A project runs its tasks in one app at a time: while one app runs a task of
+it, the others show it as taken and can read its tasks but not start one there. An app that stops
+leaves the others' tasks alone; the next app to start recovers what it was running. A key saved in
+one app is used by the others. `harness-for-rea --version` and `--help` work at any time.
 
 ## How the code is organized
 
@@ -163,7 +198,7 @@ src/main/            the core (Node): Electron shell and everything behind it
   unknowns.ts        the per-project ledger of open questions
 src/shared/          types and the IPC contract (zod schemas) shared with the views
 src/renderer/        the desktop UI (React, Tailwind, shadcn/ui on Radix)
-tui/                 the terminal UI (OpenTUI on Bun) and its npm package
+tui/                 the terminal UI (OpenTUI's React layer on Bun) and its npm package
 sandbox/             the specialist's images: the published base and the local layer with Claude Code
 scripts/             test gate, image pinning, CLI build
 tests/               Vitest suite; the specialist is faked by tests/fixtures/fake-claude.mjs
@@ -196,9 +231,11 @@ npm test
 npx vitest run tests/orchestrator.test.ts
 node scripts/test-gate.mjs
 
-# Tests against the real Docker and your Claude login, and against Bun
+# Tests against the real Docker and your Claude login, and against Bun: the core under Bun, and the
+# terminal UI's screen tests on OpenTUI's test renderer; the gate counts both with HFR_BUN=1, as CI does
 HFR_DOCKER=1 npx vitest run tests/claude-md.test.ts
 HFR_BUN=1 npx vitest run tests/bun-core.test.ts
+bun test tui/test
 
 # Lint and format
 npm run lint

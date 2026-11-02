@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 76fd6182c5515cbee3d2d5cf566126ebb7e0573841e7b34e972d5b878bd1d311
+checksum: 76b5615fde988801a7256e15f5519fb49fd6cae8c0374387c3bb2f3a5741c218
 ---
 
 # TUI revamp
@@ -72,7 +72,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
   _Depends 1.2_
 - [x] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
   _Depends 1.1_
-- [ ] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
+- [x] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
   _Depends 1.6_
   _Priority 3_
 - [x] 1.8 (Unit) Render the chat's agent and user messages as markdown with
