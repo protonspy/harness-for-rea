@@ -67,7 +67,8 @@ export function isProviderId(v: unknown): v is ProviderId {
 /** The base URL a run uses: the user's for an editable provider, else the preset's. */
 export function resolveBaseUrl(provider: ProviderId, baseUrl: string): string {
   const p = PROVIDERS[provider]
-  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "")
+  // A URL pasted with the endpoint on it — `…/v1/chat/completions`, `…/v1/models` — is the base URL before it.
+  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models)$/, "")
 }
 
 /** The vendors of Chinese models on OpenRouter, whose coding models the model choice lists next. */

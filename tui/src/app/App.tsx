@@ -159,13 +159,17 @@ export function App(props: AppProps) {
       args,
       route,
       // The launch only routes: going on from it replaces it, so Esc never lands back on it.
+      // Each screen opens with the prompt focused; a form takes the keys itself when it mounts.
       go: (r) => {
         if (route.kind !== "launch") mem.leave(route)
+        setPromptFocused(true)
         setRoute(r)
       },
       back: () => {
         const prev = mem.back()
-        if (prev) setRoute(prev)
+        if (!prev) return
+        setPromptFocused(true)
+        setRoute(prev)
       },
       toast,
       attempt: async (fn, ok) => {
@@ -412,13 +416,13 @@ function Help({ close, commands }: { close(): void; commands: Command[] }) {
     <Frame title="Keys" width={116} footer="Esc or ? closes">
       <box flexDirection="row" flexWrap="wrap" columnGap={2}>
         {groups.map((g) => (
-          <box key={g.title} flexDirection="column" marginBottom={1} width={36}>
+          <box key={g.title} flexDirection="column" marginBottom={1} width={40}>
             <text fg={theme.primary} attributes={TextAttributes.BOLD}>
               {g.title}
             </text>
             {g.bindings.map((b) => (
               <text key={b.key} fg={theme.foreground} wrapMode="none">
-                <span fg={theme.warning}>{keyLabel(b.key).padEnd(10)}</span>
+                <span fg={theme.warning}>{keyLabel(b.key).padEnd(13)}</span>
                 {b.label}
               </text>
             ))}
