@@ -155,7 +155,7 @@ export function Prompt({
       { key: "escape", label: "Close the list", run: () => (popup ? void setDismissed(text) : false) },
       { key: "ctrl+c", label: "Clear the prompt", run: () => (text ? set("") : false) },
       // `?` in a message being typed is a character; with the prompt empty it opens the help (specs/tui-shell R2.1).
-      { key: "?", label: "Keys, with the prompt empty", run: () => ((ta.current?.plainText ?? text) ? "input" : false) },
+      { key: "?", label: "Keys (prompt empty)", run: () => ((ta.current?.plainText ?? text) ? "input" : false) },
       { key: "return", label: "Send", run: () => "input" },
       { key: "shift+return", label: "New line", run: () => "input" },
       { key: "ctrl+j", label: "New line", run: () => "input" },
