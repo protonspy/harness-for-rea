@@ -45,3 +45,6 @@ themselves. -->
 - **test vector** — an input and the output the target produced for it, recorded by an analysis and replayed against a reimplementation
 - **chat timeline** — the task view: each agent's turns, tool calls and delegations, the specialist's own tool calls nested under its delegation
 - **TUI** — the terminal UI on OpenTUI under Bun, beside the desktop app
+- **MCP integration** — an engine on the user's machine, such as Cheat Engine, that the app carries in its own list and the agents reach only through the app, each of its tools checked per agent in Settings (adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations). Avoid: connector, custom MCP server
+- **integration target** — what an MCP integration's tools work on, such as one Windows process by pid for Cheat Engine, approved by the user in every task; not a project's target. Avoid: attached process
+- **bridge** — the app's read-only Lua script in Cheat Engine's autorun folder, derived from the upstream cheatengine-mcp-bridge, answering the app on its own named pipe. Avoid: CE script

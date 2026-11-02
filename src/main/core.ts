@@ -1,12 +1,18 @@
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Handlers } from "@shared/api"
+import { BRIDGE_FILE } from "@shared/cheatengine"
+import { integrationSettings } from "@shared/integrations"
 import type { ProjectRow, Push } from "@shared/types"
+import { cheatEngine } from "./cheatengine/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
+import { IntegrationGate } from "./integrations/gate"
+import { IntegrationRegistry } from "./integrations/registry"
+import { integrationStatus, saveIntegrations } from "./integrations/settings"
 import { APP_LABEL, LockHeld, Locks, projectLockName, type AppName, type Holder } from "./lock"
 import { ProcessRegistry } from "./processes"
 import { listModels, probeModel } from "./orchestrator/models"
@@ -149,7 +155,14 @@ export async function startCore(host: CoreHost): Promise<Core> {
   const registry = new SandboxRegistry(
     (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
   )
-  const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings }
+  // The MCP integrations the app carries, Cheat Engine first, and the gate every call passes (specs/mcp-integrations R1.1).
+  const integrationRegistry = new IntegrationRegistry([cheatEngine({ script: join(host.sandboxDir, "cheat-engine", BRIDGE_FILE) })])
+  const integrations = {
+    registry: integrationRegistry,
+    gate: new IntegrationGate({ registry: integrationRegistry, settings: getSettings, log }),
+    serverScript: join(host.sandboxDir, "mcp", "server.mjs"),
+  }
+  const deps = { log, dataDir, launcher: dockerLauncher(), settings: getSettings, integrations }
   const runner = new TaskRunner({
     ...deps,
     projects,
@@ -237,7 +250,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
       saveSettings({ setupCompleted: true })
       return { ...r, completed: true }
     },
-    saveSettings: (patch) => saveSettings(patch),
+    saveSettings: async ({ integrations: wanted, ...patch }) =>
+      saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) }),
     keyStatus: (provider) => keyStatus(provider),
     // Saved in the shared keychain; the other apps read it again when they see the bump (specs/shared-data-folder R5.1).
     saveKey: async (key, provider) => {
@@ -332,6 +346,13 @@ export async function startCore(host: CoreHost): Promise<Core> {
     setTaskModel: (id, model) => (freeTask(id), runner.setModel(id, model)),
     decideTool: (id, callId, decision) => (freeTask(id), runner.decideTool(id, callId, decision)),
     answerQuestion: (id, questionId, answer) => (freeTask(id), runner.answerQuestion(id, questionId, answer)),
+    integrations: () => integrationRegistry.views((id) => integrationSettings(integrationRegistry.get(id)!.info, getSettings().integrations).config),
+    integrationStatus: (id) => integrationStatus(integrationRegistry, getSettings(), id),
+    runIntegrationAction: (id, action) => {
+      const i = integrationRegistry.get(id)
+      if (!i) throw new Error(`There is no integration ${id}.`)
+      return i.runAction(integrationSettings(i.info, getSettings().integrations).config, action)
+    },
   }
 
   // What other processes change reaches the view as pushes, within a second (specs/shared-data-folder R5.3).

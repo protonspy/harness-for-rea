@@ -33,14 +33,20 @@ const run = async (s: Screen, line: string) => {
   await s.enter()
 }
 
-/** The API methods the desktop app's views and components call, from their source. */
+/**
+  The desktop's methods a spec leaves out of the TUI, each with the spec that says so: the MCP integrations' Settings
+  section (specs/mcp-integrations, Out of scope); their calls still run in tasks the TUI starts.
+*/
+const DESKTOP_ONLY = new Set(["integrations", "integrationStatus", "runIntegrationAction"])
+
+/** The API methods the desktop app's views and components call, from their source, but those a spec leaves out of the TUI. */
 function rendererMethods(): Set<string> {
   const out = new Set<string>()
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const p = join(dir, name)
       if (statSync(p).isDirectory()) walk(p)
-      else if (/\.tsx?$/.test(name)) for (const m of readFileSync(p, "utf8").matchAll(/\bapi\.([a-zA-Z]+)\(/g)) out.add(m[1])
+      else if (/\.tsx?$/.test(name)) for (const m of readFileSync(p, "utf8").matchAll(/\bapi\.([a-zA-Z]+)\(/g)) if (!DESKTOP_ONLY.has(m[1])) out.add(m[1])
     }
   }
   walk(join(import.meta.dir, "..", "..", "src", "renderer", "src"))

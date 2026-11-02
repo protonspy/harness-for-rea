@@ -16,4 +16,5 @@ export const DEFAULT_SETTINGS: Settings = {
   approvalTimeoutMinutes: 30,
   questionTimeoutMinutes: 10,
   setupCompleted: false,
+  integrations: {},
 }

@@ -16,7 +16,10 @@ import { friendlyError } from "../src/main/orchestrator/errors"
 import { listModels, probeModel, refusedKey, versionHint } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
-import { keyFor, TaskRunner } from "../src/main/orchestrator/runner"
+import { keyFor, TaskRunner, type RunnerDeps } from "../src/main/orchestrator/runner"
+import { IntegrationGate } from "../src/main/integrations/gate"
+import { IntegrationRegistry } from "../src/main/integrations/registry"
+import { fakeIntegration } from "./fixtures/fake-integration"
 import { UnknownsLedger } from "../src/main/unknowns"
 import { ProjectStore, type NewProject } from "../src/main/projects"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
@@ -133,8 +136,9 @@ function launcher(): Launcher {
   }
 }
 
-function runner(key: string | null = "sk-or-v1-testkey000000", asked?: (p: string) => void) {
+function runner(key: string | null = "sk-or-v1-testkey000000", asked?: (p: string) => void, extra: Partial<RunnerDeps> = {}) {
   return new TaskRunner({
+    ...extra,
     stopGraceMs: 50,
     log,
     dataDir: data,
@@ -1260,6 +1264,31 @@ describe("the orchestrator asks the user (specs/chat R5.1, R5.4, R5.5)", () => {
     await r.settled(task.id)
     expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "capped" })
     expect(asked(task.id)).toHaveLength(QUESTION_CAP)
+  })
+
+  it("still puts an integration's target to the user past the cap, in an automatic task, without counting it (specs/mcp-integrations R3.2)", async () => {
+    settings = {
+      ...settings,
+      questionTimeoutMinutes: 0.001,
+      integrations: { fake: { enabled: true, config: {}, tools: { lookup: { orchestrator: true, specialist: true } } } },
+    }
+    const registry = new IntegrationRegistry([fakeIntegration()])
+    const integrations = { registry, gate: new IntegrationGate({ registry, settings: () => settings, log }), serverScript: "" }
+    const lookup = { name: "mcp__fake__lookup", args: { key: "k", target: { name: "t1" } } }
+    script = [
+      { tool_calls: Array.from({ length: QUESTION_CAP }, () => ask()) },
+      { tool_calls: [lookup] },
+      { tool_calls: [ask()] },
+      (body) => ({ content: toolResults(body).slice(-2).join("\n") }),
+    ]
+    const r = runner(undefined, undefined, { integrations })
+    const task = r.start({ request: REQUEST, sourceRoot: root, auto: true })
+    await r.settled(task.id)
+    const prompts = asked(task.id).map((e) => (e.payload.question as { prompt: string }).prompt)
+    expect(prompts.filter((p) => p.startsWith("Let the agents use Fake on the thing called t1"))).toHaveLength(1)
+    // the approval timed out, so the call was refused; the next plain question is past the cap
+    expect(log.getTask(task.id).result).toMatch(/^ERROR: The user did not answer/)
+    expect(log.getTask(task.id).result).toMatch(/"origin":"cap"/)
   })
 })
 
