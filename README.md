@@ -147,7 +147,7 @@ the delegations with their reports and evidence, the cost per agent, and the raw
 project page lists its tasks, what the specialist found, and the questions still open.
 
 **Terminal UI.** Run `harness-for-rea` in the folder you want to analyse, or give its path:
-`harness-for-rea C:\samplespp`. The folder is the target of the project it opens — the one
+`harness-for-rea C:\samples\app`. The folder is the target of the project it opens — the one
 project on it, a choice when there are several, or a new one prefilled with the folder's name, its
 detected kind and your Settings model. A home folder, a drive, a Downloads folder or one holding the
 app's data asks you to type its path before it is mounted; the app's data folder itself is refused.
