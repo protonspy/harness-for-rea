@@ -199,6 +199,26 @@ describe("a project's overview (specs/tui-panels R2.1, R2.2)", () => {
     await s.until("[awaiting-user]")
   })
 
+  test("changes the model and efforts the project's tasks run with, picked from the provider's list (specs/projects R1.8)", async () => {
+    const { api, called } = scriptedApi()
+    const s = await show({ api, start: { kind: "project", id: project().id } })
+    await s.until("Tasks (1)")
+    await s.type("/model")
+    await s.enter()
+    await s.until("other/model")
+    await s.press("down")
+    await s.enter()
+    await s.until(() => called("updateProject").length === 1)
+    expect(called("updateProject")[0].args).toEqual([project().id, { model: "other/model" }])
+    await s.type("/specialist-effort")
+    await s.enter()
+    await s.until("Specialist's effort")
+    await s.press("down")
+    await s.enter()
+    await s.until(() => called("updateProject").length === 2)
+    expect(called("updateProject")[1].args).toEqual([project().id, { specialistEffort: "high" }])
+  })
+
   test("deletes the project only after its name is typed", async () => {
     const { api, called } = scriptedApi()
     const s = await show({ api, start: { kind: "project", id: project().id } })

@@ -157,6 +157,10 @@ describe("StreamReader (R2.1–R2.5)", () => {
     expect(filesOf("Glob", { path: "/work/src" })).toEqual([{ path: "src", op: "read" }])
     expect(filesOf("Bash", { command: "ls" })).toEqual([])
     expect(filesOf("Read", {})).toEqual([])
+    // REA's tools read what they are given, under whichever argument name
+    expect(filesOf("mcp__rea__open_binary", { path: "/work/bin/app.so", detail: "summary" })).toEqual([{ path: "bin/app.so", op: "read" }])
+    expect(filesOf("mcp__rea__inspect_android_package", { apk_path: "/work/game.apk" })).toEqual([{ path: "game.apk", op: "read" }])
+    expect(filesOf("mcp__rea__binary_session", {})).toEqual([])
   })
 })
 

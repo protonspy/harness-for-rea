@@ -106,6 +106,16 @@ describe("creating a project (R1.1–R1.3, R1.7)", () => {
     expect(store.list().map((x) => x.id)).toEqual([p.id])
   })
 
+  it("changes the provider, model and efforts its tasks run with, and pushes the change (R1.8)", async () => {
+    const src = join(base, "changing")
+    mkdirSync(src)
+    const p = await store.create(input(src))
+    const changed = store.update(p.id, { model: "other/model", specialistEffort: "low" })
+    expect(changed).toMatchObject({ id: p.id, model: "other/model", specialistEffort: "low", provider: p.provider, orchestratorEffort: p.orchestratorEffort })
+    expect(store.get(p.id).model).toBe("other/model")
+    expect(pushed.at(-1)).toEqual({ type: "project", project: changed })
+  })
+
   it("reads a folder target in place, and puts the project under a folder the user chose", async () => {
     const src = join(base, "src")
     mkdirSync(src)

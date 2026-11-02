@@ -1,8 +1,10 @@
 import { ListTodo, RotateCcw, ScrollText, SquareX, Trash2, Users, Wallet } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Answer, ToolDecision } from "@shared/chat"
+import type { ProviderId } from "@shared/providers"
 import type { Push, TaskHistory } from "@shared/types"
 import { ApprovalCard } from "@/components/chat/ApprovalCard"
+import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Composer } from "@/components/chat/Composer"
 import { AgentMessage, Notice, ToolCall, ToolRun, UserMessage, type ToolContext } from "@/components/chat/Messages"
 import { QuestionCard } from "@/components/chat/QuestionCard"
@@ -39,6 +41,17 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
   const [error, setError] = useState("")
   const api = window.hfr.api
   const loadingOlder = useRef(false)
+  // The models to pick the task's from, when its project runs on the provider Settings lists.
+  const [models, setModels] = useState<string[]>([])
+  const [projectProvider, setProjectProvider] = useState<ProviderId | null>(null)
+  const projectId = h?.task.projectId
+  useEffect(() => {
+    if (!projectId) return
+    void Promise.all([api.getProject(projectId), api.getSettings()]).then(([p, s]) => {
+      setProjectProvider(p.project.provider)
+      if (p.project.provider === s.provider) void api.listModels().then(setModels, () => setModels([]))
+    })
+  }, [api, projectId])
 
   useEffect(() => {
     let alive = true
@@ -127,7 +140,22 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
             <div className="flex items-center gap-2">
               <Badge variant={tone(state)}>{state}</Badge>
               <span className="text-xs text-muted-foreground">{when(task.createdAt)}</span>
-              <Mono className="text-muted-foreground">{task.model}</Mono>
+              {isLive(state) ? (
+                <Mono className="text-muted-foreground" title="The model can be changed once the turn ends">
+                  {task.model}
+                </Mono>
+              ) : (
+                // The task's model, from its next turn (specs/projects R2.6).
+                <div className="w-72">
+                  <ModelPicker
+                    key={task.model}
+                    provider={projectProvider ?? "openrouter"}
+                    value={task.model}
+                    listed={models}
+                    onChange={(m) => void act(() => api.setTaskModel(id, m))}
+                  />
+                </div>
+              )}
             </div>
             <h1 className="mt-1.5 line-clamp-2 text-base font-semibold">{task.request}</h1>
             <Mono className="text-muted-foreground">{task.sourceRoot}</Mono>
