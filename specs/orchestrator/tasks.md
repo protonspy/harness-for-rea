@@ -34,3 +34,9 @@
   _Depends 2.2_
 - [x] 3.2 (Unit) Test a whole task end to end against the fake Claude Code CLI and a scripted OpenRouter, asserting the event log and the sandbox audit — R2.4, R3.1, R3.3
   _Depends 3.1_
+
+
+## 4 · Base URLs
+
+- [x] 4.1 (Unit) Keep one base URL per provider in Settings, moving an existing one to its provider, resolve each provider's own, and stop the provider pickers sending a base URL with the switch — R1.10
+  _Reason Switching provider overwrote the OpenAI-compatible provider's base URL with the new provider's default_

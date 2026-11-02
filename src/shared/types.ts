@@ -201,8 +201,10 @@ export interface TaskHistory {
 export interface Settings {
   /** which service the orchestrator's model runs on (adr:0014-add-openai-compatible-orchestrator-providers) */
   provider: ProviderId
-  /** the OpenAI-compatible endpoint, used by the providers whose URL can be edited; ignored by OpenRouter */
+  /** the chosen provider's OpenAI-compatible endpoint, used by the providers whose URL can be edited; ignored by OpenRouter */
   baseUrl: string
+  /** each provider's own endpoint, so switching provider loses none (specs/orchestrator R1.10); only main writes it */
+  baseUrls: Partial<Record<ProviderId, string>>
   model: string
   timeoutMinutes: number
   /** `reasoning.effort` for the orchestrator (OpenRouter's, or `reasoning_effort` on other providers); "default" sends none */

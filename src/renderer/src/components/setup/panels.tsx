@@ -200,13 +200,14 @@ export function ModelPanel({
   }, [activeProvider, activeBaseUrl, keySet, loadModels])
 
   const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
-  // Switching provider swaps in that provider's endpoint, model and key; the model name of one is meaningless to another.
+  // Switching provider swaps in that provider's own endpoint (main keeps one per provider), model and key; the model
+  // name of one is meaningless to another.
   const switchProvider = (id: ProviderId) =>
     // Picking the provider already chosen changes nothing: its endpoint and model stay as they were saved.
     id !== settings?.provider &&
     run(async () => {
       setModels([])
-      setSettings(await api.saveSettings({ provider: id, baseUrl: PROVIDERS[id].baseUrl, model: PROVIDERS[id].defaultModel || settings?.model }))
+      setSettings(await api.saveSettings({ provider: id, model: PROVIDERS[id].defaultModel || settings?.model }))
       setKey(await api.keyStatus(id))
       setKeyInput("")
     })
@@ -231,7 +232,7 @@ export function ModelPanel({
             defaultValue={settings.baseUrl}
             key={`${settings.provider}:${settings.baseUrl}`}
             placeholder={provider.baseUrl || "https://host/v1"}
-            onBlur={(e) => e.target.value.trim() !== settings.baseUrl && save({ baseUrl: e.target.value.trim() })}
+            onBlur={(e) => e.target.value.trim() !== settings.baseUrl && save({ provider: settings.provider, baseUrl: e.target.value.trim() })}
           />
           {settings.provider === "custom" && !resolveBaseUrl("custom", settings.baseUrl) && <ErrorText>Set a base URL.</ErrorText>}
         </Field>

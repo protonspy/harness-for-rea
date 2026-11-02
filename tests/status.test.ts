@@ -2,7 +2,8 @@ import { spawn } from "node:child_process"
 import { join } from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { LoginStatus, SandboxStatus } from "../src/shared/types"
-import { closeDb, openDb } from "../src/main/db"
+import { closeDb, openDb, setSetting } from "../src/main/db"
+import { baseUrlFor } from "../src/main/readiness"
 import { getSettings, saveSettings } from "../src/main/settings"
 import { BASE_IMAGE, CLAUDE_CODE_VERSION, SPECIALIST_IMAGE, type Exec } from "../src/main/sandbox/docker"
 import { LoginService, SandboxService } from "../src/main/status"
@@ -20,6 +21,22 @@ describe("settings (R1.1)", () => {
     expect(getSettings()).toEqual(DEFAULT_SETTINGS)
     saveSettings({ model: "z-ai/glm-5.3-flash" })
     expect(saveSettings({ timeoutMinutes: 7 })).toEqual({ ...DEFAULT_SETTINGS, model: "z-ai/glm-5.3-flash", timeoutMinutes: 7 })
+  })
+
+  it("keeps each provider's base URL when the user switches provider and back (specs/orchestrator R1.10)", () => {
+    saveSettings({ provider: "custom" })
+    saveSettings({ baseUrl: "http://localhost:1234/v1" })
+    expect(saveSettings({ provider: "openrouter" })).toMatchObject({ provider: "openrouter", baseUrl: "" })
+    expect(saveSettings({ provider: "deepseek", baseUrl: "https://proxy.example/v1" }).baseUrl).toBe("https://proxy.example/v1")
+    expect(saveSettings({ provider: "custom" })).toMatchObject({ baseUrl: "http://localhost:1234/v1" })
+    expect(getSettings().baseUrls).toEqual({ custom: "http://localhost:1234/v1", deepseek: "https://proxy.example/v1" })
+    expect(baseUrlFor("deepseek", getSettings())).toBe("https://proxy.example/v1")
+  })
+
+  it("moves a base URL saved before they were kept per provider to the provider it was saved on", () => {
+    setSetting("app.settings", { provider: "custom", baseUrl: "http://old.example/v1" })
+    expect(getSettings()).toMatchObject({ baseUrl: "http://old.example/v1", baseUrls: { custom: "http://old.example/v1" } })
+    expect(saveSettings({ provider: "openrouter" }).baseUrls).toEqual({ custom: "http://old.example/v1" })
   })
 })
 
