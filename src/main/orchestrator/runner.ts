@@ -1,3 +1,4 @@
+import { needsKey } from "../readiness"
 import { randomUUID } from "node:crypto"
 import { statSync } from "node:fs"
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages"
@@ -70,6 +71,15 @@ const STOP_GRACE_MS = 5000
 /** The states a task with no run in this process can be continued from (specs/task-persistence R2.1). */
 const REOPENABLE: TaskState[] = ["cancelled", "failed", "interrupted", "done", "awaiting-user", "stopped"]
 /** What the orchestrator reads when the user continues a task with nothing pending on its thread. */
+/**
+  The key a run sends: the provider's, or — for an OpenAI-compatible endpoint, which may take none, as the setup
+  allows (specs/onboarding R1.5) — a placeholder the client library requires and a local server ignores; null when a
+  provider that needs a key has none.
+*/
+export function keyFor(provider: ProviderId, key: string | null): string | null {
+  return key ?? (needsKey(provider) ? null : "no-key")
+}
+
 const CONTINUE = "Continue the task from where it stopped. Your files in /scratch and your sandboxes are as you left them."
 const STOPPED = "The user stopped the turn before deciding."
 const TIMED_OUT = "No decision came within the approval timeout, so the call was rejected."
@@ -167,8 +177,8 @@ export class TaskRunner {
     }
     if (!dir) throw new Error(`${sourceRoot || "The source"} is not a folder.`)
     const run = this.runWith(project)
-    const apiKey = this.deps.apiKey(run.provider)
-    if (!apiKey) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    const apiKey = keyFor(run.provider, this.deps.apiKey(run.provider))
+    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
     const { log } = this.deps
     const task = log.createTask({ request: input.request, sourceRoot, model: run.model, projectId: project?.id ?? null })
     const auto = input.auto === true
@@ -206,8 +216,8 @@ export class TaskRunner {
     const settings = this.deps.settings()
     const project = task.projectId && this.deps.projects ? this.deps.projects.get(task.projectId) : null
     const run = this.runWith(project)
-    const apiKey = key ?? this.deps.apiKey(run.provider)
-    if (!apiKey) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    const apiKey = key ?? keyFor(run.provider, this.deps.apiKey(run.provider))
+    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
     const abort = new AbortController()
     // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
     const baseUrl = baseUrlFor(run.provider, settings)
@@ -880,6 +890,21 @@ export class TaskRunner {
     const waiting = this.live.get(taskId)?.questions.get(questionId)
     if (!waiting) throw new Error("That question is not waiting for an answer.")
     waiting.settle(checkAnswer(waiting.question, answer), "user")
+    return this.deps.log.getTask(taskId)
+  }
+
+  /**
+    Change the model a task runs with, from its next turn (specs/projects R2.6): refused while a turn runs; a task open
+    and idle here ends its run, its containers stopped and kept, so its next message opens it again on the new model.
+  */
+  setModel(taskId: string, model: string): TaskRow {
+    const task = this.deps.log.getTask(taskId)
+    if (["pending", "running", "waiting"].includes(task.state))
+      throw new Error(`The task is ${task.state}; stop the turn or wait for it to end before changing its model.`)
+    if (model === task.model) return task
+    this.deps.log.setTaskModel(taskId, model)
+    this.deps.log.append({ taskId, agent: "app", kind: "task.model", summary: `Model changed to ${model}`, payload: { from: task.model, to: model } })
+    if (this.live.has(taskId)) void this.end(taskId)
     return this.deps.log.getTask(taskId)
   }
 

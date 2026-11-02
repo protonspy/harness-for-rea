@@ -1,10 +1,11 @@
 import { TextAttributes } from "@opentui/core"
 import { useCallback, useEffect, useState } from "react"
-import type { AnalysisSummary, ProjectRow, TaskRow, UnknownRow } from "../../../src/shared/types"
+import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type AnalysisSummary, type ProjectRow, type TaskRow, type UnknownRow } from "../../../src/shared/types"
 import { tone, usd, when } from "../../../src/renderer/src/lib/format"
 import { goalCard, heldLabel } from "../../../src/renderer/src/lib/projects"
 import { useApp, useKeys, usePush, useScreen } from "../app/context"
 import { toneColor } from "../app/theme"
+import { pickModel, pickOne } from "../app/pickers"
 import { InputDialog } from "../components/dialogs"
 import { List, safe } from "../components/ui"
 
@@ -68,6 +69,34 @@ export function ProjectScreen({ id }: { id: string }) {
     placeholder: held ? `${held}: its tasks can be read, not started here` : "Say what you want: what to find, explain or build. Enter starts a task",
     onSubmit: held ? undefined : start,
     commands: [
+      {
+        name: "model",
+        title: "Change the model the project's tasks run with, from their next turn",
+        args: "[id]",
+        run: async (typed) => {
+          if (!data) return
+          const model = await pickModel(app, data.project.provider, data.project.model, typed)
+          if (model && (await app.attempt(() => api.updateProject(id, { model }), `Model: ${model}.`))) load()
+        },
+      },
+      {
+        name: "orchestrator-effort",
+        title: "Change the orchestrator's effort",
+        run: async () => {
+          if (!data) return
+          const v = await pickOne(app, "Orchestrator's effort", ORCHESTRATOR_EFFORTS, data.project.orchestratorEffort)
+          if (v && (await app.attempt(() => api.updateProject(id, { orchestratorEffort: v })))) load()
+        },
+      },
+      {
+        name: "specialist-effort",
+        title: "Change the specialist's effort",
+        run: async () => {
+          if (!data) return
+          const v = await pickOne(app, "Specialist's effort", SPECIALIST_EFFORTS, data.project.specialistEffort)
+          if (v && (await app.attempt(() => api.updateProject(id, { specialistEffort: v })))) load()
+        },
+      },
       { name: "delete-project", title: "Delete this project, its tasks and files, after typing its name", run: remove },
       { name: "refresh", title: "Read the project again", run: load },
       ...(data?.tasks.length

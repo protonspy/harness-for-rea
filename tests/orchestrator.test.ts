@@ -13,10 +13,10 @@ import { dockerLauncher, type Launcher } from "../src/main/delegation"
 import { claudeArgs } from "../src/main/sandbox/docker"
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
-import { listModels, probeModel, refusedKey } from "../src/main/orchestrator/models"
+import { listModels, probeModel, refusedKey, versionHint } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
-import { TaskRunner } from "../src/main/orchestrator/runner"
+import { keyFor, TaskRunner } from "../src/main/orchestrator/runner"
 import { UnknownsLedger } from "../src/main/unknowns"
 import { ProjectStore, type NewProject } from "../src/main/projects"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
@@ -648,6 +648,9 @@ describe("model and errors (R1.1–R1.4)", () => {
     expect(resolveBaseUrl("deepseek", "")).toBe("https://api.deepseek.com")
     expect(resolveBaseUrl("deepseek", " https://proxy.example/v1/ ")).toBe("https://proxy.example/v1")
     expect(resolveBaseUrl("custom", "http://localhost:11434/v1")).toBe("http://localhost:11434/v1")
+    // pasted with the endpoint on it
+    expect(resolveBaseUrl("custom", "https://api.withhopper.com/v1/chat/completions")).toBe("https://api.withhopper.com/v1")
+    expect(resolveBaseUrl("custom", "https://api.example.com/v1/models/")).toBe("https://api.example.com/v1")
     expect(resolveBaseUrl("custom", "")).toBe("")
     expect(resolveBaseUrl("openrouter", "https://elsewhere.example")).toBe(PROVIDERS.openrouter.baseUrl)
   })
@@ -754,6 +757,26 @@ describe("listing a provider's models (R1.9)", () => {
         "OpenAI-compatible answered 404 to a test request to m: The model `m` does not exist",
       )
       await expect(probeModel({ provider: "custom", baseUrl: "", apiKey: null, model: "m" })).rejects.toThrow("Set a base URL first.")
+      // a 404 at a base URL with no version: where the API most likely is
+      reply(json({ error: "not found" }, { status: 404 }))
+      await expect(probeModel({ provider: "custom", baseUrl: "https://api.withhopper.com", apiKey: "k", model: "m" })).rejects.toThrow(
+        "try https://api.withhopper.com/v1 as the base URL",
+      )
+      expect(versionHint("https://api.example.com/v1")).toBe("")
+      expect(
+        friendlyError(Object.assign(new Error('404 "not found" Troubleshooting URL: .../MODEL_NOT_FOUND/'), { status: 404 }), "OpenAI-compatible").message,
+      ).toMatch(/answered 404 \(not found\): the base URL or the model is wrong.*ends in \/v1/)
+      // OpenRouter's "no endpoints" comes as a 404 too, and keeps its own advice; its base URL is fixed, so a 404 is the model
+      expect(friendlyError(Object.assign(new Error("No endpoints found that support tool use"), { status: 404 }), "OpenRouter").message).toMatch(
+        /data collection denied/,
+      )
+      expect(friendlyError({ status: 404, message: "not found" }, "OpenRouter").message).toBe(
+        "OpenRouter answered 404 (not found): it does not serve this model. Pick another model in Settings.",
+      )
+      // a local endpoint runs with no key; a provider that needs one does not
+      expect(keyFor("custom", null)).toBe("no-key")
+      expect(keyFor("deepseek", null)).toBeNull()
+      expect(keyFor("custom", "sk-x")).toBe("sk-x")
     } finally {
       globalThis.fetch = keep
     }
@@ -844,6 +867,25 @@ describe("the conversation (specs/chat R1)", () => {
     expect(log.getTask(task.id)).toMatchObject({ state: "awaiting-user", result: "Third answer." })
     expect(JSON.stringify(requests.at(-1)!.messages)).toContain("Second answer.")
     expect(kinds(task.id)).toContain("task.reopened")
+  })
+
+  it("changes a task's model from its next turn, refusing while a turn runs (specs/projects R2.6)", async () => {
+    script = [{ content: "First answer." }]
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    expect(() => r.setModel(task.id, "other/model")).toThrow(/stop the turn or wait/)
+    await r.settled(task.id)
+    expect(r.setModel(task.id, "other/model").model).toBe("other/model")
+    await new Promise((res) => setTimeout(res, 10))
+    // the idle run ended, its containers kept; the next message opens it on the new model
+    expect(r.isLive(task.id)).toBe(false)
+    expect(disposed).toBe(1)
+    script.push({ content: "On the new model." })
+    r.sendMessage(task.id, "go on")
+    await r.settled(task.id)
+    expect(requests.at(-1)!.model).toBe("other/model")
+    expect(JSON.stringify(requests.at(-1)!.messages)).toContain("First answer.")
+    expect(kinds(task.id)).toContain("task.model")
   })
 
   it("records each user and agent message in order with the task's other events (R1.3)", async () => {

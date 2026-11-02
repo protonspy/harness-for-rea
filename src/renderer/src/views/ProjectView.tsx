@@ -1,8 +1,9 @@
 import { Bug, Code2, FileSearch, Lightbulb, Lock, Map as MapIcon, Play, Plug, Trash2, type LucideIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import type { AnalysisSummary, Goal, ProjectRow, TaskRow, UnknownRow } from "@shared/types"
+import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type AnalysisSummary, type Goal, type ProjectRow, type TaskRow, type UnknownRow } from "@shared/types"
+import { ModelPicker } from "@/components/setup/ModelPicker"
 import { ErrorText, Mono } from "@/components/common"
-import { message } from "@/components/setup/panels"
+import { EffortSelect, message } from "@/components/setup/panels"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -26,6 +27,18 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(() => void api.getProject(id).then(setData, (e: unknown) => setError(message(e))), [api, id])
+  // The provider's models to pick from, when the project runs on the provider Settings lists (specs/projects R1.8).
+  const [models, setModels] = useState<string[]>([])
+  const provider = data?.project.provider
+  useEffect(() => {
+    if (!provider) return
+    void api.getSettings().then((s) => (s.provider === provider ? api.listModels().then(setModels, () => setModels([])) : setModels([])))
+  }, [api, provider])
+  const change = (patch: Parameters<typeof api.updateProject>[1]) =>
+    void api.updateProject(id, patch).then(
+      () => load(),
+      (e: unknown) => setError(message(e)),
+    )
   useEffect(() => {
     load()
     // A task of the project that moves, or one that goes, changes what the view lists.
@@ -72,7 +85,7 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
             <Badge variant="neutral">
               <GoalIcon size={12} /> {card.title}
             </Badge>
-            <Mono className="text-muted-foreground">{project.model}</Mono>
+            <Mono className="text-muted-foreground">{project.provider}</Mono>
             {held && (
               <Badge variant="warn">
                 <Lock size={12} /> {held}
@@ -96,6 +109,22 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
           <Trash2 size={14} /> Delete project
         </Button>
       </header>
+
+      <Card className="flex flex-col gap-3 p-5">
+        <h2 className="font-semibold">Model</h2>
+        <p className="text-xs text-muted-foreground">What the project's tasks run with. A change applies to each task from its next turn.</p>
+        <div className="flex flex-wrap items-start gap-3">
+          <ModelPicker key={project.model} provider={project.provider} value={project.model} listed={models} onChange={(m) => change({ model: m })} />
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Orchestrator's effort
+            <EffortSelect value={project.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => change({ orchestratorEffort: v })} />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Specialist's effort
+            <EffortSelect value={project.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => change({ specialistEffort: v })} />
+          </label>
+        </div>
+      </Card>
 
       <Card className="flex flex-col gap-3 p-5">
         <h2 className="font-semibold">New task</h2>

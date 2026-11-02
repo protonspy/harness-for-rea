@@ -3,7 +3,7 @@ import { groupModels, type ProviderId } from "@shared/providers"
 import { Input } from "@/components/ui/input"
 
 /*
-  The orchestrator's model as a list: the provider's recommended models first — DeepSeek by default — then, on
+  The orchestrator's model as a list: the provider's recommended models first — Qwen's flash models by default — then, on
   OpenRouter, the Chinese coding models it lists with tool calling, then the rest; or a model typed by name.
 */
 

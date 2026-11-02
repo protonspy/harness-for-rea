@@ -41,7 +41,7 @@ export async function listModels(o: { provider: ProviderId; baseUrl: string; api
   }
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, PROVIDERS[o.provider].label)
-    throw new Error(`${PROVIDERS[o.provider].label} answered ${res.status} to the model list.`)
+    throw new Error(`${PROVIDERS[o.provider].label} answered ${res.status} to the model list.${res.status === 404 ? versionHint(base) : ""}`)
   }
   const body = (await res.json().catch(() => null)) as { data?: unknown } | null
   if (!Array.isArray(body?.data)) throw new Error(`${base}/models did not return a model list.`)
@@ -50,6 +50,17 @@ export async function listModels(o: { provider: ProviderId; baseUrl: string; api
     .filter((m) => o.provider !== "openrouter" || capable(m))
     .map((m) => m.id as string)
   return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+}
+
+/** For a 404 at a base URL with no version in its path: where the API most likely is. */
+export function versionHint(base: string): string {
+  let path = ""
+  try {
+    path = new URL(base).pathname
+  } catch {
+    return ""
+  }
+  return /\/v\d+\/?$/.test(path) ? "" : ` Most services serve the API under /v1: try ${base.replace(/\/+$/, "")}/v1 as the base URL.`
 }
 
 /** Whether a failure is the provider refusing the key: the one answer a test request cannot get past. */
@@ -78,5 +89,5 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
   if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, label)
   const detail = await res.text().catch(() => "")
   const said = /"message"\s*:\s*"([^"]{1,200})"/.exec(detail)?.[1] ?? ""
-  throw new Error(`${label} answered ${res.status} to a test request to ${o.model}${said ? `: ${said}` : "."}`)
+  throw new Error(`${label} answered ${res.status} to a test request to ${o.model}${said ? `: ${said}` : "."}${res.status === 404 ? versionHint(base) : ""}`)
 }

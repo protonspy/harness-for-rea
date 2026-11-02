@@ -137,9 +137,9 @@ describe("the setup's steps", () => {
 })
 
 describe("the orchestrator's model choice (specs/onboarding R1.5)", () => {
-  it("offers OpenRouter's recommended models first, DeepSeek by default, then Chinese coding models, then the rest", () => {
-    expect(PROVIDERS.openrouter.defaultModel).toBe("deepseek/deepseek-v4.1-flash-1017")
-    expect(PROVIDERS.openrouter.models[0]).toBe(PROVIDERS.openrouter.defaultModel)
+  it("offers OpenRouter's recommended models first, Qwen's flash models by default, then Chinese coding models, then the rest (specs/orchestrator R1.1)", () => {
+    expect(PROVIDERS.openrouter.defaultModel).toBe("qwen/qwen3.8-flash")
+    expect(PROVIDERS.openrouter.models.slice(0, 2)).toEqual(["qwen/qwen3.8-flash", "qwen/qwen3.7-flash"])
     expect(PROVIDERS.openrouter.models).toContain("z-ai/glm-5.3-flash")
     const groups = groupModels("openrouter", [
       "openai/gpt-6",

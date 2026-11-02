@@ -31,9 +31,17 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     baseUrl: "https://openrouter.ai/api/v1",
     editableBaseUrl: false,
     keyRequired: false,
-    defaultModel: "deepseek/deepseek-v4.1-flash-1017",
-    // Recommended first: DeepSeek by default, then GLM and the other Chinese coding models with tool calling.
-    models: ["deepseek/deepseek-v4.1-flash-1017", "z-ai/glm-5.3-flash", "moonshotai/kimi-k3.1-pro", "qwen/qwen3.8-flash", "minimax/minimax-m3.1-flash"],
+    defaultModel: "qwen/qwen3.8-flash",
+    // Recommended first: the Qwen flash models, which did best in reverse-engineering and security work, then the
+    // other Chinese models with tool calling and image input.
+    models: [
+      "qwen/qwen3.8-flash",
+      "qwen/qwen3.7-flash",
+      "deepseek/deepseek-v4.1-flash-1017",
+      "z-ai/glm-5.3-flash",
+      "moonshotai/kimi-k3.1-pro",
+      "minimax/minimax-m3.1-flash",
+    ],
     keyPlaceholder: "sk-or-v1-…",
   },
   deepseek: {
@@ -67,7 +75,8 @@ export function isProviderId(v: unknown): v is ProviderId {
 /** The base URL a run uses: the user's for an editable provider, else the preset's. */
 export function resolveBaseUrl(provider: ProviderId, baseUrl: string): string {
   const p = PROVIDERS[provider]
-  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "")
+  // A URL pasted with the endpoint on it — `…/v1/chat/completions`, `…/v1/models` — is the base URL before it.
+  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models)$/, "")
 }
 
 /** The vendors of Chinese models on OpenRouter, whose coding models the model choice lists next. */

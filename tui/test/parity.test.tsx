@@ -59,7 +59,13 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
   })
 
   test("drives a task through each of its states' actions", async () => {
-    const states = { "awaiting-user": ["/close"], running: ["/stop", "/cancel"], stopped: ["/continue"], failed: ["/start-over"], done: ["/delete"] } as const
+    const states = {
+      "awaiting-user": ["/model other/model", "/close"],
+      running: ["/stop", "/cancel"],
+      stopped: ["/continue"],
+      failed: ["/start-over"],
+      done: ["/delete"],
+    } as const
     for (const [state, commands] of Object.entries(states))
       await flow({ getTask: () => history({ task: task({ state: state as never }) }), retryTask: () => task() }, { kind: "task", id: ID }, async (s) => {
         await s.until(`[${state}]`)
@@ -147,6 +153,7 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
     )
     await flow({}, { kind: "project", id: project().id }, async (s) => {
       await s.until("Tasks (1)")
+      await run(s, "/model other/model")
       await run(s, "/delete-project")
       await s.until("Type its name to confirm.")
       await s.type("app")

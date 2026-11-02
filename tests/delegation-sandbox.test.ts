@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import { closeDb, getDb, openDb } from "../src/main/db"
 import { delegate, DelegationRefused, dockerLauncher, type Launcher } from "../src/main/delegation"
 import { EventLog } from "../src/main/events/log"
+import { filesOfStep } from "../src/renderer/src/lib/store"
 import { claudeArgs, containerName, execArgs, SPECIALIST_MODEL, stopArgs } from "../src/main/sandbox/docker"
 import { SpecialistBoxes } from "../src/main/sandbox/specialistbox"
 import type { BufferResult, ExecBuffer } from "../src/main/sandbox/taskbox"
@@ -96,6 +97,9 @@ describe("delegating into a sandbox (R4.1, R4.2, R4.8)", () => {
     expect(readFileSync(join(box.ws.workspace, "src", "a.ts"), "utf8")).toContain("// unpacked")
     expect(readFileSync(join(box.ws.workspace, "src", "b.ts"), "utf8")).toBe("export const b = 2\n")
     expect(r.report).toContain("analysed src/a.ts")
+    // the step records what it found in the sandbox, the copy made before it existed included (specs/desktop-ui R2.3)
+    const step = log.steps(taskId).find((x) => x.kind === "delegation")!
+    expect(filesOfStep(log.history(taskId).events, step.id).copy.sort()).toEqual(["src/a.ts", "src/b.ts"])
     // a sandbox outlives the delegation
     expect(existsSync(box.ws.workspace)).toBe(true)
     expect(s.ids()).toEqual([box.id])

@@ -24,6 +24,7 @@ function cap(text: string, limit: number): { text: string; truncated: boolean } 
 
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead"])
+const REA_PATH_ARGS = ["path", "file_path", "binary_path", "artifact_path", "apk_path", "input_path", "target_path"]
 
 /** `/work/src/a.ts` → `src/a.ts`; anything outside /work is reported as it is. */
 export function fromWork(p: string): string {
@@ -34,6 +35,11 @@ export function fromWork(p: string): string {
 
 /** The files a tool call reads or writes, by source-relative path (R2.5). */
 export function filesOf(tool: string, input: Record<string, unknown>): FileTouch[] {
+  // REA's tools read the binary or artifact they are given, whatever its argument is called (specs/rea-native R2.1).
+  if (tool.startsWith("mcp__rea__")) {
+    const p = REA_PATH_ARGS.map((k) => input[k]).find((v): v is string => typeof v === "string" && v !== "")
+    return p ? [{ path: fromWork(clean(p)), op: "read" }] : []
+  }
   const op = WRITE_TOOLS.has(tool) ? "write" : READ_TOOLS.has(tool) ? "read" : null
   if (!op) return []
   const p = input.file_path ?? input.notebook_path ?? input.path

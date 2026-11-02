@@ -149,6 +149,21 @@ describe("the event log (specs/tui-panels R1.2)", () => {
 })
 
 describe("a project's overview (specs/tui-panels R2.1, R2.2)", () => {
+  test("gives the prompt back its keys when the user comes back from a task opened from the list", async () => {
+    const { api, called } = scriptedApi({ startTask: () => task() })
+    const s = await show({ api, start: { kind: "project", id: project().id } })
+    await s.until("Tasks (1)")
+    await s.press("tab")
+    await s.enter()
+    await s.until("[awaiting-user]")
+    await s.press("escape")
+    await s.until("Tasks (1)")
+    await s.type("A new request")
+    await s.enter()
+    await s.until(() => called("startTask").length === 1)
+    expect(called("startTask")[0].args).toEqual([{ projectId: project().id, request: "A new request" }])
+  })
+
   test("shows its target, tasks, analyses and unknowns, and starts a task from the prompt", async () => {
     const { api, called } = scriptedApi({
       getProject: () => ({
@@ -182,6 +197,26 @@ describe("a project's overview (specs/tui-panels R2.1, R2.2)", () => {
     await s.until(() => called("startTask").length === 1)
     expect(called("startTask")[0].args).toEqual([{ projectId: project().id, request: "Find the key" }])
     await s.until("[awaiting-user]")
+  })
+
+  test("changes the model and efforts the project's tasks run with, picked from the provider's list (specs/projects R1.8)", async () => {
+    const { api, called } = scriptedApi()
+    const s = await show({ api, start: { kind: "project", id: project().id } })
+    await s.until("Tasks (1)")
+    await s.type("/model")
+    await s.enter()
+    await s.until("other/model")
+    await s.press("down")
+    await s.enter()
+    await s.until(() => called("updateProject").length === 1)
+    expect(called("updateProject")[0].args).toEqual([project().id, { model: "other/model" }])
+    await s.type("/specialist-effort")
+    await s.enter()
+    await s.until("Specialist's effort")
+    await s.press("down")
+    await s.enter()
+    await s.until(() => called("updateProject").length === 2)
+    expect(called("updateProject")[1].args).toEqual([project().id, { specialistEffort: "high" }])
   })
 
   test("deletes the project only after its name is typed", async () => {

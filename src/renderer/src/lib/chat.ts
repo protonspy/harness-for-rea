@@ -76,6 +76,7 @@ export type ChatItem = UserItem | AgentItem | ToolItem | ApprovalItem | Question
 
 const NOTICES: Record<string, NoticeItem["tone"]> = {
   "turn.stopped": "warn",
+  "task.model": "neutral",
   "turn.continued": "neutral",
   "question.capped": "warn",
   // its own state, settled by the user's choice (specs/specialist-lifecycle R2.1)

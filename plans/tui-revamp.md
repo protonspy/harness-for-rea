@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 13ede9944b8ddff8d0900d40fbd9342526395dcf757a585d887632ff3e6c50d0
+checksum: aefc29e5de1277c257f40dab2111fae00e2810ad57a1f6cf16c3abeccd5423d5
 ---
 
 # TUI revamp
@@ -107,6 +107,16 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       when the provider already chosen is picked again; recorded as a delta to
       specs/onboarding R1.6
   _Reason Asked by the user during the run: an OpenAI-compatible key and endpoint could not be saved into a ready setup because the server answered 404 to the model list_
+- [x] 1.14 (Unit) Let the user change a project's provider, model and efforts and a
+      task's model at any time, from the desktop app's project and task views and the
+      TUI's /model, applied from the task's next turn, refused while a turn of it runs;
+      recorded as deltas to specs/projects and specs/tui-panels
+  _Reason Asked by the user during the run: once chosen, a project's or task's model could not be changed_
+- [x] 1.15 (Unit) Make the Qwen flash models the orchestrator's default on OpenRouter —
+      qwen/qwen3.8-flash, with qwen/qwen3.7-flash as the preset and routing fallback —
+      and recommend them first, recorded as deltas to specs/orchestrator R1.1 and
+      specs/desktop-ui R1.1
+  _Reason Asked by the user during the run: qwen/qwen3.7-flash did best in their reverse-engineering and security tests_
 
 ## Done when
 

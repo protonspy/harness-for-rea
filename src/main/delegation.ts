@@ -234,6 +234,12 @@ export async function delegate(
       const missing = o.pkg.files.filter((f) => !f.startsWith(`.orchestrator/`) && !ws.files.some((c) => c.path === f))
       await o.sandbox.boxes.copy(o.sandbox.id, missing, o.prepared ?? [])
       if (held.box.stopped) throw new SandboxError(`Sandbox ${o.sandbox.id} was stopped: ${held.box.stopped}.`)
+      // What the step finds in the sandbox, copied before it or just now, recorded on the step itself: the copies the
+      // orchestrator made with sandbox_copy happened before the step existed (specs/desktop-ui R2.3).
+      ev("sandbox.copy", `Sandbox ${o.sandbox.id} holds ${ws.files.length} file(s) for this step`, {
+        sandbox: o.sandbox.id,
+        files: ws.files.map((f) => ({ path: f.path, op: "copy" })),
+      })
       clearAskChannel(ws)
     } else {
       // Under the task's own folder, kept until the task is deleted (specs/task-persistence R3.1, R3.7).
