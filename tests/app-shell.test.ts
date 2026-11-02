@@ -89,7 +89,16 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "saveKey", ["sk-deepseek-1234567890", "nope"])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ specialistEffort: "ultra" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "startTask", [{ request: "", sourceRoot: "C:/x" }])).rejects.toThrow(/invalid arguments/)
+    // a project's and a task's model: known fields only, a model name with no control characters (specs/projects R1.8, R2.6)
+    const pid = "00000000-0000-4000-8000-000000000001"
+    await expect(dispatch(PAGE, "updateProject", [pid, { model: "a\u001b]0;x\u0007b" }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "updateProject", [pid, { folder: "C:/" }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "setTaskModel", [pid, "line\nbreak"])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "setTaskModel", ["not-an-id", "m"])).rejects.toThrow(/invalid arguments/)
     expect(ran).toEqual([])
+    await expect(dispatch(PAGE, "setTaskModel", [pid, " qwen/qwen3.8-flash "])).resolves.toBe("ok")
+    expect(ran).toEqual([["setTaskModel", pid, "qwen/qwen3.8-flash"]])
+    ran.length = 0
   })
 
   it("validates the chat's calls (specs/chat R7)", async () => {

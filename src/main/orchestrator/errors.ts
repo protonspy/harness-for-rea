@@ -20,14 +20,17 @@ export function friendlyError(e: unknown, provider = "OpenRouter"): Error {
     return new OrchestratorError(`Your ${provider} account is out of credits. Add credits and retry the task.`, 402)
   if (status === 429 || /rate.?limit/i.test(msg))
     return new OrchestratorError(`${provider} is rate-limiting this model. Retry in a minute or pick another model in Settings.`, 429)
+  // OpenRouter's own 404, before the general one: no endpoint serves the model with tools and data collection denied.
+  if (/no endpoints found/i.test(msg))
+    return new OrchestratorError("No OpenRouter provider can serve this model with tool calling and data collection denied. Pick another model in Settings.")
   // LangChain's MODEL_NOT_FOUND: the endpoint or the model is wrong, the commonest mistake being a base URL without its /v1.
   if (status === 404 || /MODEL_NOT_FOUND/.test(msg))
     return new OrchestratorError(
-      `${provider} answered 404 (not found): the base URL or the model is wrong. The base URL is the one /chat/completions is added to — for most services it ends in /v1 — and the model must be one that service serves.`,
+      provider === "OpenRouter"
+        ? "OpenRouter answered 404 (not found): it does not serve this model. Pick another model in Settings."
+        : `${provider} answered 404 (not found): the base URL or the model is wrong. The base URL is the one /chat/completions is added to — for most services it ends in /v1 — and the model must be one that service serves.`,
       404,
     )
-  if (/no endpoints found/i.test(msg))
-    return new OrchestratorError("No OpenRouter provider can serve this model with tool calling and data collection denied. Pick another model in Settings.")
   if (err?.name === "AbortError" || /abort/i.test(msg)) return new OrchestratorError("Cancelled.")
   return e instanceof Error ? e : new Error(msg)
 }

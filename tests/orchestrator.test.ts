@@ -766,6 +766,13 @@ describe("listing a provider's models (R1.9)", () => {
       expect(
         friendlyError(Object.assign(new Error('404 "not found" Troubleshooting URL: .../MODEL_NOT_FOUND/'), { status: 404 }), "OpenAI-compatible").message,
       ).toMatch(/answered 404 \(not found\): the base URL or the model is wrong.*ends in \/v1/)
+      // OpenRouter's "no endpoints" comes as a 404 too, and keeps its own advice; its base URL is fixed, so a 404 is the model
+      expect(friendlyError(Object.assign(new Error("No endpoints found that support tool use"), { status: 404 }), "OpenRouter").message).toMatch(
+        /data collection denied/,
+      )
+      expect(friendlyError({ status: 404, message: "not found" }, "OpenRouter").message).toBe(
+        "OpenRouter answered 404 (not found): it does not serve this model. Pick another model in Settings.",
+      )
       // a local endpoint runs with no key; a provider that needs one does not
       expect(keyFor("custom", null)).toBe("no-key")
       expect(keyFor("deepseek", null)).toBeNull()

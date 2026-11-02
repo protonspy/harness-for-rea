@@ -24,7 +24,7 @@ function cap(text: string, limit: number): { text: string; truncated: boolean } 
 
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead"])
-const REA_PATH_ARGS = ["path", "file_path", "binary_path", "artifact_path", "apk_path", "input_path", "target_path", "target"]
+const REA_PATH_ARGS = ["path", "file_path", "binary_path", "artifact_path", "apk_path", "input_path", "target_path"]
 
 /** `/work/src/a.ts` → `src/a.ts`; anything outside /work is reported as it is. */
 export function fromWork(p: string): string {

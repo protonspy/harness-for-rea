@@ -27,6 +27,14 @@ const id = z.string().uuid()
 
 const Provider = z.enum(PROVIDER_IDS)
 
+/** A model's name as a provider lists it: no control characters, which a hostile endpoint's list could carry. */
+const ModelName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[^\u0000-\u001f\u007f-\u009f]+$/, "A model name has no control characters.")
+
 const SettingsPatch = z
   .object({
     provider: Provider,
@@ -109,7 +117,7 @@ export const API_SCHEMAS = {
     z
       .object({
         provider: Provider,
-        model: z.string().trim().min(1).max(200),
+        model: ModelName,
         orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
         specialistEffort: z.enum(SPECIALIST_EFFORTS),
       })
@@ -139,7 +147,7 @@ export const API_SCHEMAS = {
   closeTask: z.tuple([id]),
   deleteTask: z.tuple([id]),
   // One task's model, from its next turn (specs/projects R2.6).
-  setTaskModel: z.tuple([id, z.string().trim().min(1).max(200)]),
+  setTaskModel: z.tuple([id, ModelName]),
   decideTool: z.tuple([id, id, DecisionSchema]),
   answerQuestion: z.tuple([id, id, AnswerSchema]),
 } as const
