@@ -29,8 +29,8 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     ))
     if (!id) return
     const p = PROVIDERS[id as ProviderId]
-    // Switching provider swaps in its endpoint, model and key; one provider's model name means nothing to another.
-    await app.attempt(() => api.saveSettings({ provider: p.id, baseUrl: p.baseUrl, model: p.defaultModel || settings?.model }), `Provider: ${p.label}.`)
+    // Switching provider swaps in its own endpoint (kept per provider), model and key; one provider's model name means nothing to another.
+    await app.attempt(() => api.saveSettings({ provider: p.id, model: p.defaultModel || settings?.model }), `Provider: ${p.label}.`)
     refresh()
   }
   const pickModel = async (arg: string) => {
@@ -54,7 +54,8 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Set the provider's base URL",
       args: "<url>",
       run: async (url) => {
-        await app.attempt(() => api.saveSettings({ baseUrl: url.trim() }), "Base URL saved.")
+        // Named with the provider it is for, so a switch made elsewhere in between never files it under another.
+        await app.attempt(() => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }), "Base URL saved.")
         refresh()
       },
     },

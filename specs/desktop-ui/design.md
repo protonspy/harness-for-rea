@@ -15,3 +15,8 @@ loaded once from `getTask`, and every pushed `event`, `step` and `task` message 
 folded into it by a pure reducer, so live updates and history render through the
 same code. The reducer and the formatting helpers are what the suite tests; the
 views are checked by running the app.
+
+Settings (R1.4) is the shadcn `Tabs` over its sections, one `TabsContent` each, the
+panels inside unchanged; the order of the tabs is a list in `src/renderer/src/lib/`,
+which the suite holds to the five sections. The open tab is the view's own state,
+starting on the orchestrator model.

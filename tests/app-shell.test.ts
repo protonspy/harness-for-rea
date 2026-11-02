@@ -86,6 +86,8 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "saveSettings", [{ provider: "nope" }])).rejects.toThrow(/invalid arguments/)
     for (const baseUrl of ["file:///etc/passwd", "not a url", "https://user:pw@host.example/v1"])
       await expect(dispatch(PAGE, "saveSettings", [{ baseUrl }])).rejects.toThrow(/invalid arguments/)
+    // Each provider's base URL is the main process's to keep: the view sets the chosen one's, never the map (specs/orchestrator R1.10).
+    await expect(dispatch(PAGE, "saveSettings", [{ baseUrls: { custom: "https://attacker.example/v1" } }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveKey", ["sk-deepseek-1234567890", "nope"])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ specialistEffort: "ultra" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "startTask", [{ request: "", sourceRoot: "C:/x" }])).rejects.toThrow(/invalid arguments/)

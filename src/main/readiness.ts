@@ -32,9 +32,9 @@ export interface RunChoice {
   baseUrl: string
 }
 
-/** A provider's base URL: kept in Settings for the provider Settings is on, the provider's default for any other. */
-export function baseUrlFor(provider: ProviderId, settings: Pick<Settings, "provider" | "baseUrl">): string {
-  return resolveBaseUrl(provider, provider === settings.provider ? settings.baseUrl : "")
+/** A provider's base URL: its own, kept in Settings whichever provider Settings is on, else its default (specs/orchestrator R1.10). */
+export function baseUrlFor(provider: ProviderId, settings: Pick<Settings, "provider" | "baseUrl"> & Partial<Pick<Settings, "baseUrls">>): string {
+  return resolveBaseUrl(provider, settings.baseUrls?.[provider] ?? (provider === settings.provider ? settings.baseUrl : ""))
 }
 
 /** Every provider but a custom endpoint takes a key; a local OpenAI-compatible server may take none. */
@@ -76,7 +76,7 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
   const label = PROVIDERS[provider].label
   let model: Readiness["model"] = { ready: false, reason: "", provider, model: run.model }
   if (needsKey(provider) && !d.keySet(provider)) model.reason = `Set your ${label} API key.`
-  else if (!run.baseUrl) model.reason = `Set the base URL of your ${label} in Settings, with Settings on that provider.`
+  else if (!run.baseUrl) model.reason = `Set the base URL of your ${label} in Settings.`
   else if (!run.model.trim()) model.reason = `Choose a model from ${label}.`
   else if (o.list === false) model = { ...model, ready: true }
   else {
