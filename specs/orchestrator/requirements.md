@@ -18,7 +18,7 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 
 ## R1 · Model
 
-- **R1.1** The orchestrator shall run `createDeepAgent` on `ChatOpenRouter` with the model the user chose, defaulting to `deepseek/deepseek-v4.1-flash-1017`, with `z-ai/glm-5.3-flash` offered as a preset and sent as the fallback in OpenRouter's `models` routing.
+- **R1.1** (MODIFIED) The orchestrator shall run `createDeepAgent` on `ChatOpenRouter` with the model the user chose, defaulting to `qwen/qwen3.8-flash`, with `qwen/qwen3.7-flash` offered as a preset and sent as the fallback in OpenRouter's `models` routing.
 - **R1.2** The orchestrator shall send every OpenRouter request with `provider.data_collection` set to `deny`.
 - **R1.3** When a model call completes, the orchestrator shall record its tokens, its cost from OpenRouter's usage and the model that answered as an event, and add them to the task's totals.
 - **R1.4** If OpenRouter rejects the key, reports no credits or rate-limits the request, then the orchestrator shall fail the task with a message the user can act on.
