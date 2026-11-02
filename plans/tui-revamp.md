@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: f799ee4f9e0793e28ad5470a10bba055b29e6b595846dbb2c43524c931bbab05
+checksum: ba8eeaa695c2fb87ee25082d18e819b8a81517e37ff8bcdfc4f1e482f5d828ce
 ---
 
 # TUI revamp
@@ -68,7 +68,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
 - [x] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
   _Depends 1.3_
   _Priority 1_
-- [ ] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
+- [x] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
   _Depends 1.2_
 - [ ] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
   _Depends 1.1_

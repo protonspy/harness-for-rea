@@ -25,8 +25,12 @@ npm test
 npx vitest run tests/<file>.test.ts
 npx vitest run tests/orchestrator.test.ts -t "<test name>"
 
-# Test — the report the gate reads ({"total": N, "coverage": P}, Vitest's exit status)
-node scripts/test-gate.mjs
+# Test — the TUI's screen tests, on OpenTUI's test renderer under Bun (Bun on PATH, or npx -y bun@1.4.4)
+bun test tui/test
+
+# Test — the report the gate reads ({"total": N, "coverage": P}, the suites' exit status); with HFR_BUN=1, as CI
+# runs it, the Bun core tests and the TUI's screen tests count too
+HFR_BUN=1 node scripts/test-gate.mjs
 
 # Lint — oxlint, warnings fail
 npm run lint
