@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/settings-tabs
-delivery: in-progress
-pr: 1
+delivery: in-review
+pr: 22
 ---
 
 # Desktop UI — requirements

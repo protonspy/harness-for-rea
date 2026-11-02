@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/settings-tabs
-delivery: in-progress
-pr: 20
+delivery: in-review
+pr: 22
 ---
 
 # Mcp integrations — requirements
