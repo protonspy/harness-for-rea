@@ -63,9 +63,11 @@ describe("a message as markdown in the desktop app (specs/chat R7.6)", () => {
   it("renders markdown and colored code, never the HTML, links or images the text carries", async () => {
     const { createElement } = await import("react")
     const { renderToStaticMarkup } = await import("react-dom/server")
-    const { default: Markdown } = await import("../src/renderer/src/components/Markdown")
+    // A .tsx view the Node tsconfig does not compile: loaded by path, so only Vitest resolves it.
+    const view = "../src/renderer/src/components/Markdown"
+    const { default: Markdown } = (await import(/* @vite-ignore */ view)) as { default: (p: { text: string }) => unknown }
     const html = renderToStaticMarkup(
-      createElement(Markdown, {
+      createElement(Markdown as never, {
         text: "# Title\n\n**bold** and `code`\n\n- [x] done\n\n```ts\nconst x = 1\n```\n\n<script>alert(1)</script>\n\n[site](https://evil.example) ![pixel](https://evil.example/p.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |",
       }),
     )
