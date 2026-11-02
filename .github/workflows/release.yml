@@ -145,7 +145,11 @@ jobs:
 
           See the README for Docker, the Claude plan and the provider key the app needs.
           NOTES
-          gh release create "v$VERSION" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Harness for REA $VERSION" --notes-file notes.md
+          # The artifacts keep their folders (dist/ for the installers): upload the files, wherever they landed.
+          mapfile -t assets < <(find release -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.tar.gz' \))
+          printf 'asset: %s\n' "${assets[@]}"
+          [ "${#assets[@]}" -eq 6 ] || { echo "::error::expected 6 assets, found ${#assets[@]}"; exit 1; }
+          gh release create "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Harness for REA $VERSION" --notes-file notes.md
       - uses: actions/setup-node@v4
         with:
           node-version: 24
