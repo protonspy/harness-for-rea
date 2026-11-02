@@ -31,6 +31,26 @@ export async function openProjects(app: AppState): Promise<void> {
   else if (id) app.go({ kind: "project", id })
 }
 
+/** The most recent tasks of every project, to open one (the desktop app's sidebar list). */
+export async function openRecentTasks(app: AppState): Promise<void> {
+  const tasks = await app.attempt(() => app.api.listTasks({ limit: 50 }))
+  if (!tasks) return
+  if (!tasks.length) return app.toast("No task yet.", "info")
+  const id = await app.dialog<string>((done) => (
+    <SelectDialog
+      title="Recent tasks"
+      items={tasks.map((t) => ({
+        id: t.id,
+        label: t.request.replace(/\s+/g, " ").slice(0, 80),
+        detail: `${t.state} · ${when(t.updatedAt)}`,
+        color: toneColor(app.theme, tone(t.state)),
+      }))}
+      done={done}
+    />
+  ))
+  if (id) app.go({ kind: "task", id })
+}
+
 /** One of a project's tasks, newest first; null when none was picked. */
 export async function pickTask(app: AppState, projectId: string): Promise<string | null> {
   const p = await app.attempt(() => app.api.getProject(projectId))

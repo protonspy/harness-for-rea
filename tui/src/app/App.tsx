@@ -31,7 +31,7 @@ import {
 } from "./context"
 import { keyLabel, Keymap } from "./keymap"
 import type { Theme } from "./theme"
-import { openProjects } from "./pickers"
+import { openProjects, openRecentTasks } from "./pickers"
 
 /*
   The TUI's shell (specs/tui-shell R1, R2, R3): the status line, the screen, the working line, the prompt and a line of
@@ -212,6 +212,7 @@ export function App(props: AppProps) {
   const globals: Command[] = [
     { name: "help", title: "List every key", key: "?", run: () => setHelp(true) },
     { name: "projects", title: "Open any project", run: () => void openProjects(app) },
+    { name: "tasks", title: "Open one of the recent tasks of every project", run: () => void openRecentTasks(app) },
     { name: "new", title: "Create a project", run: () => app.go({ kind: "new-project" }) },
     { name: "settings", title: "Change the provider, model, efforts and timeouts", run: () => app.go({ kind: "settings" }) },
     { name: "setup", title: "Open the first-run setup again", run: () => app.go({ kind: "setup", then: route }) },
@@ -219,11 +220,14 @@ export function App(props: AppProps) {
     { name: "quit", title: "Quit, stopping this app's running turns", run: () => quit() },
   ]
   const commands = [...spec.commands, ...globals.filter((g) => !spec.commands.some((c) => c.name === g.name))]
+  /** A command as the screen has it now: the drawn list can trail the screen's latest closures by a render. */
+  const resolve = (name: string): Command | undefined => app.current().commands.find((c) => c.name === name) ?? globals.find((c) => c.name === name)
 
   const palette = async () => {
     const id = await app.dialog<string>((done) => (
       <SelectDialog
         title="Commands"
+        height={16}
         items={commands.map((c) => ({
           id: c.name,
           label: `/${c.name}${c.args ? ` ${c.args}` : ""}`,
@@ -232,7 +236,7 @@ export function App(props: AppProps) {
         done={done}
       />
     ))
-    const cmd = commands.find((c) => c.name === id)
+    const cmd = id ? resolve(id) : undefined
     if (!cmd) return
     let arg = ""
     if (cmd.args) {
@@ -316,7 +320,7 @@ export function App(props: AppProps) {
             <span fg={theme.mutedForeground}>{"  esc to stop"}</span>
           </text>
         ) : null}
-        <Prompt spec={spec} commands={commands} focused={promptFocused && !overlay} onText={(t) => mem.typed(t)} />
+        <Prompt spec={spec} commands={commands} resolve={resolve} focused={promptFocused && !overlay} keys={promptFocused} onText={(t) => mem.typed(t)} />
         <text fg={theme.mutedForeground} attributes={TextAttributes.DIM} wrapMode="none" paddingLeft={1}>
           {[...hints, "/ commands"].join(" · ").slice(0, Math.max(0, width - 2))}
         </text>
@@ -405,24 +409,28 @@ function Help({ close, commands }: { close(): void; commands: Command[] }) {
   // The help's own layer is left out of what it lists.
   const groups = keymap.active("help")
   return (
-    <Frame title="Keys" width={80} footer="Esc or ? closes">
-      {groups.map((g) => (
-        <box key={g.title} flexDirection="column" marginBottom={1}>
-          <text fg={theme.primary} attributes={TextAttributes.BOLD}>
-            {g.title}
-          </text>
-          {g.bindings.map((b) => (
-            <text key={b.key} fg={theme.foreground}>
-              <span fg={theme.warning}>{keyLabel(b.key).padEnd(12)}</span>
-              {b.label}
+    <Frame title="Keys" width={116} footer="Esc or ? closes">
+      <box flexDirection="row" flexWrap="wrap" columnGap={2}>
+        {groups.map((g) => (
+          <box key={g.title} flexDirection="column" marginBottom={1} width={36}>
+            <text fg={theme.primary} attributes={TextAttributes.BOLD}>
+              {g.title}
             </text>
-          ))}
-        </box>
-      ))}
+            {g.bindings.map((b) => (
+              <text key={b.key} fg={theme.foreground} wrapMode="none">
+                <span fg={theme.warning}>{keyLabel(b.key).padEnd(10)}</span>
+                {b.label}
+              </text>
+            ))}
+          </box>
+        ))}
+      </box>
       <text fg={theme.primary} attributes={TextAttributes.BOLD}>
         Commands
       </text>
-      <text fg={theme.mutedForeground}>{commands.map((c) => `/${c.name}`).join("  ")}</text>
+      <text fg={theme.mutedForeground} wrapMode="word">
+        {commands.map((c) => `/${c.name}`).join("  ")}
+      </text>
     </Frame>
   )
 }

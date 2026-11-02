@@ -26,7 +26,23 @@ const history = new PromptHistory()
 
 type Popup = { kind: "cmd"; items: Command[] } | { kind: "path"; items: string[]; mention: { start: number; query: string } }
 
-export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; commands: Command[]; focused: boolean; onText?(text: string): void }) {
+export function Prompt({
+  spec,
+  commands,
+  resolve,
+  focused,
+  keys = focused,
+  onText,
+}: {
+  spec: ScreenSpec
+  commands: Command[]
+  /** the command by name as the screen has it now, run in place of the listed one */
+  resolve(name: string): Command | undefined
+  focused: boolean
+  /** its keys stay in the map while the prompt has the focus, an overlay open or not, so the help lists them */
+  keys?: boolean
+  onText?(text: string): void
+}) {
   const app = useApp()
   const { theme } = app
   const ta = useRef<TextareaRenderable>(null)
@@ -75,10 +91,11 @@ export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; 
     if (!popup) return
     if (popup.kind === "cmd") {
       const c = popup.items[i]
-      if (c.args) set(`/${c.name} `)
+      // A required argument (`<key>`) is typed after the name; a command with none, or an optional one (`[id]`), runs.
+      if (c.args?.startsWith("<")) set(`/${c.name} `)
       else {
         set("")
-        void runCommand(c, "")
+        void runCommand(resolve(c.name) ?? c, "")
       }
     } else {
       const r = insertMention(text, popup.mention, popup.items[i])
@@ -92,7 +109,7 @@ export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; 
     if (!value.trim()) return
     const c = readCommand(value)
     if (c) {
-      const cmd = commands.find((x) => x.name === c.name)
+      const cmd = resolve(c.name)
       if (!cmd) return app.toast(`No command /${c.name} here. Type / to see them.`, "error")
       history.add(value)
       set("")
@@ -139,8 +156,11 @@ export function Prompt({ spec, commands, focused, onText }: { spec: ScreenSpec; 
       { key: "ctrl+c", label: "Clear the prompt", run: () => (text ? set("") : false) },
       // `?` in a message being typed is a character; with the prompt empty it opens the help (specs/tui-shell R2.1).
       { key: "?", label: "Keys, with the prompt empty", run: () => ((ta.current?.plainText ?? text) ? "input" : false) },
+      { key: "return", label: "Send", run: () => "input" },
+      { key: "shift+return", label: "New line", run: () => "input" },
+      { key: "ctrl+j", label: "New line", run: () => "input" },
     ],
-    { active: focused },
+    { active: keys },
   )
 
   const lines = Math.min(8, Math.max(1, text.split("\n").length))

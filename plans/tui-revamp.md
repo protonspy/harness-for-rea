@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 90c18f5b0ee1cb279bb4d5e5cf48406b07ab371dce27bf11323a6e43ac5f86ff
+checksum: 76fd6182c5515cbee3d2d5cf566126ebb7e0573841e7b34e972d5b878bd1d311
 ---
 
 # TUI revamp
@@ -70,7 +70,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
   _Priority 1_
 - [x] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
   _Depends 1.2_
-- [ ] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
+- [x] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
   _Depends 1.1_
 - [ ] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
   _Depends 1.6_
@@ -81,7 +81,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       the TUI's transcript draws too, recorded as a delta to specs/chat R7 with
       docs/stack.md entries
   _Reason Asked by the user during the run: markdown in the desktop chat and syntax colors from Lezer_
-- [ ] 1.9 (Unit) Show the conversation's tool calls, tool runs and the specialist's
+- [x] 1.9 (Unit) Show the conversation's tool calls, tool runs and the specialist's
       reasoning and run expanded by default, in the desktop app and the TUI, each still
       collapsible, recorded as a delta to specs/chat-timeline
   _Reason Asked by the user during the run: tool calls and reasoning are collapsed today_
@@ -96,7 +96,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       reverse-engineering tools its sandbox image already has and to use them rather
       than install others, recorded as a delta to specs/rea-native
   _Reason Asked by the user during the run: the specialist sometimes skips a pre-installed tool or installs another_
-- [ ] 1.12 (Unit) Track Claude Code's tool_progress heartbeats in the specialist's
+- [x] 1.12 (Unit) Track Claude Code's tool_progress heartbeats in the specialist's
       stream, so a long-running tool of the specialist shows as running with its elapsed
       time in the desktop app and the TUI, recorded as a delta to specs/chat-timeline
   _Reason Asked by the user during the run: the chat does not track tool_progress events_

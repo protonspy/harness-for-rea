@@ -149,8 +149,8 @@ export function TaskScreen({ id }: { id: string }) {
     const a = await askQuestion(app, q.agent, q.question)
     if (a !== null) await app.attempt(() => api.answerQuestion(id, q.id, a))
   }
-  const decide = async () => {
-    const call = calls[0]
+  const decide = async (callId?: string) => {
+    const call = calls.find((c) => !callId || c.callId === callId)
     if (!call) return toast("No call waits for a decision.", "info")
     const patch = h?.patches.find((p) => p.id === call.args.patchId)
     const d = await decideCall(app, call, patch)
@@ -161,10 +161,13 @@ export function TaskScreen({ id }: { id: string }) {
   const offer = useRef<(pending: string) => void>(() => undefined)
   useEffect(() => {
     offer.current = (ids) => {
-      const first = ids.split(",")[0]
-      if (!first || !feed.offerOnce(first)) return
-      if (questions.some((q) => q.id === first)) void answer(first)
-      else void decide()
+      // The first decision not offered yet: one left with Esc stays for /answer or /decide, the next still opens.
+      const first = ids.split(",").find((x) => x && feed.offerOnce(x))
+      if (!first) return
+      // Once its dialog closes, answered or left, the next pending decision is offered.
+      const next = () => offer.current(ids)
+      if (questions.some((q) => q.id === first)) void answer(first).then(next)
+      else void decide(first).then(next)
     }
   })
   useEffect(() => offer.current(pending), [pending])
@@ -201,7 +204,7 @@ export function TaskScreen({ id }: { id: string }) {
   const commands: Command[] = [
     ...actionsFor(state).map((a) => ACTION[a]),
     ...(questions.length ? [{ name: "answer", title: "Answer the question the task waits on", run: () => answer() }] : []),
-    ...(calls.length ? [{ name: "decide", title: "Approve, edit or reject the call the task waits on", run: decide }] : []),
+    ...(calls.length ? [{ name: "decide", title: "Approve, edit or reject the call the task waits on", run: () => decide() }] : []),
     ...orphans.flatMap((p) => [
       {
         name: "approve-patch",

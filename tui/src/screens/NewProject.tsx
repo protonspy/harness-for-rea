@@ -39,6 +39,8 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
   const [spec, setSpec] = useState<SpecialistEffort>("medium")
   const [focus, setFocus] = useState<FieldName>(initial ? "goal" : "target")
   const [busy, setBusy] = useState(false)
+  /** where the project's own folder is made; null for the app's data folder, as in the desktop app */
+  const [parentFolder, setParentFolder] = useState<string | null>(null)
 
   useEffect(() => {
     void api.getSettings().then((s) => {
@@ -118,6 +120,7 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
           model,
           orchestratorEffort: orch,
           specialistEffort: spec,
+          parentFolder,
         }),
       `Created "${shownName.trim()}".`,
     )
@@ -133,6 +136,15 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
       { name: "browse-folder", title: "Pick the target folder from a browser", run: () => browse("folder") },
       { name: "browse-file", title: "Pick a target file from a browser", run: () => browse("file") },
       { name: "models", title: "Pick the model from the provider's list", run: pickModel },
+      {
+        name: "project-folder",
+        title: "Choose where the project's own folder is made",
+        run: async () => {
+          const f = await app.attempt(() => api.pickFolder())
+          if (f) setParentFolder(f)
+        },
+      },
+      { name: "default-folder", title: "Make the project's folder in the app's data again", run: () => setParentFolder(null) },
     ],
   })
   // The form takes the keys; the prompt stays for commands.
@@ -204,6 +216,7 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
         focused={field("orchestrator")}
       />
       <Choice<SpecialistEffort> label="Specialist's effort" value={spec} options={SPECIALIST_EFFORTS} onChange={setSpec} focused={field("specialist")} />
+      <text fg={theme.mutedForeground}>{`Saved in ${parentFolder ? safe(parentFolder) : "a new folder in the app's data"} · /project-folder changes it`}</text>
       {confirm ? <text fg={theme.warning}>{safe(`This folder is ${confirm}: creating asks for its path typed.`)}</text> : null}
       <text fg={theme.primary} attributes={TextAttributes.BOLD}>
         {busy ? "Creating…" : "Ctrl+S creates the project · Tab moves between fields · Esc goes back"}

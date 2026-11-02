@@ -8,17 +8,18 @@ import { conversation, event, history, pushBus, render, scriptedApi, task, type 
 
 /* specs/tui-conversation: a task as a conversation at parity with the desktop timeline. */
 
-let s: Screen | null = null
+let current: Screen | null = null
 afterEach(async () => {
-  await s?.dispose()
-  s = null
+  await current?.dispose()
+  current = null
 })
 const ID = task().id
 const open = async (script: Parameters<typeof scriptedApi>[0] = {}, bus = pushBus()) => {
   const api = scriptedApi(script)
-  s = await render({ api: api.api, bus: bus.bus, start: { kind: "task", id: ID } })
-  await s.until(`[${script.getTask ? "" : "awaiting-user"}`)
-  return { ...api, push: bus.push, s }
+  const screen = await render({ api: api.api, bus: bus.bus, start: { kind: "task", id: ID } })
+  current = screen
+  await screen.until(`[${script.getTask ? "" : "awaiting-user"}`)
+  return { ...api, push: bus.push, s: screen }
 }
 
 /** The color a piece of text is drawn in, from the frame's spans. */
