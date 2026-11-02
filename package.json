@@ -29,6 +29,7 @@
     "@langchain/openai": "^1.8.0",
     "@langchain/openrouter": "^0.4.19",
     "@opentui/core": "^0.8.1",
+    "@opentui/react": "^0.8.1",
     "@tailwindcss/vite": "4.3.3",
     "@types/bun": "^1.4.4",
     "@types/node": "^24.19.2",
@@ -60,5 +61,8 @@
   },
   "allowScripts": {
     "electron@45.0.0": true
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^2.1.2"
   }
 }

@@ -47,6 +47,8 @@ themselves. -->
 - **Docker** with **node:24.22.2-bookworm-slim** (pinned by digest) — the specialist's base image, one container per delegation ([adr:0006-run-the-specialist-inside-a-container-per-task]); Node runs the ask-user MCP server ([adr:0008-ask-the-user-from-the-specialist-over-the-run-channel]) and the orchestrator's own scripts in `/scratch`. The verifying build stage stays on **debian:bookworm-slim**.
 - **Bun** — the TUI's runtime: OpenTUI needs it, and the core runs on it unchanged, `node:sqlite` included ([adr:0022-run-the-tui-on-bun-with-opentui]).
 - **OpenTUI** (`@opentui/core`) — the TUI's renderer, a native terminal UI core driven from TypeScript ([adr:0022-run-the-tui-on-bun-with-opentui]).
+- **@opentui/react** with **react-reconciler** — the TUI's React layer over OpenTUI, so its screens are declarative and share `src/renderer/src/lib` with the desktop app ([adr:0023-build-the-tui-on-opentuis-react-layer]); its peers `react-devtools-core` and `ws`, which `legacy-peer-deps` does not install, are only loaded by OpenTUI's devtools and stay out.
+- **@napi-rs/keyring** — the one OS-keychain store both apps read provider keys from, prebuilt per platform with no install script ([adr:0024-share-the-data-folder-between-processes]).
 - **web-tree-sitter** — OpenTUI's required peer, which `.npmrc`'s `legacy-peer-deps` does not install by itself; the TUI's binary and package carry it.
 - **GitHub Container Registry** — hosts the specialist's base image, everything but Claude Code, published by the Images workflow and pulled by digest ([adr:0012-pull-the-specialists-base-image-from-ghcr]).
 

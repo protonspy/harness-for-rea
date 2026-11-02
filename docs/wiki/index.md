@@ -17,4 +17,5 @@ fixed documents, not pages, and neither is ever an orphan.
 their own headings once there are enough that a flat list stops helping. -->
 
 - [[craft-anything]] — the rebuild-and-check app nearest to this harness, and which of its ideas fit here
+- [[tui-0-1-defects]] — what the 0.1 terminal UI got wrong, and the API methods it never reached
 - [[rea-in-the-sandbox]] — REA, the reverse engineering MCP server, running headless in the specialist's sandbox

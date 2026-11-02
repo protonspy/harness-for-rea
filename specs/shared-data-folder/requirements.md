@@ -1,6 +1,8 @@
 ---
 autonomy: auto
 ci: wait
+branch: feat/tui-revamp
+delivery: in-progress
 ---
 
 # Shared data folder — requirements

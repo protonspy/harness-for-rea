@@ -13,7 +13,11 @@
   ],
   "compilerOptions": {
     "paths": {
-      "@shared/*": ["./src/shared/*"]
-    }
+      "@shared/*": [
+        "./src/shared/*"
+      ]
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
   }
 }

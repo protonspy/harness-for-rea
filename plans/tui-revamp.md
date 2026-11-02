@@ -2,7 +2,9 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 928242936bd823adca5c6d6a0c94676d5bfcf4f87a6b53b4b1b4b8bb908f01f2
+pr: per-plan
+merge: manual
+checksum: 1580d78c4288ee6c9a57dd4ce816bc7d77196b0385379083c8ac32047f338b39
 ---
 
 # TUI revamp
@@ -57,11 +59,11 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
 
 ## Tasks
 
-- [ ] 1.1 (Unit) Walk the 0.1 TUI through setup, a project, a long task, a question and a refusal against the desktop app, and write each defect with the steps that show it, and each parity gap — every API method the renderer's views call that the TUI does not reach — to `docs/wiki/pages/tui-0-1-defects.md`, each later linked from the spec that fixes it
+- [x] 1.1 (Unit) Walk the 0.1 TUI through setup, a project, a long task, a question and a refusal against the desktop app, and write each defect with the steps that show it, and each parity gap — every API method the renderer's views call that the TUI does not reach — to `docs/wiki/pages/tui-0-1-defects.md`, each later linked from the spec that fixes it
   _Priority 1_
-- [ ] 1.2 (Unit) Record as an ADR amending adr:0022-run-the-tui-on-bun-with-opentui the TUI's move to OpenTUI's React layer — why React over Solid and over the imperative API, and what of `src/renderer/src/lib` it shares — with `docs/stack.md` entries for `@opentui/react`, `react-reconciler` and the peers `legacy-peer-deps` will not install
+- [x] 1.2 (Unit) Record as an ADR amending adr:0022-run-the-tui-on-bun-with-opentui the TUI's move to OpenTUI's React layer — why React over Solid and over the imperative API, and what of `src/renderer/src/lib` it shares — with `docs/stack.md` entries for `@opentui/react`, `react-reconciler` and the peers `legacy-peer-deps` will not install
   _Priority 1_
-- [ ] 1.3 (Unit) Record as an ADR sharing the data folder between processes, amending adr:0017 and the folder-wide lock of plans/finish-the-harness 1.9: the per-project lock and when each app takes it, process-owned tasks identified by pid and start time, recovery and both container sweeps scoped to processes that are gone and run at the next start of any app, the SQLite busy timeout, migrations under a lock and the refusal of a newer schema, the first-start upgrade, image build and sign-in done once, the Electron single-instance lock kept, how an app learns another process changed a task and how fast, and the shared keychain store with `@napi-rs/keyring` and its `docs/stack.md` entry
+- [x] 1.3 (Unit) Record as an ADR sharing the data folder between processes, amending adr:0017 and the folder-wide lock of plans/finish-the-harness 1.9: the per-project lock and when each app takes it, process-owned tasks identified by pid and start time, recovery and both container sweeps scoped to processes that are gone and run at the next start of any app, the SQLite busy timeout, migrations under a lock and the refusal of a newer schema, the first-start upgrade, image build and sign-in done once, the Electron single-instance lock kept, how an app learns another process changed a task and how fast, and the shared keychain store with `@napi-rs/keyring` and its `docs/stack.md` entry
   _Priority 1_
 - [ ] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
   _Depends 1.3_

@@ -1,10 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "DOM"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "skipLibCheck": true,
     "strict": true,
     "noUnusedLocals": true,
@@ -13,8 +18,18 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "paths": {
-      "@shared/*": ["./src/shared/*"]
-    }
+      "@shared/*": [
+        "./src/shared/*"
+      ]
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
   },
-  "include": ["tui/src", "src/main/env.d.ts", "tests/fixtures/bun-*.ts", "scripts/build-cli.ts"]
+  "include": [
+    "tui/src",
+    "tui/test",
+    "src/main/env.d.ts",
+    "tests/fixtures/bun-*.ts",
+    "scripts/build-cli.ts"
+  ]
 }
