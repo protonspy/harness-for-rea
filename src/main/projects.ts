@@ -123,6 +123,25 @@ export class ProjectStore {
     return projectRow(r)
   }
 
+  /** Change the provider, model or efforts a project's tasks run with (R1.8). */
+  update(
+    id: string,
+    patch: { provider?: ProviderId; model?: string; orchestratorEffort?: OrchestratorEffort; specialistEffort?: SpecialistEffort },
+  ): ProjectRow {
+    const cur = this.get(id)
+    getDb()
+      .prepare("UPDATE projects SET provider = ?, model = ?, orchestrator_effort = ?, specialist_effort = ?, updated_at = ? WHERE id = ?")
+      .run(
+        patch.provider ?? cur.provider,
+        patch.model ?? cur.model,
+        patch.orchestratorEffort ?? cur.orchestratorEffort,
+        patch.specialistEffort ?? cur.specialistEffort,
+        this.now(),
+        id,
+      )
+    return this.emit(id)
+  }
+
   /** Every project, the most recently created first. */
   list(): ProjectRow[] {
     return (getDb().prepare("SELECT * FROM projects ORDER BY created_at DESC").all() as Row[]).map(projectRow)

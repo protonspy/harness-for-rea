@@ -286,6 +286,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     // Refused while a task of it runs; then its tasks, its sandboxes and the folder the app made for it (R3.1, R3.2).
     deleteProject: async (id) => (free(id), await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),
+    // The project's tasks follow its new model, each from its next turn; refused while one of them runs (R1.8).
+    updateProject: (id, patch) => {
+      free(id)
+      const running = log.projectTasks(id).filter((t) => ["pending", "running", "waiting"].includes(t.state))
+      if (running.length) throw new Error("A task of the project is running; stop it before changing the project's model.")
+      const p = projects.update(id, patch)
+      if (patch.model || patch.provider) for (const t of log.projectTasks(id)) runner.setModel(t.id, p.model)
+      return withHolder(p)
+    },
     pickTarget: async (kind) => (host.pickTarget ? host.pickTarget(kind) : null),
     detectTarget: (path) => detectTarget(path),
     // Every task runs its tool calls without asking, patches included (specs/chat R4.1); none starts while a
@@ -320,6 +329,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
     continueTurn: (id) => (freeTask(id), runner.continueTask(id)),
     deleteTask: async (id) => (freeTask(id), await runner.remove(id), true),
+    setTaskModel: (id, model) => (freeTask(id), runner.setModel(id, model)),
     decideTool: (id, callId, decision) => (freeTask(id), runner.decideTool(id, callId, decision)),
     answerQuestion: (id, questionId, answer) => (freeTask(id), runner.answerQuestion(id, questionId, answer)),
   }

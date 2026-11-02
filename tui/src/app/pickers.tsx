@@ -51,6 +51,36 @@ export async function openRecentTasks(app: AppState): Promise<void> {
   if (id) app.go({ kind: "task", id })
 }
 
+/**
+  A model for a project or a task (specs/projects R1.8, R2.6): the one typed after the command, or one picked from the
+  provider's list when the project runs on the provider Settings lists it from; null when none was chosen.
+*/
+export async function pickModel(app: AppState, provider: string, current: string, typed: string): Promise<string | null> {
+  if (typed.trim()) return typed.trim()
+  const settings = await app.attempt(() => app.api.getSettings())
+  const models = settings?.provider === provider ? await app.api.listModels().catch(() => null) : null
+  if (!models?.length) {
+    app.toast("No model list for this provider here: name the model with /model <id>.", "info")
+    return null
+  }
+  return app.dialog<string>((done) => (
+    <SelectDialog title="Model" items={models.map((m) => ({ id: m, label: m, detail: m === current ? "current" : undefined }))} initial={current} done={done} />
+  ))
+}
+
+/** One of a list of values, the current one first selected. */
+export async function pickOne<T extends string>(app: AppState, title: string, options: readonly T[], current: T): Promise<T | null> {
+  return app.dialog<T>((done) => (
+    <SelectDialog
+      title={title}
+      filter={false}
+      items={options.map((o) => ({ id: o, label: o, detail: o === current ? "current" : undefined }))}
+      initial={current}
+      done={(v) => done(v as T | null)}
+    />
+  ))
+}
+
 /** One of a project's tasks, newest first; null when none was picked. */
 export async function pickTask(app: AppState, projectId: string): Promise<string | null> {
   const p = await app.attempt(() => app.api.getProject(projectId))

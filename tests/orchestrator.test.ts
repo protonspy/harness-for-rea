@@ -862,6 +862,25 @@ describe("the conversation (specs/chat R1)", () => {
     expect(kinds(task.id)).toContain("task.reopened")
   })
 
+  it("changes a task's model from its next turn, refusing while a turn runs (specs/projects R2.6)", async () => {
+    script = [{ content: "First answer." }]
+    const r = runner()
+    const task = r.start({ request: "x", sourceRoot: root })
+    expect(() => r.setModel(task.id, "other/model")).toThrow(/stop the turn or wait/)
+    await r.settled(task.id)
+    expect(r.setModel(task.id, "other/model").model).toBe("other/model")
+    await new Promise((res) => setTimeout(res, 10))
+    // the idle run ended, its containers kept; the next message opens it on the new model
+    expect(r.isLive(task.id)).toBe(false)
+    expect(disposed).toBe(1)
+    script.push({ content: "On the new model." })
+    r.sendMessage(task.id, "go on")
+    await r.settled(task.id)
+    expect(requests.at(-1)!.model).toBe("other/model")
+    expect(JSON.stringify(requests.at(-1)!.messages)).toContain("First answer.")
+    expect(kinds(task.id)).toContain("task.model")
+  })
+
   it("records each user and agent message in order with the task's other events (R1.3)", async () => {
     script = [{ content: "Looking.", tool_calls: [{ name: "ls", args: { path: "/src" } }] }, { content: "First answer." }, { content: "Second answer." }]
     const r = runner()

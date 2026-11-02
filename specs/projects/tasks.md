@@ -18,3 +18,4 @@
 - [x] 3.2 (Unit) Build the guided new-project setup: target with its kind, goal cards, name, model, efforts and folder — R4.2, R1.6
 - [x] 3.3 (Unit) Build the project view: target, kind, goal and model, its tasks and analyses, and a request with ideas for the goal — R4.3
 - [x] 3.4 (Unit) Mark a project another app holds in the sidebar and the project view, without Start or Delete — R4.5
+- [x] 3.5 (Unit) Change a project's provider, model and efforts and a task's model from the project and task views, from the next turn, refused while a turn runs — R1.8, R2.6

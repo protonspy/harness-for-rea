@@ -103,6 +103,19 @@ export const API_SCHEMAS = {
       .strict(),
   ]),
   deleteProject: z.tuple([id]),
+  // The provider, model and efforts a project's tasks run with, changed at any time (specs/projects R1.8).
+  updateProject: z.tuple([
+    id,
+    z
+      .object({
+        provider: Provider,
+        model: z.string().trim().min(1).max(200),
+        orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
+        specialistEffort: z.enum(SPECIALIST_EFFORTS),
+      })
+      .partial()
+      .strict(),
+  ]),
   pickTarget: z.tuple([z.enum(["file", "folder"])]),
   detectTarget: z.tuple([z.string().trim().min(1).max(1000)]),
   listTasks: z.tuple([z.object({ limit: z.number().int().min(1).max(200).default(50) }).strict()]),
@@ -125,6 +138,8 @@ export const API_SCHEMAS = {
   continueTurn: z.tuple([id]),
   closeTask: z.tuple([id]),
   deleteTask: z.tuple([id]),
+  // One task's model, from its next turn (specs/projects R2.6).
+  setTaskModel: z.tuple([id, z.string().trim().min(1).max(200)]),
   decideTool: z.tuple([id, id, DecisionSchema]),
   answerQuestion: z.tuple([id, id, AnswerSchema]),
 } as const
@@ -155,6 +170,7 @@ export interface ApiResults {
   getProject: { project: ProjectRow; tasks: TaskRow[]; analyses: AnalysisSummary[]; unknowns: UnknownRow[] }
   createProject: ProjectRow
   deleteProject: boolean
+  updateProject: ProjectRow
   pickTarget: string | null
   detectTarget: TargetInfo
   listTasks: TaskRow[]
@@ -167,6 +183,7 @@ export interface ApiResults {
   continueTurn: TaskRow
   closeTask: TaskRow
   deleteTask: boolean
+  setTaskModel: TaskRow
   decideTool: TaskRow
   answerQuestion: TaskRow
 }

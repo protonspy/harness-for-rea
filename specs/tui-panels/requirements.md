@@ -26,6 +26,7 @@ call (plans/tui-revamp 1.6). Fixes the setup and settings defects and the parity
 - **R2.1** The project overview shall show the project's target, kind, goal and model, its tasks, its analyses and its unknowns, and start a task from a request.
 - **R2.2** The project overview shall let the user delete the project after typing its name to confirm.
 - **R2.3** The new-project dialog shall take a typed target path, show the target's detected kind, and take the goal, name, model and efforts with the Settings defaults filled in.
+- **R2.4** (ADDED) The TUI shall let the user change a project's model and efforts from its overview and a task's model from the task, `/model` picking from the provider's list or taking a name (specs/projects R1.8, R2.6).
 
 ## R3 · Setup
 
@@ -39,7 +40,3 @@ call (plans/tui-revamp 1.6). Fixes the setup and settings defects and the parity
 
 - **R4.1** The settings editor shall let the user change the provider, the model, the orchestrator's and the specialist's effort, the delegation timeout and the approval and question timeouts.
 - **R4.2** The settings editor shall open the setup again.
-
-## Out of scope
-
-- Editing a project's model or efforts after it is created; the desktop app does not either.

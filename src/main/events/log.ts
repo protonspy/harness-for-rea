@@ -224,6 +224,12 @@ export class EventLog {
     return this.emitTask(id)
   }
 
+  /** The model a task runs its next turn with. */
+  setTaskModel(id: string, model: string): TaskRow {
+    getDb().prepare("UPDATE tasks SET model = ?, updated_at = ? WHERE id = ?").run(model, this.now(), id)
+    return this.emitTask(id)
+  }
+
   /** Add one call's usage to the task's totals. */
   addUsage(id: string, u: { tokensIn?: number; tokensOut?: number; costUsd?: number; specialistCostUsd?: number }): TaskRow {
     getDb()

@@ -99,6 +99,20 @@ describe("turns (specs/tui-conversation R2)", () => {
     await s.until(() => called("deleteTask").length === 1)
   })
 
+  test("changes the task's model between turns, never during one (specs/projects R2.6)", async () => {
+    const { s, called } = await open()
+    await s.type("/model local/model-b")
+    await s.enter()
+    await s.until(() => called("setTaskModel").length === 1)
+    expect(called("setTaskModel")[0].args).toEqual([ID, "local/model-b"])
+    await s.dispose()
+    current = null
+    const running = await open({ getTask: () => history({ task: task({ state: "running" }) }) })
+    await running.s.type("/")
+    await running.s.until("/cancel")
+    expect(running.s.frame()).not.toContain("/model")
+  })
+
   test("offers only the actions the state allows", async () => {
     const { s } = await open({ getTask: () => history({ task: task({ state: "failed" }) }) })
     await s.type("/")

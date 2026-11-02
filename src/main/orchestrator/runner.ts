@@ -893,6 +893,21 @@ export class TaskRunner {
     return this.deps.log.getTask(taskId)
   }
 
+  /**
+    Change the model a task runs with, from its next turn (specs/projects R2.6): refused while a turn runs; a task open
+    and idle here ends its run, its containers stopped and kept, so its next message opens it again on the new model.
+  */
+  setModel(taskId: string, model: string): TaskRow {
+    const task = this.deps.log.getTask(taskId)
+    if (["pending", "running", "waiting"].includes(task.state))
+      throw new Error(`The task is ${task.state}; stop the turn or wait for it to end before changing its model.`)
+    if (model === task.model) return task
+    this.deps.log.setTaskModel(taskId, model)
+    this.deps.log.append({ taskId, agent: "app", kind: "task.model", summary: `Model changed to ${model}`, payload: { from: task.model, to: model } })
+    if (this.live.has(taskId)) void this.end(taskId)
+    return this.deps.log.getTask(taskId)
+  }
+
   /** End a conversation that waits for the user, and take its container down. */
   close(taskId: string): TaskRow {
     const live = this.live.get(taskId)

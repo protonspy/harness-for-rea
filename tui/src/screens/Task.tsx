@@ -8,6 +8,7 @@ import { stepOf, Timeline, type SpecialistEntry } from "../../../src/renderer/sr
 import type { Command } from "../app/commands"
 import { useApp, useKeys, usePush, useScreen } from "../app/context"
 import { toneColor } from "../app/theme"
+import { pickModel } from "../app/pickers"
 import { askQuestion, decideCall, Diff } from "../components/decisions"
 import { ConfirmDialog } from "../components/dialogs"
 import { Markdown } from "../components/Markdown"
@@ -201,6 +202,7 @@ export function TaskScreen({ id }: { id: string }) {
     },
     delete: { name: "delete", title: "Delete the task, its history, files and containers", run: remove },
   }
+  const live = state === "running" || state === "pending" || state === "waiting"
   const commands: Command[] = [
     ...actionsFor(state).map((a) => ACTION[a]),
     ...(questions.length ? [{ name: "answer", title: "Answer the question the task waits on", run: () => answer() }] : []),
@@ -213,12 +215,26 @@ export function TaskScreen({ id }: { id: string }) {
       },
       { name: "reject-patch", title: "Reject the proposed patch", run: () => void app.attempt(() => api.decidePatch(id, p.id, "reject"), "Patch rejected.") },
     ]),
+    ...(live
+      ? []
+      : [
+          {
+            name: "model",
+            title: "Change the task's model, from its next turn",
+            args: "[id]",
+            run: async (typed: string) => {
+              if (!h) return
+              const project = h.task.projectId ? await app.attempt(() => api.getProject(h.task.projectId!)) : null
+              const model = await pickModel(app, project?.project.provider ?? "", h.task.model, typed)
+              if (model) await app.attempt(() => api.setTaskModel(id, model), `Model: ${model}, from the next turn.`)
+            },
+          },
+        ]),
     { name: "events", title: "Open the task's event log", run: () => app.go({ kind: "events", taskId: id }) },
     { name: "older", title: "Load the older events", run: loadOlder },
     { name: "expand", title: "Expand or collapse every tool call and delegation", key: "ctrl+o", run: () => toggleAll() },
   ]
 
-  const live = state === "running" || state === "pending" || state === "waiting"
   const events = t?.events ?? []
   let since = h?.task.updatedAt ?? now
   for (let i = events.length - 1; i >= 0; i--)
