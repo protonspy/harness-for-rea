@@ -44,6 +44,16 @@ describe("SandboxService (R1.2, specs/sandbox-images R3)", () => {
   }
   const builds = (calls: string[]) => calls.filter((c) => c.startsWith("build")).length
 
+  it("does not push its state again when a read finds it as it was, so a view re-reading on each push stops", async () => {
+    const seen: SandboxStatus[] = []
+    const s = new SandboxService(docker({ ready: true }).exec, "/sandbox", (x) => seen.push(x))
+    await s.status()
+    const after = seen.length
+    await s.status()
+    await s.status()
+    expect(seen).toHaveLength(after)
+  })
+
   it("reports Docker and a ready image, and pushes each change, preparing nothing", async () => {
     const seen: SandboxStatus[] = []
     const d = docker({ ready: true })
@@ -100,6 +110,14 @@ describe("SandboxService (R1.2, specs/sandbox-images R3)", () => {
 describe("LoginService (R1.3)", () => {
   const start = (mode: string) => (sub: string[]) =>
     spawn(process.execPath, [FAKE, "auth", ...sub], { env: { ...process.env, HFR_FAKE: mode }, stdio: ["pipe", "pipe", "pipe"] })
+
+  it("does not push the sign-in state again when a refresh finds it as it was", async () => {
+    const seen: LoginStatus[] = []
+    const s = new LoginService(start("answer"), (x) => seen.push(x))
+    await s.refresh()
+    await s.refresh()
+    expect(seen).toHaveLength(1)
+  })
 
   it("refreshes the state and logs out", async () => {
     const s = new LoginService(start("answer"))

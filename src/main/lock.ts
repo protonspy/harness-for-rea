@@ -83,9 +83,9 @@ export function lockDataFolder(dataDir: string, app: AppName, pid = process.pid,
 const ATTEMPTS = 20
 const PAUSE_MS = 50
 /** An unreadable lock this recent may still be being written. */
-const UNREADABLE_STALE_MS = 2000
+const UNREADABLE_STALE_MS = 5000
 /** A takeover guard this old was left by a process that died holding it. */
-const GUARD_STALE_MS = 5000
+const GUARD_STALE_MS = 10_000
 
 function pause() {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PAUSE_MS)

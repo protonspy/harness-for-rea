@@ -22,9 +22,15 @@ export class SandboxService {
     this.onChange = onChange
   }
 
+  /**
+    Only a change is pushed: a view re-reads the readiness on every push, so pushing an unchanged state would make
+    each read cause the next, a loop that starts a container per turn.
+  */
   private set(patch: Partial<SandboxStatus>): SandboxStatus {
-    this.current = { ...this.current, ...patch }
-    this.onChange(this.current)
+    const next = { ...this.current, ...patch }
+    const changed = JSON.stringify(next) !== JSON.stringify(this.current)
+    this.current = next
+    if (changed) this.onChange(this.current)
     return this.current
   }
 
@@ -75,9 +81,16 @@ export class LoginService {
     }
   }
 
+  /** The last state pushed, so an unchanged refresh pushes nothing (see SandboxService.set). */
+  private pushed = ""
+
   private changed(): LoginStatus {
     const s = this.current()
-    this.onChange(s)
+    const key = JSON.stringify(s)
+    if (key !== this.pushed) {
+      this.pushed = key
+      this.onChange(s)
+    }
     return s
   }
 
