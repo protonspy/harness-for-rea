@@ -65,10 +65,13 @@ Serves R1.1–R6.1, under adr:0026-proxy-host-engines-to-the-agents-as-mcp-integ
   `integrations: { [id]: IntegrationSettings }`, every one off by default (R1.1); the IPC
   contract gains `integrations` (the list, each with its catalog), `integrationStatus(id)` and
   `runIntegrationAction(id, action)`, each with its zod schema.
-- `src/renderer/src/` — the MCP section in Settings, generic over the list: each
-  integration's settings, its switch, each check with its fix, its actions, its connection
-  state, and its tools with one checkbox per agent (R1, R2.1, R2.2), warning on a target tool
-  checked for the orchestrator (R2.3).
+- `src/renderer/src/` — the MCP tab in Settings, generic over the list: a row per integration
+  with its title, description, on or off and, while on, whether it is connected, and a
+  Configure button (R1.1, R1.4); Configure opens that integration's own page, with a way back,
+  holding its settings, its switch, each check with its fix, its actions, its connection
+  state, and its tools with one toggle per agent, a shadcn `Switch` on Radix as the integration's
+  own on/off is (R1.6, R2.1, R2.2), warning on a target tool
+  checked for the orchestrator (R2.3). Which integration is open is the tab's own state.
 
 ## Data
 

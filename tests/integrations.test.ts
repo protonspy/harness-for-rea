@@ -12,7 +12,7 @@ import { APPROVALS_PER_TASK, plain, TaskApprovals } from "../src/main/integratio
 import { IntegrationGate } from "../src/main/integrations/gate"
 import { IntegrationRegistry } from "../src/main/integrations/registry"
 import { integrationStatus, saveIntegrations } from "../src/main/integrations/settings"
-import { settingsOf, toolRows, withChoice } from "../src/renderer/src/lib/integrations"
+import { integrationRow, settingsOf, toolRows, withChoice } from "../src/renderer/src/lib/integrations"
 import { FAKE_INFO, fakeIntegration } from "./fixtures/fake-integration"
 
 /* specs/mcp-integrations: the gate, the approvals and the channel, against a fake integration (design.md § Testing). */
@@ -302,6 +302,16 @@ describe("the MCP section's rows (R2.1–R2.3)", () => {
         .filter((r) => r.warn)
         .map((r) => r.name),
     ).toEqual(["lookup"])
+  })
+
+  it("lists an integration with its title and whether it is on, its connection only while on (R1.1, R1.4)", () => {
+    const off = settingsOf(view, {})
+    const enabled = { ...off, enabled: true }
+    const status = (connected: boolean) => ({ id: "fake", enabled: true, checks: [], connected })
+    expect(integrationRow(view, off, status(true))).toEqual({ id: "fake", title: "Fake", description: "", on: false, connection: "off" })
+    expect(integrationRow(view, enabled).connection).toBe("checking")
+    expect(integrationRow(view, enabled, status(true)).connection).toBe("connected")
+    expect(integrationRow(view, enabled, status(false)).connection).toBe("not connected")
   })
 
   it("changes one box and keeps the other as it showed", () => {
