@@ -1,8 +1,8 @@
 ---
 autonomy: auto
 ci: wait
-branch: feat/harness-for-rea
-delivery: merged
+branch: fix/provider-base-url
+delivery: in-progress
 pr: 1
 ---
 
@@ -27,6 +27,7 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
 - **R1.7** The orchestrator shall keep one API key per provider and use the chosen provider's, and if that key is not set, then it shall refuse to start the task and name the provider.
 - **R1.9** When the user opens the orchestrator's settings, the orchestrator shall offer the models listed by the chosen provider's `GET /models` (for OpenRouter, only those that support tool calling and take images as input), read in the main process with that provider's key, and if the list cannot be read, then it shall say why and still accept a typed model name.
 - **R1.8** Where the user chose a reasoning effort for an OpenAI-compatible provider, the orchestrator shall send it as `reasoning_effort` on every request.
+- **R1.10** (ADDED) The orchestrator shall keep one base URL per provider whose base URL can be edited and use the chosen provider's, so that choosing another provider leaves each provider's base URL as the user set it.
 
 ## R2 · Decomposition and delegation
 

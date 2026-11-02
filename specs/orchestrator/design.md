@@ -31,6 +31,13 @@ adr:0001-use-deepagents-on-openrouter-for-orchestration.
   `thread_id`, held by a `MemorySaver` that lives as long as the app.
 - **Steps** — `write_todos` calls are read from the tool callbacks into `todo`
   steps; each delegation is a `delegation` step.
+- **Base URLs** (R1.10) — `Settings.baseUrls` holds each provider's own endpoint, kept by
+  `src/main/settings.ts` and never sent over IPC; `baseUrl` is the chosen provider's. A save
+  that sets `baseUrl` sets the chosen provider's entry, switching provider brings back its
+  own, and a record from before is moved under the provider it was saved on.
+  `baseUrlFor` reads a provider's own entry whichever provider Settings is on, so a project
+  on another provider runs at its endpoint. The provider pickers send no base URL with a
+  switch.
 
 ## Alternatives considered
 

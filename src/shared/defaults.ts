@@ -9,6 +9,7 @@ export const MODEL_PRESETS = [DEFAULT_MODEL, PRESET_MODEL] as const
 export const DEFAULT_SETTINGS: Settings = {
   provider: "openrouter",
   baseUrl: "",
+  baseUrls: {},
   model: DEFAULT_MODEL,
   timeoutMinutes: 20,
   orchestratorEffort: "default",

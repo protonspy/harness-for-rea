@@ -222,7 +222,7 @@ export class TaskRunner {
     const abort = new AbortController()
     // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
     const baseUrl = baseUrlFor(run.provider, settings)
-    if (!baseUrl) throw new Error(`Set the base URL of your ${PROVIDERS[run.provider].label} in Settings, with Settings on that provider.`)
+    if (!baseUrl) throw new Error(`Set the base URL of your ${PROVIDERS[run.provider].label} in Settings.`)
     const model = makeModel({
       provider: run.provider,
       baseUrl,
