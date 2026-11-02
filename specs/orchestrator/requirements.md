@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: fix/provider-base-url
-delivery: in-progress
-pr: 1
+delivery: in-review
+pr: 23
 ---
 
 # Orchestrator — requirements
