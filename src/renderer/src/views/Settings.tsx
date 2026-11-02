@@ -7,17 +7,20 @@ import { ClaudePanel, EffortSelect, message, ModelPanel, SandboxPanel } from "@/
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { FIRST_SECTION, SETTINGS_SECTIONS, type SettingsSection } from "@/lib/settings"
 
 /*
-  Settings: the orchestrator's provider, key, endpoint, model and effort, the sandbox images and the delegation
-  timeout, the Claude sign-in and the specialist's effort, the MCP integrations (specs/mcp-integrations R1, R2), and
-  the waits on the user (specs/desktop-ui R1); the
-  first-run setup is reachable again from here (specs/onboarding R2.2).
+  Settings, one tab per section (specs/desktop-ui R1.4): the orchestrator's provider, key, endpoint, model and effort;
+  the sandbox images and the delegation timeout; the Claude sign-in and the specialist's effort; the MCP integrations
+  (specs/mcp-integrations R1, R2); and the waits on the user (specs/desktop-ui R1). The first-run setup is reachable
+  again from here (specs/onboarding R2.2).
 */
 
 export function SettingsView({ onSetup }: { onSetup(): void }) {
   const api = window.hfr.api
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [section, setSection] = useState<SettingsSection>(FIRST_SECTION)
   const [error, setError] = useState("")
   useEffect(() => {
     void api.getSettings().then(setSettings)
@@ -44,90 +47,110 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
       </div>
       <ErrorText>{error}</ErrorText>
 
-      <Card>
-        <PanelHeader title="Orchestrator model" />
-        <div className="p-4">
-          <ModelPanel>
-            {(s, saveModel) => (
-              <Field
-                label="Reasoning effort"
-                hint={`Sent as ${s.provider === "openrouter" ? "OpenRouter's reasoning.effort" : "reasoning_effort"}; models without reasoning ignore it. Default sends nothing.`}
-              >
-                <EffortSelect value={s.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => void saveModel({ orchestratorEffort: v })} />
-              </Field>
-            )}
-          </ModelPanel>
-        </div>
-      </Card>
+      <Tabs value={section} onValueChange={(v) => setSection(v as SettingsSection)}>
+        <TabsList className="h-9 w-full">
+          {SETTINGS_SECTIONS.map((s) => (
+            <TabsTrigger key={s.id} value={s.id}>
+              {s.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <Card>
-        <PanelHeader title="Sandbox (Docker)" />
-        <div className="p-4">
-          <SandboxPanel>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Timeout per delegation (minutes)">
-                <Input
-                  type="number"
-                  min={1}
-                  max={240}
-                  defaultValue={settings.timeoutMinutes}
-                  onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ timeoutMinutes: num(e.target.value) })}
-                />
-              </Field>
+        <TabsContent value="model">
+          <Card>
+            <PanelHeader title="Orchestrator model" />
+            <div className="p-4">
+              <ModelPanel>
+                {(s, saveModel) => (
+                  <Field
+                    label="Reasoning effort"
+                    hint={`Sent as ${s.provider === "openrouter" ? "OpenRouter's reasoning.effort" : "reasoning_effort"}; models without reasoning ignore it. Default sends nothing.`}
+                  >
+                    <EffortSelect value={s.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => void saveModel({ orchestratorEffort: v })} />
+                  </Field>
+                )}
+              </ModelPanel>
             </div>
-          </SandboxPanel>
-        </div>
-      </Card>
+          </Card>
+        </TabsContent>
 
-      <Card>
-        <PanelHeader title="Specialist (Claude Code)" />
-        <div className="p-4">
-          <ClaudePanel>
-            <Field
-              label="Effort"
-              hint="Claude Code's --effort for every delegation. Higher effort thinks longer and uses more of your plan. Default passes nothing."
-            >
-              <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
-            </Field>
-          </ClaudePanel>
-        </div>
-      </Card>
+        <TabsContent value="sandbox">
+          <Card>
+            <PanelHeader title="Sandbox (Docker)" />
+            <div className="p-4">
+              <SandboxPanel>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Timeout per delegation (minutes)">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={240}
+                      defaultValue={settings.timeoutMinutes}
+                      onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ timeoutMinutes: num(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+              </SandboxPanel>
+            </div>
+          </Card>
+        </TabsContent>
 
-      <Card>
-        <PanelHeader title="MCP integrations" />
-        <div className="p-4">
-          <IntegrationsPanel settings={settings} onSaved={setSettings} />
-        </div>
-      </Card>
+        <TabsContent value="specialist">
+          <Card>
+            <PanelHeader title="Specialist (Claude Code)" />
+            <div className="p-4">
+              <ClaudePanel>
+                <Field
+                  label="Effort"
+                  hint="Claude Code's --effort for every delegation. Higher effort thinks longer and uses more of your plan. Default passes nothing."
+                >
+                  <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
+                </Field>
+              </ClaudePanel>
+            </div>
+          </Card>
+        </TabsContent>
 
-      <Card>
-        <PanelHeader title="You in the loop" />
-        <div className="flex flex-col gap-4 p-4">
-          <p className="text-sm text-muted-foreground">
-            How long the agents wait on you. A tool call you chose to approve is rejected when its wait runs out; a question gets the default the agent gave.
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Approval timeout (minutes)">
-              <Input
-                type="number"
-                min={1}
-                max={1440}
-                defaultValue={settings.approvalTimeoutMinutes}
-                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ approvalTimeoutMinutes: num(e.target.value) })}
-              />
-            </Field>
-            <Field label="Question timeout (minutes)">
-              <Input
-                type="number"
-                min={1}
-                max={1440}
-                defaultValue={settings.questionTimeoutMinutes}
-                onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ questionTimeoutMinutes: num(e.target.value) })}
-              />
-            </Field>
-          </div>
-        </div>
-      </Card>
+        <TabsContent value="mcp">
+          <Card>
+            <div className="p-4">
+              <IntegrationsPanel settings={settings} onSaved={setSettings} />
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="loop">
+          <Card>
+            <PanelHeader title="You in the loop" />
+            <div className="flex flex-col gap-4 p-4">
+              <p className="text-sm text-muted-foreground">
+                How long the agents wait on you. A tool call you chose to approve is rejected when its wait runs out; a question gets the default the agent
+                gave.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Approval timeout (minutes)">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    defaultValue={settings.approvalTimeoutMinutes}
+                    onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ approvalTimeoutMinutes: num(e.target.value) })}
+                  />
+                </Field>
+                <Field label="Question timeout (minutes)">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    defaultValue={settings.questionTimeoutMinutes}
+                    onBlur={(e) => Number.isInteger(num(e.target.value)) && save({ questionTimeoutMinutes: num(e.target.value) })}
+                  />
+                </Field>
+              </div>
+            </div>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
