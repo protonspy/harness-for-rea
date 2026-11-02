@@ -1,3 +1,4 @@
+import { refusedKey } from "./orchestrator/models"
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { LoginStatus, Readiness, SandboxStatus, Settings } from "@shared/types"
 
@@ -14,7 +15,15 @@ export interface ReadinessDeps {
   settings(): Settings
   keySet(provider: ProviderId): boolean
   listModels(run: RunChoice): Promise<string[]>
+  /** a one-token request to the chosen model, for a provider whose model list does not answer */
+  probeModel(run: RunChoice): Promise<void>
+  /** what identifies the key in use, so a passed test is not repeated for the same provider, endpoint, model and key */
+  keyHint?(provider: ProviderId): string
 }
+
+/** Test requests that passed, by what they tested, so readiness does not spend a request at every check. */
+const probed = new Map<string, number>()
+const PROBE_FOR_MS = 10 * 60_000
 
 /** The provider, model and endpoint a task runs with: a project's own, or Settings' during the setup. */
 export interface RunChoice {
@@ -75,7 +84,21 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
       const listed = await d.listModels(run)
       model = listed.length ? { ...model, ready: true } : { ...model, reason: `${label} listed no models.` }
     } catch (e) {
-      model.reason = `${label} did not answer: ${(e as Error).message}`
+      // A refused key is final; any other failure of the list — many OpenAI-compatible servers have none — is
+      // settled by a one-token request to the chosen model (specs/onboarding R1.6).
+      if (refusedKey(e)) model.reason = (e as Error).message
+      else {
+        const key = JSON.stringify([run.provider, run.baseUrl, run.model, d.keyHint?.(run.provider) ?? ""])
+        if ((probed.get(key) ?? 0) > Date.now()) model = { ...model, ready: true }
+        else
+          try {
+            await d.probeModel(run)
+            probed.set(key, Date.now() + PROBE_FOR_MS)
+            model = { ...model, ready: true }
+          } catch (p) {
+            model.reason = refusedKey(p) ? (p as Error).message : `${label} has no model list, and a test request failed: ${(p as Error).message}`
+          }
+      }
     }
   }
 

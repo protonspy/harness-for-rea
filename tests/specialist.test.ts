@@ -71,6 +71,31 @@ describe("StreamReader (R2.1–R2.5)", () => {
     expect(r.session).toBe("s1")
   })
 
+  it("tracks a running tool's heartbeats as its progress, a few events per long call and none once it returned (specs/chat-timeline R1.4)", () => {
+    const r = new StreamReader()
+    r.line(line({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "make" } }] } }))
+    const beat = (s: number, n: number) =>
+      r.line(
+        line({
+          type: "tool_progress",
+          tool_use_id: `toolu_1-heartbeat-${n}`,
+          tool_name: "Bash",
+          parent_tool_use_id: "toolu_1",
+          elapsed_time_seconds: s,
+          heartbeat: true,
+          session_id: "s9",
+        }),
+      )
+    const first = beat(5, 1)
+    expect(first).toEqual([{ kind: "tool.progress", summary: "Bash running for 5s", payload: { tool: "Bash", callId: "toolu_1", elapsedSeconds: 5 } }])
+    expect(beat(10, 2)).toEqual([])
+    expect(beat(20, 3)[0].payload.elapsedSeconds).toBe(20)
+    // never reported as an unknown line
+    expect([...first, ...beat(59, 4)].some((e) => e.kind === "unknown")).toBe(false)
+    r.line(line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] } }))
+    expect(beat(5, 5)[0].payload.elapsedSeconds).toBe(5)
+  })
+
   it("attributes calls inside a subagent to it", () => {
     const r = new StreamReader()
     r.line(line({ type: "assistant", message: { content: [{ type: "tool_use", id: "ag", name: "Agent", input: { subagent_type: "Explore", prompt: "p" } }] } }))

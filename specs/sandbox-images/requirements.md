@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/sandbox-image-pull
-delivery: in-review
+delivery: merged
 pr: 3
 ---
 

@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/finish-the-harness
-delivery: in-review
+delivery: merged
 pr: 13
 ---
 

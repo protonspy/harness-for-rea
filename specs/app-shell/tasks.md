@@ -19,3 +19,4 @@
 
 - [x] 3.1 (Unit) Store, read and clear the OpenRouter key through `safeStorage`, refusing when encryption is unavailable and exposing only a masked hint — R3.1, R3.2, R3.3
   _Depends 2.2_
+- [x] 3.2 (Unit) Keep the keys in the shared keychain store, moving the safeStorage ones into it — R3.1, R3.2

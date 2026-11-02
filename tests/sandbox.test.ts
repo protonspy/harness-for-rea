@@ -500,6 +500,14 @@ describe("context isolation (R3.1, R3.2, R3.4)", () => {
       expect(sys).toMatch(/apt-get/)
       expect(sys).toMatch(/\/root\/out or \/tmp, never in \/work/)
     }
+    // the image's tools come first, and installing is the exception, never a second copy (specs/rea-native R2.5)
+    const sys = renderSystemPrompt(pkg)
+    for (const tool of ["mcp__rea__", "/opt/hfr/rea-skill/SKILL.md", "Ghidra 12.1.4", "analyzeHeadless", "JDK 21", "jadx-headless-mcp", "apktool", "ripgrep"])
+      expect(sys).toContain(tool)
+    expect(sys).toContain("never install another copy of them")
+    expect(sys).toContain("this list wins")
+    expect(sys).toMatch(/only when none of these can answer the question/)
+    expect(sys).not.toContain("Install the tools you need")
     // a sandbox's /work is writable, so read mode asks the files be left as they are rather than calling it read-only
     expect(renderSystemPrompt(pkg, true)).not.toContain("/work is read-only")
     expect(renderSystemPrompt(pkg, true)).toContain("Leave the files in /work as they are")

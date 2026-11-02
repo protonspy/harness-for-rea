@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/harness-for-rea
-delivery: in-review
+delivery: merged
 pr: 1
 ---
 
@@ -20,7 +20,7 @@ build, format, lint and test commands the delivery gate runs.
 - **R1.1** The app shell shall create its window with context isolation, the renderer sandbox, web security on, and Node integration and web views off.
 - **R1.2** If the renderer navigates away from the app's page or opens a new window, then the app shell shall block it.
 - **R1.3** The app shell shall load the renderer under a Content Security Policy that allows scripts only from the app itself.
-- **R1.4** (ADDED) When the app is launched while it is already running, the app shell shall focus the running window and quit the second launch before it starts any service.
+- **R1.4** (MODIFIED) When the desktop app is launched while it is already running, the app shell shall focus the running window and quit the second launch before it starts any service, while terminal UIs run beside it (specs/shared-data-folder R4.4).
 
 ## R2 · IPC
 
@@ -31,8 +31,8 @@ build, format, lint and test commands the delivery gate runs.
 
 ## R3 · Credentials
 
-- **R3.1** The app shell shall store the OpenRouter API key encrypted with Electron's `safeStorage`.
-- **R3.2** If `safeStorage` encryption is unavailable, then the app shell shall refuse to store the key and report why, without writing it in plain text.
+- **R3.1** (MODIFIED) The app shell shall store each provider's API key in the OS-keychain store the terminal UI reads too, moving a key it kept with Electron's `safeStorage` into it (specs/shared-data-folder R5).
+- **R3.2** (MODIFIED) If the OS keychain is unavailable, then the app shell shall refuse to store the key and report why, without writing it in plain text.
 - **R3.3** The app shell shall never return the stored key to the renderer, only whether one is set and a masked hint.
 
 ## R4 · Delivery gate

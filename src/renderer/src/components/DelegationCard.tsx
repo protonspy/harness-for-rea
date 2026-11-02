@@ -2,6 +2,7 @@ import { Brain, ChevronDown, ChevronRight, MessageSquareText, Wrench } from "luc
 import { useMemo, useState } from "react"
 import type { ContextPackage, Evidence } from "@shared/context"
 import type { EventRow, PatchView, StepRow } from "@shared/types"
+import Markdown from "@/components/Markdown"
 import Prose from "@/components/Prose"
 import { Mono } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
@@ -17,7 +18,8 @@ import { filesOfStep } from "@/lib/store"
 */
 
 export function DelegationCard({ step, events, patches, run = [] }: { step: StepRow; events: EventRow[]; patches: PatchView[]; run?: SpecialistEntry[] }) {
-  const [open, setOpen] = useState(step.state === "running")
+  // Open from the start, with the run and reasoning under it (specs/chat-timeline R1.2).
+  const [open, setOpen] = useState(true)
   const files = useMemo(() => filesOfStep(events, step.id), [events, step.id])
   const pkg = step.data.context as ContextPackage | undefined
   const report = typeof step.data.report === "string" ? step.data.report : ""
@@ -66,7 +68,7 @@ export function DelegationCard({ step, events, patches, run = [] }: { step: Step
           {report && (
             <section className="flex flex-col gap-2">
               <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Report</h4>
-              <Prose text={report} className="max-h-[480px] overflow-y-auto rounded-md border border-border bg-background p-3" />
+              <Markdown text={report} className="max-h-[480px] overflow-y-auto rounded-md border border-border bg-background p-3" />
             </section>
           )}
           {evidence.length > 0 && (
@@ -93,17 +95,17 @@ export function DelegationCard({ step, events, patches, run = [] }: { step: Step
 
 const ICONS = { text: MessageSquareText, thinking: Brain, tool: Wrench, result: MessageSquareText, note: ChevronRight }
 
-/** One entry of the specialist's run: a line, its payload collapsed until opened (specs/chat-timeline R1.2). */
+/** One entry of the specialist's run — its text, reasoning or tool call — shown open (specs/chat-timeline R1.2). */
 function RunEntry({ entry }: { entry: SpecialistEntry }) {
   const Icon = ICONS[entry.kind]
   const running = entry.kind === "tool" && entry.output === undefined
   return (
-    <Collapsible className="rounded border bg-background/60">
+    <Collapsible defaultOpen className="rounded border bg-background/60">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <Icon size={12} />
         {entry.subagent && <Badge>{entry.subagent}</Badge>}
         <span className={entry.failed ? "truncate text-destructive" : "truncate text-foreground"}>{entry.title}</span>
-        {running && <Badge variant="info">running</Badge>}
+        {running && <Badge variant="info">running{entry.elapsedSeconds ? ` · ${entry.elapsedSeconds}s` : ""}</Badge>}
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t px-2.5 py-2">
         <pre className="max-h-64 overflow-auto font-mono text-[11.5px] leading-5 break-all whitespace-pre-wrap">{entry.body || "—"}</pre>

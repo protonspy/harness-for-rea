@@ -14,7 +14,9 @@
     "resolveJsonModule": true,
     "paths": {
       "@shared/*": ["./src/shared/*"]
-    }
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
   },
-  "include": ["tui/src", "src/main/env.d.ts", "tests/fixtures/bun-*.ts", "scripts/build-cli.ts"]
+  "include": ["tui/src", "tui/test", "src/main/env.d.ts", "tests/fixtures/bun-*.ts", "scripts/build-cli.ts"]
 }

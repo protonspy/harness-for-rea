@@ -13,7 +13,7 @@ import { dockerLauncher, type Launcher } from "../src/main/delegation"
 import { claudeArgs } from "../src/main/sandbox/docker"
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
-import { listModels } from "../src/main/orchestrator/models"
+import { listModels, probeModel, refusedKey } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
@@ -147,12 +147,21 @@ function runner(key: string | null = "sk-or-v1-testkey000000", asked?: (p: strin
     workspace: async () => {
       await workspaceGate
       if (workspaceFails) throw new Error(workspaceFails)
-      return { backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => void disposed++ }
+      return {
+        backend: new FilesystemBackend({ rootDir: root, virtualMode: true }),
+        root: "/",
+        dispose: async (o?: { remove?: boolean }) => {
+          disposed++
+          if (o?.remove) forcedRemovals++
+        },
+      }
     },
   })
 }
 
 let disposed = 0
+/** of the disposals, those a forced stop made, which remove the containers (specs/task-persistence R3.8) */
+let forcedRemovals = 0
 let workspaceFails = ""
 let workspaceGate: Promise<void> = Promise.resolve()
 
@@ -177,6 +186,7 @@ beforeEach(() => {
   fakeContract = ""
   fakeQuestion = JSON.stringify({ prompt: "Is the input UTF-8?", reason: "It decides the tokenizer.", kind: "yesno", default: false })
   disposed = 0
+  forcedRemovals = 0
   workspaceFails = ""
   workspaceGate = Promise.resolve()
   refusal = null
@@ -519,6 +529,8 @@ describe("the task's workspace is removed when the task ends (R2.2)", () => {
     r.close(done.id)
     await settle(r, done.id)
     expect(disposed).toBe(1)
+    // closing keeps the containers, stopped
+    expect(forcedRemovals).toBe(0)
     status = 402
     const failed = r.start({ request: "y", sourceRoot: root })
     await settle(r, failed.id)
@@ -536,6 +548,21 @@ describe("the task's workspace is removed when the task ends (R2.2)", () => {
     r.cancel(task.id)
     await settle(r, task.id)
     expect(disposed).toBe(1)
+    // a cancel is a forced stop: the containers go, the task's files and conversation stay (specs/task-persistence R3.8)
+    expect(forcedRemovals).toBe(1)
+    script = [{ content: "picked up" }]
+    r.continueTask(task.id)
+    await settle(r, task.id)
+    expect(log.getTask(task.id).state).toBe("awaiting-user")
+  })
+
+  it("removes the containers of every open task when the app quits (specs/task-persistence R3.8)", async () => {
+    script = [{ content: "done" }]
+    const r = runner()
+    const t = r.start({ request: "x", sourceRoot: root })
+    await settle(r, t.id)
+    await r.stopAll()
+    expect(forcedRemovals).toBe(1)
   })
 
   it("on cancel while the workspace is still starting, once it is up", async () => {
@@ -704,6 +731,33 @@ describe("listing a provider's models (R1.9)", () => {
       globalThis.fetch = keep
     }
   }
+
+  it("tests a model with a one-token request when the provider has no model list (specs/onboarding R1.6)", async () => {
+    let body = ""
+    const keep = globalThis.fetch
+    const reply = (r: Response) =>
+      (globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") ?? "" })
+        body = String(init?.body ?? "")
+        return r
+      }) as typeof fetch)
+    try {
+      reply(json({ choices: [{ message: { content: "p" } }] }))
+      await probeModel({ provider: "custom", baseUrl: "https://llm.example/v1/", apiKey: "sk-custom-000000", model: "my-model" })
+      expect(seen.at(-1)).toEqual({ url: "https://llm.example/v1/chat/completions", auth: "Bearer sk-custom-000000" })
+      expect(JSON.parse(body)).toMatchObject({ model: "my-model", max_tokens: 1 })
+      reply(json({}, { status: 401 }))
+      const refused = await probeModel({ provider: "custom", baseUrl: "https://llm.example/v1", apiKey: "k", model: "m" }).catch((e: unknown) => e)
+      expect(refusedKey(refused)).toBe(true)
+      reply(json({ error: { message: "The model `m` does not exist" } }, { status: 404 }))
+      await expect(probeModel({ provider: "custom", baseUrl: "https://llm.example/v1", apiKey: "k", model: "m" })).rejects.toThrow(
+        "OpenAI-compatible answered 404 to a test request to m: The model `m` does not exist",
+      )
+      await expect(probeModel({ provider: "custom", baseUrl: "", apiKey: null, model: "m" })).rejects.toThrow("Set a base URL first.")
+    } finally {
+      globalThis.fetch = keep
+    }
+  })
 
   it("reads DeepSeek's /models with the key, sorted and de-duplicated", async () => {
     const ids = await withFetch(

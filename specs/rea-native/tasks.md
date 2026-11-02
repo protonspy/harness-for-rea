@@ -8,6 +8,7 @@
 
 - [x] 2.1 (Unit) Attach REA's MCP server, allow its tools, give MCP calls a ten-minute timeout and bind the output folder of a delegation's own container — R2.1, R2.2, R2.4
 - [x] 2.2 (Unit) Render the operating guide and the pointer to the skill into the specialist's system prompt — R2.3
+- [x] 2.3 (Unit) List the image's pre-installed tools in the specialist's system prompt, ahead of REA's skill, with installing as the exception — R2.5
 
 ## 3 · Evidence
 

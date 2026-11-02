@@ -261,6 +261,19 @@ describe("one set of sandboxes per project (R2.3)", () => {
     expect(made.at(-1)).toMatchObject({ id: "q", removed: 1 })
   })
 
+  it("removes the sandboxes, records kept, when the last task to close was stopped by force (specs/task-persistence R3.8)", async () => {
+    const m = { stopped: 0, dropped: 0 }
+    const registry = new SandboxRegistry(() => ({ stopAll: async () => void m.stopped++, dropAll: async () => void m.dropped++ }) as unknown as SpecialistBoxes)
+    const project = { id: "p", folder: "f", sourceRoot: "s" }
+    const a = registry.acquire(project)
+    const b = registry.acquire(project)
+    // one task cancelled while another is open leaves the shared sandboxes alone
+    await a.release({ remove: true })
+    expect(m).toEqual({ stopped: 0, dropped: 0 })
+    await b.release({ remove: true })
+    expect(m).toEqual({ stopped: 0, dropped: 1 })
+  })
+
   it("makes a task that opens while the last one's stop is in flight wait for it", async () => {
     let finish = () => undefined as void
     const afters: (Promise<void> | undefined)[] = []

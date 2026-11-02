@@ -1,7 +1,7 @@
 import { Bot, CheckCheck, ChevronRight, Clock, Wrench } from "lucide-react"
 import type { EventRow, PatchView, StepRow } from "@shared/types"
 import { DelegationCard } from "@/components/DelegationCard"
-import Prose from "@/components/Prose"
+import Markdown from "@/components/Markdown"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -16,7 +16,7 @@ export function UserMessage({ item }: { item: UserItem }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[80%] rounded-lg rounded-br-sm border border-primary/25 bg-primary/10 px-3.5 py-2.5">
-        <Prose text={item.text} />
+        <Markdown text={item.text} />
         <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground">
           {clock(item.at)}
           <Tooltip>
@@ -44,7 +44,7 @@ export function AgentMessage({ item }: { item: AgentItem }) {
           <span className="font-medium text-foreground">Orchestrator</span>
           {clock(item.at)}
         </div>
-        <Prose text={item.text} />
+        <Markdown text={item.text} />
       </div>
     </div>
   )
@@ -62,7 +62,7 @@ export function ToolCall({ item, ctx }: { item: ToolItem; ctx: ToolContext }) {
   const step = item.name === "delegate_to_specialist" ? stepOf(item, ctx.steps) : undefined
   if (step) return <DelegationCard step={step} events={ctx.events} patches={ctx.patches} run={ctx.run(step.id)} />
   return (
-    <Collapsible className="rounded-md border bg-card/60">
+    <Collapsible defaultOpen className="rounded-md border bg-card/60">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <ChevronRight size={13} className="transition-transform group-data-[state=open]:rotate-90" />
         <Wrench size={12} />
@@ -83,7 +83,7 @@ export function ToolCall({ item, ctx }: { item: ToolItem; ctx: ToolContext }) {
   )
 }
 
-/** A run of the orchestrator's tool calls, folded into one line until opened. */
+/** A run of the orchestrator's tool calls, shown open and folded on request (specs/chat-timeline R1.2). */
 export function ToolRun({ items, ctx }: { items: ToolItem[]; ctx: ToolContext }) {
   if (items.length === 1)
     return (
@@ -94,7 +94,7 @@ export function ToolRun({ items, ctx }: { items: ToolItem[]; ctx: ToolContext })
   const last = items.at(-1)!
   const running = last.output === undefined
   return (
-    <Collapsible className="ml-10">
+    <Collapsible defaultOpen className="ml-10">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <ChevronRight size={13} className="transition-transform group-data-[state=open]:rotate-90" />
         <Wrench size={12} />

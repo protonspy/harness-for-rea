@@ -46,8 +46,11 @@ export interface TaskWorkspace {
   sandboxes?: TaskSandboxes
   /** the task's container had to be created again: what was installed in it is gone (specs/task-persistence R3.5) */
   created?: boolean
-  /** stop the containers and keep them for when the task reopens (specs/task-persistence R3.4) */
-  dispose(): Promise<void>
+  /**
+    Take the containers down: stopped and kept for when the task reopens (specs/task-persistence R3.4), or, on a
+    forced stop, removed — the task's files and conversation stay, and it reopens over them (R3.8).
+  */
+  dispose(o?: { remove?: boolean }): Promise<void>
 }
 
 export interface RunnerDeps extends DelegationDeps {
@@ -78,6 +81,8 @@ interface Live {
   ctx: ToolContext
   /** bumped at every stop and new turn, so a stream the stop missed is ignored when it ends (specs/chat R3.3) */
   turnNo: number
+  /** a cancel or a quit took it down: its containers are removed rather than kept (specs/task-persistence R3.8) */
+  forced?: boolean
   /** the agent, once the task's workspace is up */
   ready: Promise<{ agent: ReturnType<typeof buildAgent>; ws: TaskWorkspace }>
   /** the gated calls the paused turn waits on, in the order of its action requests (specs/chat R4.2) */
@@ -895,6 +900,8 @@ export class TaskRunner {
     const live = this.live.get(taskId)
     const task = this.deps.log.getTask(taskId)
     if (!live || !["running", "waiting", "pending", "stopped"].includes(task.state)) throw new Error(`The task is ${task.state}, not running.`)
+    // A forced stop: the containers go when the run ends, the files and the conversation stay (specs/task-persistence R3.8).
+    live.forced = true
     live.abort.abort()
     // Nothing streams while waiting or stopped to record the outcome: settle it here.
     if (task.state === "waiting" || task.state === "stopped") {
@@ -969,7 +976,7 @@ export class TaskRunner {
     const live = this.live.get(taskId)
     this.live.delete(taskId)
     clearTimeout(live?.approvalTimer)
-    const done = live ? live.ready.then(({ ws }) => ws.dispose()).catch(() => undefined) : Promise.resolve()
+    const done = live ? live.ready.then(({ ws }) => ws.dispose({ remove: live.forced === true })).catch(() => undefined) : Promise.resolve()
     this.disposals.add(done)
     this.disposing.set(taskId, done)
     void done.finally(() => {
@@ -983,6 +990,8 @@ export class TaskRunner {
   async stopAll(): Promise<void> {
     const runs = [...this.live.values()].map((l) => l.run)
     for (const [id, l] of [...this.live]) {
+      // Quitting with a task open is a forced stop: its containers go, its files and conversation stay (R3.8).
+      l.forced = true
       l.abort.abort()
       void this.end(id)
     }

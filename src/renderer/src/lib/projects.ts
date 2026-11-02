@@ -74,3 +74,9 @@ export function bytes(n: number): string {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
   return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
+
+/** Which other app is running a task of the project, or null when it is free here (specs/shared-data-folder R1.3). */
+export function heldLabel(p: Pick<ProjectRow, "heldBy">): string | null {
+  if (!p.heldBy) return null
+  return `In use by ${p.heldBy.app === "tui" ? "a terminal UI" : "the desktop app"} (process ${p.heldBy.pid})`
+}

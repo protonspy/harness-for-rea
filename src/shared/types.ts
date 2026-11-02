@@ -86,6 +86,8 @@ export interface ProjectRow {
   specialistEffort: SpecialistEffort
   createdAt: number
   updatedAt: number
+  /** the other app running a task of this project, which holds it until its tasks close (specs/shared-data-folder R1.3) */
+  heldBy?: { app: "desktop" | "tui"; pid: number } | null
 }
 
 /** An earlier delegation of a project's task, as the project view lists it (specs/projects R4.3). */

@@ -1,14 +1,15 @@
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Handlers } from "@shared/api"
-import type { Push } from "@shared/types"
-import { clearKey, initKey, keyStatus, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
-import { closeDb, openDb } from "./db"
+import type { ProjectRow, Push } from "@shared/types"
+import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
+import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
-import { EventLog } from "./events/log"
+import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
-import { lockDataFolder, type AppName } from "./lock"
-import { listModels } from "./orchestrator/models"
+import { APP_LABEL, LockHeld, Locks, projectLockName, type AppName, type Holder } from "./lock"
+import { ProcessRegistry } from "./processes"
+import { listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
 import { blocking, readiness } from "./readiness"
@@ -20,6 +21,7 @@ import { isAnthropicUrl, spawnStart } from "./specialist/account"
 import { authId, LoginService, SandboxService } from "./status"
 import { detectTarget } from "./target"
 import { UnknownsLedger } from "./unknowns"
+import { ChangeWatcher } from "./watch"
 
 /*
   The core both apps run (plans/finish-the-harness 1.8, adr:0022-run-the-tui-on-bun-with-opentui): the database,
@@ -30,8 +32,10 @@ import { UnknownsLedger } from "./unknowns"
 
 /** What the app the core runs in provides. */
 export interface CoreHost {
-  /** which app this is, named to the other when it holds the data folder (plans/finish-the-harness 1.9) */
+  /** which app this is, named to another app when it holds a project (specs/shared-data-folder R1.2) */
   app: AppName
+  /** the app's version, recorded with its process and with each migration it runs (R3.3) */
+  version: string
   /** the app's data folder: the database, the projects and their tasks */
   dataDir: string
   /** where the specialist's image sources are: `sandbox/` in the repository or the packaged resources */
@@ -39,6 +43,8 @@ export interface CoreHost {
   /** carries a change to the view */
   push(p: Push): void
   keys: KeyStore
+  /** where this host kept keys before the shared store, moved into it at start (R5.2) */
+  formerKeys?: KeyStore
   /** a folder the user picks; a host without a picker leaves it out and the handler answers null */
   pickFolder?(): Promise<string | null>
   /** a file or folder the user picks as a project's target */
@@ -55,30 +61,90 @@ export interface Core {
   shutdown(): Promise<void>
 }
 
-/** Starts the core; throws `DataFolderBusy` when the other app holds the data folder, before anything is touched. */
+/** A project another live app is running a task of (specs/shared-data-folder R1.2). */
+export class ProjectBusy extends Error {
+  constructor(name: string, h: Holder) {
+    super(`"${name}" is running a task in ${APP_LABEL[h.app]} (process ${h.pid}). Its tasks can be read here, and run here once that app closes them.`)
+    this.name = "ProjectBusy"
+  }
+}
+
+/**
+  Starts the core on a data folder other apps may be running on (adr:0024-share-the-data-folder-between-processes);
+  throws `SchemaTooNew` when a newer app migrated the database, before anything is written.
+*/
 export async function startCore(host: CoreHost): Promise<Core> {
-  const { dataDir, push } = host
+  const { dataDir } = host
   mkdirSync(dataDir, { recursive: true })
-  // Taken before the database opens, so recover() below never interrupts the other app's live tasks.
-  const unlock = lockDataFolder(dataDir, host.app)
-  openDb(join(dataDir, "hfr.db"))
+  openDb(join(dataDir, "hfr.db"), { app: host.app, version: host.version })
+  const me = new ProcessRegistry(host.app, host.version)
+  me.start()
+  me.prune()
+  const locks = new Locks(dataDir, me.me, me.holds)
+  let watcher: ChangeWatcher | null = null
+  const push = (p: Push) => {
+    watcher?.saw(p)
+    host.push(p)
+  }
   useKeyStore(host.keys)
   onKey(registerSecret)
+  if (host.formerKeys) await moveKeys(host.formerKeys, host.keys)
   await initKey()
 
   const log = new EventLog(dataDir, push)
-  log.recover()
-  // Task containers a crash left running belong to tasks recover() just marked interrupted.
-  void TaskBox.sweep(dockerExecBuffer).catch(() => undefined)
-  // So do the specialist's sandboxes (specs/specialist-sandbox R2.7).
-  void SpecialistBoxes.sweep(dockerExecBuffer).catch(() => undefined)
-  // Projects: tasks from before them are given one each (specs/projects R3.3).
+  log.owner = me.key
+  // Only what a gone process left running: a live app's tasks are its own (specs/shared-data-folder R2.2).
+  log.recover((owner) => me.isLive(owner))
+  // Task containers of the tasks recover() just interrupted, never those of a live app's task (R2.3).
+  // A container of a task this database does not know belongs to another data folder, and is left alone.
+  void TaskBox.sweep(dockerExecBuffer, (taskId) => !log.hasTask(taskId) || me.isLive(log.taskOwner(taskId))).catch(() => undefined)
+  // So the specialist's sandboxes (specs/specialist-sandbox R2.7), but those of a project a live app holds, and those
+  // another data folder recorded.
+  void SpecialistBoxes.sweep(dockerExecBuffer, (sandboxId) => {
+    const r = getDb().prepare("SELECT project_id FROM sandboxes WHERE id = ?").get(sandboxId) as { project_id: string | null } | undefined
+    // Held by a live app: another, or this one, which may already have opened a task of it at start.
+    return !r || (!!r.project_id && (claims.has(r.project_id) || locks.holder(projectLockName(r.project_id)) !== null))
+  }).catch(() => undefined)
+  // Projects: tasks from before them are given one each, once across apps starting together (specs/projects R3.3, R4.1).
   const projects = new ProjectStore(dataDir, push)
   const unknowns = new UnknownsLedger()
   {
     const s = getSettings()
-    projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort })
+    exclusive(() => projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort }))
   }
+
+  const withHolder = (p: ProjectRow): ProjectRow => {
+    const h = locks.holder(projectLockName(p.id))
+    return { ...p, heldBy: h ? { app: h.app, pid: h.pid } : null }
+  }
+  // A project's lock, held by this app while any of its tasks is open here (specs/shared-data-folder R1.1).
+  const claims = new Map<string, { refs: number; release: () => void }>()
+  const claim = (projectId: string): (() => void) => {
+    let c = claims.get(projectId)
+    if (!c) {
+      const name = projects.get(projectId).name
+      c = { refs: 0, release: locks.take(projectLockName(projectId), (h) => new ProjectBusy(name, h).message) }
+      claims.set(projectId, c)
+    }
+    c.refs++
+    const held = c
+    let done = false
+    return () => {
+      if (done) return
+      done = true
+      held.refs--
+      if (held.refs > 0 || claims.get(projectId) !== held) return
+      claims.delete(projectId)
+      held.release()
+    }
+  }
+  /** Refuse to act on a project another live app holds (R1.2). */
+  const free = (projectId: string | null | undefined) => {
+    if (!projectId) return
+    const h = locks.holder(projectLockName(projectId))
+    if (h) throw new ProjectBusy(projects.get(projectId).name, h)
+  }
+  const freeTask = (taskId: string) => free(log.getTask(taskId).projectId)
   // One set of sandboxes per project while any of its tasks is open (specs/projects R2.3).
   const registry = new SandboxRegistry(
     (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
@@ -90,25 +156,48 @@ export async function startCore(host: CoreHost): Promise<Core> {
     apiKey: (provider) => readKey(provider),
     // The orchestrator's tools run in the task's own container (adr:0007-run-the-orchestrators-tools-in-a-task-container).
     workspace: async (task) => {
-      const blocked = await preflight(dockerExec)
-      if (blocked) throw new Error(blocked)
-      const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, join(log.taskDir(task.id), "scratch"))
-      // The project's sandboxes, shared by its tasks; those earlier runs recorded included (specs/projects R2.3).
-      const held = task.projectId ? registry.acquire(projects.get(task.projectId)) : null
-      return {
-        backend: box,
-        root: WORKSPACE,
-        scratch: SCRATCH,
-        sandboxes: held?.boxes.forTask(task.id),
-        created: box.created,
-        // Stopped and kept for when the task reopens (specs/task-persistence R3.4); the sandboxes once no task of the project is open.
-        dispose: async () => void (await Promise.allSettled([box.dispose(), held?.release()])),
+      // The project is this app's while the task is open; another app holding it refuses the task (specs/shared-data-folder R1).
+      const unclaim = task.projectId ? claim(task.projectId) : () => undefined
+      // The task is this process's before its container exists, so another app's sweep never takes it for an orphan.
+      log.claim(task.id)
+      try {
+        const blocked = await preflight(dockerExec)
+        if (blocked) throw new Error(blocked)
+        const box = await TaskBox.start(dockerExecBuffer, task.id, task.sourceRoot, join(log.taskDir(task.id), "scratch"))
+        // The project's sandboxes, shared by its tasks; those earlier runs recorded included (specs/projects R2.3).
+        const held = task.projectId ? registry.acquire(projects.get(task.projectId)) : null
+        return {
+          backend: box,
+          root: WORKSPACE,
+          scratch: SCRATCH,
+          sandboxes: held?.boxes.forTask(task.id),
+          created: box.created,
+          // Stopped and kept for when the task reopens (specs/task-persistence R3.4); the sandboxes once no task of the project is open.
+          dispose: async (o) => {
+            await Promise.allSettled([box.dispose(o), held?.release(o)])
+            unclaim()
+          },
+        }
+      } catch (e) {
+        unclaim()
+        throw e
       }
     },
     // Deleting a task removes its own container; the sandboxes are the project's (specs/projects R3.2).
     removeContainers: (task) => TaskBox.remove(dockerExecBuffer, task.id),
   })
-  const sandbox = new SandboxService(dockerExec, host.sandboxDir, (status) => push({ type: "sandbox", status }))
+  // The image build and the sign-in, done once across the apps on this data folder (specs/shared-data-folder R4.2, R4.3).
+  const once = (name: string) => ({
+    take: () => {
+      try {
+        return locks.take(name, () => name)
+      } catch (e) {
+        if (!(e instanceof LockHeld)) throw e
+        return { heldBy: `${APP_LABEL[e.holder.app]} (process ${e.holder.pid})` }
+      }
+    },
+  })
+  const sandbox = new SandboxService(dockerExec, host.sandboxDir, (status) => push({ type: "sandbox", status }), once("images"))
   // The first round's proxy goes, then the image is prepared if it is missing or stale (specs/sandbox-images R3.1, R4.2).
   void removeLegacy(dockerExec)
     .catch(() => undefined)
@@ -119,6 +208,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return { args: authArgs(sub, id), stop: () => void dockerExec(["kill", `hfr-auth-${id}`]) }
     }),
     (status) => push({ type: "login", status }),
+    once("login"),
   )
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
@@ -130,6 +220,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
         settings: getSettings,
         keySet: (provider) => keyStatus(provider).set,
         listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
+        probeModel: (run) => probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model }),
+        keyHint: (provider) => keyStatus(provider).hint,
       },
       o,
     )
@@ -147,8 +239,17 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     saveSettings: (patch) => saveSettings(patch),
     keyStatus: (provider) => keyStatus(provider),
-    saveKey: (key, provider) => saveKey(key, provider),
-    clearKey: (provider) => clearKey(provider),
+    // Saved in the shared keychain; the other apps read it again when they see the bump (specs/shared-data-folder R5.1).
+    saveKey: async (key, provider) => {
+      const s = await saveKey(key, provider)
+      setSetting("keys.rev", Date.now())
+      return s
+    },
+    clearKey: async (provider) => {
+      const s = await clearKey(provider)
+      setSetting("keys.rev", Date.now())
+      return s
+    },
     listModels: () => {
       const { provider, baseUrl } = getSettings()
       return listModels({ provider, baseUrl, apiKey: readKey(provider) })
@@ -167,9 +268,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     logout: () => login.logout(),
     pickFolder: async () => (host.pickFolder ? host.pickFolder() : null),
-    listProjects: () => projects.list(),
+    // Every project, one another app is running a task of shown as taken by it (specs/shared-data-folder R1.3).
+    listProjects: () => projects.list().map(withHolder),
     getProject: (id) => ({
-      project: projects.get(id),
+      project: withHolder(projects.get(id)),
       tasks: log.projectTasks(id),
       analyses: log
         .projectAnalyses(id)
@@ -183,7 +285,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return projects.create(input)
     },
     // Refused while a task of it runs; then its tasks, its sandboxes and the folder the app made for it (R3.1, R3.2).
-    deleteProject: async (id) => (await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),
+    deleteProject: async (id) => (free(id), await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),
     pickTarget: async (kind) => (host.pickTarget ? host.pickTarget(kind) : null),
     detectTarget: (path) => detectTarget(path),
     // Every task runs its tool calls without asking, patches included (specs/chat R4.1); none starts while a
@@ -192,15 +294,18 @@ export async function startCore(host: CoreHost): Promise<Core> {
       // Checked against the provider and model the project runs with, without listing the provider's models again.
       const project = input.projectId ? projects.get(input.projectId) : null
       if (project && projects.deleting.has(project.id)) throw new Error("The project is being deleted.")
+      free(project?.id)
       const blocked = blocking(await ready({ run: project ? { provider: project.provider, model: project.model } : undefined, list: false }))
       if (blocked) throw new Error(blocked)
       return runner.start({ ...input, auto: true })
     },
     listTasks: ({ limit }) => log.listTasks(limit),
     getTask: async (id, o) => ({ ...log.history(id, o), turn: await runner.turn(id) }),
-    cancelTask: (id) => runner.cancel(id),
-    retryTask: (id) => runner.retry(id),
+    // Acting on a task needs its project free of other apps; reading it does not (specs/shared-data-folder R1.2).
+    cancelTask: (id) => (freeTask(id), runner.cancel(id)),
+    retryTask: (id) => (freeTask(id), runner.retry(id)),
     decidePatch: (taskId, patchId, decision) => {
+      freeTask(taskId)
       const p = log.getPatch(patchId)
       if (p.taskId !== taskId) throw new Error("That patch belongs to another task.")
       const { state, sourceRoot } = log.getTask(taskId)
@@ -209,26 +314,47 @@ export async function startCore(host: CoreHost): Promise<Core> {
       // No paused turn waits on it — the agent never applied it, or the app restarted: the user decides by hand.
       return decision === "approve" ? approvePatch(deps, patchId, sourceRoot) : rejectPatch(deps, patchId)
     },
-    sendMessage: (id, message) => runner.sendMessage(id, message),
-    closeTask: (id) => runner.close(id),
-    stopTurn: (id) => runner.stopTurn(id),
+    sendMessage: (id, message) => (freeTask(id), runner.sendMessage(id, message)),
+    closeTask: (id) => (freeTask(id), runner.close(id)),
+    stopTurn: (id) => (freeTask(id), runner.stopTurn(id)),
     // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
-    continueTurn: (id) => runner.continueTask(id),
-    deleteTask: async (id) => (await runner.remove(id), true),
-    decideTool: (id, callId, decision) => runner.decideTool(id, callId, decision),
-    answerQuestion: (id, questionId, answer) => runner.answerQuestion(id, questionId, answer),
+    continueTurn: (id) => (freeTask(id), runner.continueTask(id)),
+    deleteTask: async (id) => (freeTask(id), await runner.remove(id), true),
+    decideTool: (id, callId, decision) => (freeTask(id), runner.decideTool(id, callId, decision)),
+    answerQuestion: (id, questionId, answer) => (freeTask(id), runner.answerQuestion(id, questionId, answer)),
   }
+
+  // What other processes change reaches the view as pushes, within a second (specs/shared-data-folder R5.3).
+  watcher = new ChangeWatcher({
+    push: host.push,
+    task: (id) => log.getTask(id),
+    step: stepRow,
+    event: eventRow,
+    patch: patchRow,
+    project: (id) => withHolder(projects.get(id)),
+    holders: () =>
+      [...locks.held()]
+        .filter(([name]) => name.startsWith("project-"))
+        .map(([name, h]) => `${name}=${h.pid}:${h.since}`)
+        .sort()
+        .join(","),
+    keysChanged: () => void initKey(),
+  })
+  watcher.start()
 
   return {
     handlers,
     runner,
     log,
     shutdown: async () => {
+      watcher?.stop()
       try {
         await runner.stopAll()
       } finally {
+        for (const c of claims.values()) c.release()
+        claims.clear()
+        me.stop()
         closeDb()
-        unlock()
       }
     },
   }

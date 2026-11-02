@@ -1,40 +1,27 @@
-# Tui panels — design
-
-<!-- The design must fit the decision being made. Every heading below except
-     "What changes" is OPTIONAL: delete the ones this change does not decide.
-
-     A heading filled with "N/A", or with prose written to satisfy the heading, is
-     worse than an absent heading — the next session reads invented architecture as
-     a decision somebody made, and honors it. Filler becomes binding.
-
-     Delete this comment too. -->
+# TUI panels — design
 
 ## What changes
 
-Serves R1.1.
+Serves R1–R4. Every panel calls the API methods the desktop app's matching view calls; the parity
+test of plans/tui-revamp 1.6 holds the set.
 
-<!-- Required. What changes, where, and why. For a change that decides nothing
-     structural, this section is the whole design and that is the correct outcome.
-
-     Keep the "Serves" line above and make it real: the design has to name the
-     requirements it answers, or the trace from what to how is unreadable — and
-     `scc spec validate` says so. -->
-
-## Boundaries and contracts <!-- optional -->
-
-<!-- Only if this change moves a boundary or an external contract, and only for the
-     parts that actually move. -->
-
-## Data <!-- optional -->
-
-<!-- Only if a data shape changes. -->
-
-## Alternatives considered <!-- optional -->
-
-<!-- Only where there were real alternatives with trade-offs. Say which won and why.
-     If the decision is hard to reverse, write an ADR under docs/adr/ and cite it
-     here instead of arguing it twice. -->
-
-## Risks <!-- optional -->
-
-<!-- What could go wrong that the task list does not already cover. -->
+- `components/Sidebar.tsx` (R1.1) — the plan from the task's `plan` steps, the delegations with
+  their state, `usageByAgent` with the specialist's cost marked `~`, and the files from
+  `filesOfStep` over the delegations.
+- `screens/EventLog.tsx` (R1.2) — the loaded events, newest last; Tab cycles the agent filter
+  (all, orchestrator, specialist, app), Enter opens an event's payload in a dialog.
+- `screens/Project.tsx` (R2.1, R2.2) — the project overview: target, kind, goal, model, the app
+  holding it, tasks, analyses, unknowns; the prompt starts a task; `/delete-project` asks for the
+  name typed.
+- `screens/NewProject.tsx` (R2.3) — a form of fields moved through with Tab: the target path,
+  checked with `detectTarget` as it is typed, the goal, the name prefilled from the path, the
+  model and the efforts from `getSettings`.
+- `screens/Setup.tsx` (R3) — the three steps from `readiness`, `sandboxStatus` and `loginStatus`,
+  refreshed on `sandbox` and `login` pushes; the build log in a scrollbox (R3.2); `/login` starts
+  the sign-in and `openLoginUrl` opens the browser, `/code`, `/cancel-login`, `/logout` (R3.3);
+  `/provider`, `/base-url`, `/key`, `/remove-key`, `/model` with a picker from `listModels`
+  (R3.4); `/done` calls `completeSetup`.
+- The shell checks `readiness` after `sandbox` and `login` pushes once the setup is completed and
+  shows a banner naming the step that stopped being ready, with `/setup` (R3.5).
+- `screens/Settings.tsx` (R4) — a form over `saveSettings` for the provider, model, efforts and the
+  three timeouts, and `/setup`.

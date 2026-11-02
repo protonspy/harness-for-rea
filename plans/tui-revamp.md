@@ -2,7 +2,9 @@
 autonomy: auto
 ci: wait
 status: approved
-checksum: 928242936bd823adca5c6d6a0c94676d5bfcf4f87a6b53b4b1b4b8bb908f01f2
+pr: per-plan
+merge: manual
+checksum: 13ede9944b8ddff8d0900d40fbd9342526395dcf757a585d887632ff3e6c50d0
 ---
 
 # TUI revamp
@@ -57,22 +59,54 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
 
 ## Tasks
 
-- [ ] 1.1 (Unit) Walk the 0.1 TUI through setup, a project, a long task, a question and a refusal against the desktop app, and write each defect with the steps that show it, and each parity gap — every API method the renderer's views call that the TUI does not reach — to `docs/wiki/pages/tui-0-1-defects.md`, each later linked from the spec that fixes it
+- [x] 1.1 (Unit) Walk the 0.1 TUI through setup, a project, a long task, a question and a refusal against the desktop app, and write each defect with the steps that show it, and each parity gap — every API method the renderer's views call that the TUI does not reach — to `docs/wiki/pages/tui-0-1-defects.md`, each later linked from the spec that fixes it
   _Priority 1_
-- [ ] 1.2 (Unit) Record as an ADR amending adr:0022-run-the-tui-on-bun-with-opentui the TUI's move to OpenTUI's React layer — why React over Solid and over the imperative API, and what of `src/renderer/src/lib` it shares — with `docs/stack.md` entries for `@opentui/react`, `react-reconciler` and the peers `legacy-peer-deps` will not install
+- [x] 1.2 (Unit) Record as an ADR amending adr:0022-run-the-tui-on-bun-with-opentui the TUI's move to OpenTUI's React layer — why React over Solid and over the imperative API, and what of `src/renderer/src/lib` it shares — with `docs/stack.md` entries for `@opentui/react`, `react-reconciler` and the peers `legacy-peer-deps` will not install
   _Priority 1_
-- [ ] 1.3 (Unit) Record as an ADR sharing the data folder between processes, amending adr:0017 and the folder-wide lock of plans/finish-the-harness 1.9: the per-project lock and when each app takes it, process-owned tasks identified by pid and start time, recovery and both container sweeps scoped to processes that are gone and run at the next start of any app, the SQLite busy timeout, migrations under a lock and the refusal of a newer schema, the first-start upgrade, image build and sign-in done once, the Electron single-instance lock kept, how an app learns another process changed a task and how fast, and the shared keychain store with `@napi-rs/keyring` and its `docs/stack.md` entry
+- [x] 1.3 (Unit) Record as an ADR sharing the data folder between processes, amending adr:0017 and the folder-wide lock of plans/finish-the-harness 1.9: the per-project lock and when each app takes it, process-owned tasks identified by pid and start time, recovery and both container sweeps scoped to processes that are gone and run at the next start of any app, the SQLite busy timeout, migrations under a lock and the refusal of a newer schema, the first-start upgrade, image build and sign-in done once, the Electron single-instance lock kept, how an app learns another process changed a task and how fast, and the shared keychain store with `@napi-rs/keyring` and its `docs/stack.md` entry
   _Priority 1_
-- [ ] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
+- [x] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
   _Depends 1.3_
   _Priority 1_
-- [ ] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
+- [x] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
   _Depends 1.2_
-- [ ] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
+- [x] 1.6 (Unit) Test that every API method the renderer's views and components call is reachable from a TUI command, screen or dialog, so parity is checked by running rather than by reading
   _Depends 1.1_
-- [ ] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
+- [x] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
   _Depends 1.6_
   _Priority 3_
+- [x] 1.8 (Unit) Render the chat's agent and user messages as markdown with
+      react-markdown in the desktop app, and color the code blocks in them with
+      CodeMirror's Lezer parsers through one highlighter in src/renderer/src/lib that
+      the TUI's transcript draws too, recorded as a delta to specs/chat R7 with
+      docs/stack.md entries
+  _Reason Asked by the user during the run: markdown in the desktop chat and syntax colors from Lezer_
+- [x] 1.9 (Unit) Show the conversation's tool calls, tool runs and the specialist's
+      reasoning and run expanded by default, in the desktop app and the TUI, each still
+      collapsible, recorded as a delta to specs/chat-timeline
+  _Reason Asked by the user during the run: tool calls and reasoning are collapsed today_
+- [x] 1.10 (Unit) Remove a task's containers, and its project's sandboxes once no task
+      of it is open, on a forced stop — cancelling a task, quitting the app with tasks
+      open, and the start-up sweep of a gone process — keeping every file under the
+      task's folder and its conversation, so the task reopens over them; recorded as an
+      ADR amending adr:0017 with deltas to specs/task-persistence and
+      specs/specialist-sandbox
+  _Reason Asked by the user during the run: a forced stop removes the instances while persistence is kept_
+- [x] 1.11 (Unit) Tell the specialist, in its REA skill and operating guide, which
+      reverse-engineering tools its sandbox image already has and to use them rather
+      than install others, recorded as a delta to specs/rea-native
+  _Reason Asked by the user during the run: the specialist sometimes skips a pre-installed tool or installs another_
+- [x] 1.12 (Unit) Track Claude Code's tool_progress heartbeats in the specialist's
+      stream, so a long-running tool of the specialist shows as running with its elapsed
+      time in the desktop app and the TUI, recorded as a delta to specs/chat-timeline
+  _Reason Asked by the user during the run: the chat does not track tool_progress events_
+- [x] 1.13 (Unit) Ready the model step of an OpenAI-compatible provider without a model
+      list: a list refused with 401 or 403 is a refused key, any other failure is
+      checked with a one-token test request to the chosen model, cached while the
+      provider, endpoint, model and key stay the same; and keep the base URL and model
+      when the provider already chosen is picked again; recorded as a delta to
+      specs/onboarding R1.6
+  _Reason Asked by the user during the run: an OpenAI-compatible key and endpoint could not be saved into a ready setup because the server answered 404 to the model list_
 
 ## Done when
 

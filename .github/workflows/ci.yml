@@ -27,6 +27,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # The TUI's runtime, as release.yml sets it up: the Bun core tests and the TUI's screen tests count in the gate
+      # (plans/tui-revamp 1.5).
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
       - run: npm ci --no-audit --no-fund
       - name: Build
         run: npm run typecheck && npm run build
@@ -35,4 +40,6 @@ jobs:
       - name: Lint
         run: npm run lint
       - name: Test
+        env:
+          HFR_BUN: "1"
         run: node scripts/test-gate.mjs

@@ -46,6 +46,8 @@
   _Reason Approving each call by hand blocked the user's real runs_
 - [x] 11.1 (TDD) Answer a specialist's question from the orchestrator's model first, and put it to the user only when the model defers — R5.2, R5.4, R5.5, R5.6
   _Reason adr:0021 moves the specialist's questions to the orchestrator first_
+- [x] 12.1 (Unit) Render messages and reports as markdown with react-markdown, and color their code blocks with the Lezer highlighter the TUI shares — R7.6
+  _Reason Asked by the user during plans/tui-revamp_
 
 ## Done when
 

@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/harness-for-rea
-delivery: in-review
+delivery: merged
 pr: 1
 ---
 
@@ -33,3 +33,4 @@ looks back at past tasks with what they cost.
 ## R3 · History
 
 - **R3.1** The desktop UI shall list past tasks with their state, time and cost, open any of them with its full event history, and retry an interrupted or failed one.
+- **R3.2** (ADDED) When another app changes a task or a project, the desktop UI shall show the change within one second (specs/shared-data-folder R5.3).

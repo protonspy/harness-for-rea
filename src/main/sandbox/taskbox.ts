@@ -222,19 +222,34 @@ export class TaskBox extends BaseSandbox {
     return out
   }
 
-  /** Remove every task container a previous run of the app left behind, e.g. after a crash. */
-  static async sweep(exec: ExecBuffer): Promise<number> {
+  /**
+    Remove the task containers a gone process left running, e.g. after a crash — the tasks' files stay on the host
+    (specs/task-persistence R3.8); those of a task a live app has open are left alone (specs/shared-data-folder R2.3).
+    `ownedByLive` answers for a task id.
+  */
+  static async sweep(exec: ExecBuffer, ownedByLive: (taskId: string) => boolean = () => false): Promise<number> {
     // Running only: their tasks were interrupted, and a stopped container keeps what was installed in it.
-    const r = await exec(["ps", "-q", "--filter", "name=^hfr-orch-"])
-    const ids = r.code === 0 ? r.stdout.toString("utf8").split(/\s+/).filter(Boolean) : []
-    if (ids.length) await exec(["stop", "-t", "2", ...ids])
-    return ids.length
+    const r = await exec(["ps", "--filter", "name=^hfr-orch-", "--format", "{{.Names}}"])
+    const names =
+      r.code === 0
+        ? r.stdout
+            .toString("utf8")
+            .split(/\s+/)
+            .filter((n) => n.startsWith("hfr-orch-"))
+        : []
+    const stale = names.filter((n) => !ownedByLive(n.slice("hfr-orch-".length)))
+    // A gone process's stop was forced: its containers go, the tasks' files stay (specs/task-persistence R3.8).
+    if (stale.length) await exec(["rm", "-f", ...stale])
+    return stale.length
   }
 
-  /** Stop the container and keep it, with what was installed, for when the task reopens (specs/task-persistence R3.4). */
-  async dispose(): Promise<void> {
+  /**
+    Stop the container and keep it, with what was installed, for when the task reopens (specs/task-persistence R3.4);
+    on a forced stop, remove it — `/scratch` is the task's folder on the host, so nothing of the task's is lost (R3.8).
+  */
+  async dispose(o: { remove?: boolean } = {}): Promise<void> {
     this.disposed = true
-    await this.exec(["stop", "-t", "2", this.id])
+    await this.exec(o.remove ? ["rm", "-f", this.id] : ["stop", "-t", "2", this.id])
   }
 
   /** Remove the container of a task being deleted; one already gone is not an error (R4.1). */

@@ -1,11 +1,11 @@
-import { AlertTriangle, ChevronDown, ChevronRight, FolderKanban, Plus, Settings as SettingsIcon } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, FolderKanban, Lock, Plus, Settings as SettingsIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import type { ProjectRow, Readiness, TaskRow } from "@shared/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/cn"
 import { tone } from "@/lib/format"
-import { foldProjects, tasksOf } from "@/lib/projects"
+import { foldProjects, heldLabel, tasksOf } from "@/lib/projects"
 import { foldTasks } from "@/lib/store"
 import { NewProject } from "@/views/NewProject"
 import { ProjectView } from "@/views/ProjectView"
@@ -105,6 +105,11 @@ export function App() {
                   </button>
                   <button onClick={() => openProject(p.id)} className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-2 text-left text-[13px]">
                     <span className="truncate font-medium">{p.name}</span>
+                    {heldLabel(p) && (
+                      <span title={heldLabel(p)!} aria-label={heldLabel(p)!} className="shrink-0 text-muted-foreground">
+                        <Lock size={11} />
+                      </span>
+                    )}
                     <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{own.length}</span>
                   </button>
                 </div>

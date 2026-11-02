@@ -15,3 +15,4 @@
 - [x] 3.1 (Unit) Reopen a task with no live run on Continue or on a message, and leave conversations open after a restart — R1.2, R2.1, R2.2, R2.3
 - [x] 3.2 (Unit) Delete a task with its containers, folder, patches, conversation and records, refused while a turn runs — R4.1, R4.2, R4.3
 - [x] 3.3 (Unit) Offer Continue and Delete in the task view and keep the composer open on a closed task — R2.1, R2.2, R4.1
+- [x] 3.4 (Unit) Remove a task's containers, and its project's sandboxes once none of its tasks is open, on a cancel, a quit or a gone process's sweep, keeping the files, the conversation and the records — R3.8, R3.4

@@ -41,7 +41,7 @@ export function filesOf(tool: string, input: Record<string, unknown>): FileTouch
 }
 
 export interface StreamEvent {
-  kind: "init" | "text" | "thinking" | "tool.call" | "tool.result" | "result" | "unknown"
+  kind: "init" | "text" | "thinking" | "tool.call" | "tool.progress" | "tool.result" | "result" | "unknown"
   summary: string
   payload: EventPayload
 }
@@ -78,7 +78,10 @@ interface Block {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v)
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0)
 
-const KNOWN = new Set(["system", "assistant", "user", "result", "stream_event", "rate_limit_event"])
+const KNOWN = new Set(["system", "assistant", "user", "result", "stream_event", "rate_limit_event", "tool_progress"])
+
+/** A tool still running is recorded again only once this many more seconds passed, so a long call adds a few events, not one per heartbeat. */
+export const PROGRESS_STEP_S = 15
 
 export class StreamReader {
   session: string | null = null
@@ -89,6 +92,8 @@ export class StreamReader {
   private refused = false
   private readonly subagents = new Map<string, string>()
   private readonly tools = new Map<string, string>()
+  /** the elapsed seconds last recorded for each running call */
+  private readonly progress = new Map<string, number>()
 
   /** One line of stdout: the events it brings. */
   line(raw: string): StreamEvent[] {
@@ -106,6 +111,7 @@ export class StreamReader {
     if (type === "assistant") return this.assistant(e)
     if (type === "user") return this.results(e)
     if (type === "result") return [this.finish(e)]
+    if (type === "tool_progress") return this.toolProgress(e)
     if (KNOWN.has(type)) return []
     return [{ kind: "unknown", summary: `Unknown stream event type: ${type || "(none)"}`, payload: { output: cap(clean(raw), RESULT_CAP).text } }]
   }
@@ -162,6 +168,21 @@ export class StreamReader {
     }
   }
 
+  /**
+    Claude Code's heartbeat for a tool still running (specs/chat-timeline R1.4): the call it belongs to and how long it
+    has run, recorded at the first heartbeat and then every PROGRESS_STEP_S seconds.
+  */
+  private toolProgress(e: Record<string, unknown>): StreamEvent[] {
+    const id = clean(e.parent_tool_use_id) || clean(e.tool_use_id).replace(/-heartbeat-\d+$/, "")
+    if (!id) return []
+    const elapsed = Math.floor(num(e.elapsed_time_seconds))
+    const last = this.progress.get(id)
+    if (last !== undefined && elapsed - last < PROGRESS_STEP_S) return []
+    this.progress.set(id, elapsed)
+    const tool = this.tools.get(id) ?? clean(e.tool_name)
+    return [{ kind: "tool.progress", summary: `${tool || "tool"} running for ${elapsed}s`, payload: { tool, callId: id, elapsedSeconds: elapsed } }]
+  }
+
   private results(e: Record<string, unknown>): StreamEvent[] {
     const out: StreamEvent[] = []
     const who = this.agentOf(e.parent_tool_use_id)
@@ -177,6 +198,7 @@ export class StreamReader {
         RESULT_CAP,
       )
       const tool = this.tools.get(id) ?? ""
+      this.progress.delete(id)
       const error = b.is_error === true
       out.push({
         kind: "tool.result",

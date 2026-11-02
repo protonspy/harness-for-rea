@@ -51,6 +51,28 @@ function loaded(provider: ProviderId, key: string) {
   for (const fn of listeners) fn(key)
 }
 
+/**
+  Move the keys a host kept in its former store into the shared one, and remove them from the former store
+  (specs/shared-data-folder R5.2). A key already in the shared store wins. Returns how many were moved.
+*/
+export async function moveKeys(from: KeyStore, to: KeyStore): Promise<number> {
+  if (!from.available() || !to.available()) return 0
+  let moved = 0
+  for (const provider of PROVIDER_IDS) {
+    const name = slot(provider)
+    try {
+      const old = await from.read(name)
+      if (!old) continue
+      if (!(await to.read(name))) await to.write(name, old)
+      await from.write(name, null)
+      moved++
+    } catch {
+      // Left where it was, to be moved at the next start.
+    }
+  }
+  return moved
+}
+
 /** Read the stored keys once; afterwards `readKey` is a synchronous read. A key that cannot be read is left unset. */
 export async function initKey() {
   cached.clear()

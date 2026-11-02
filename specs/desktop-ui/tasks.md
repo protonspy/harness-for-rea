@@ -14,3 +14,4 @@
   _Depends 2.1_
 - [x] 2.3 (Unit) Build the delegation detail with context package, report, evidence and files, and the patch review with approve and reject — R2.3, R2.4
   _Depends 2.2_
+- [x] 2.4 (Unit) Show changes another app made, pushed by the core's watcher — R3.2
