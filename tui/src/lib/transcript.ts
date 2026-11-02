@@ -102,7 +102,12 @@ export function elapsed(ms: number): string {
 }
 
 /** The working line while a turn runs: what it does, for how long, and what the task spent (R2.1). */
-export function workingLine(task: Pick<TaskRow, "tokensIn" | "tokensOut" | "costUsd" | "specialistCostUsd">, state: TaskState, since: number, now: number): string {
+export function workingLine(
+  task: Pick<TaskRow, "tokensIn" | "tokensOut" | "costUsd" | "specialistCostUsd">,
+  state: TaskState,
+  since: number,
+  now: number,
+): string {
   const what = state === "pending" ? "Starting the sandbox" : state === "waiting" ? "Waiting for you" : "Working"
   const cost = task.costUsd + task.specialistCostUsd
   return `${what} · ${elapsed(now - since)} · ${tokens(task.tokensIn + task.tokensOut)} tokens · ${usd(cost)}`

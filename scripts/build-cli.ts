@@ -10,7 +10,7 @@ import type { BunPlugin } from "bun"
 
 const root = join(import.meta.dir, "..")
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version
-const entry = join(root, "tui", "src", "main.ts")
+const entry = join(root, "tui", "src", "main.tsx")
 
 /** Vite's `?raw` imports — the specialist's operating guide — as the file's text, which Bun's bundler does not do itself. */
 const raw: BunPlugin = {

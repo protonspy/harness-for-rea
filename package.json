@@ -18,7 +18,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dist": "electron-vite build && electron-builder --win",
-    "tui": "bun tui/src/main.ts",
+    "tui": "bun tui/src/main.tsx",
     "dist:mac": "electron-vite build && electron-builder --mac",
     "cli:package": "bun scripts/build-cli.ts package",
     "cli:binary": "bun scripts/build-cli.ts binary"

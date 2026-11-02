@@ -51,8 +51,7 @@ export function riskOf(folder: string, w: Where): Risk {
   const lib = pathOf(platform)
   if (within(folder, w.dataDir, platform)) return { kind: "refuse", why: "This is the app's own data folder, which no sandbox may mount." }
   const f = norm(folder, platform)
-  if (f === norm(lib.parse(f).root, platform))
-    return { kind: "confirm", why: platform === "win32" ? "the root of a drive" : "the root of the file system" }
+  if (f === norm(lib.parse(f).root, platform)) return { kind: "confirm", why: platform === "win32" ? "the root of a drive" : "the root of the file system" }
   if (f === norm(w.home, platform)) return { kind: "confirm", why: "your home folder" }
   if (lib.basename(f).toLowerCase() === "downloads" && norm(lib.dirname(f), platform) === norm(w.home, platform))
     return { kind: "confirm", why: "a Downloads folder" }

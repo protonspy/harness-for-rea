@@ -33,12 +33,17 @@ describe("the key map (specs/tui-shell R2.1)", () => {
         { key: "escape", label: "Back", run: () => void ran.push("back") },
       ],
     })
-    const off = map.push({ id: "dialog", title: "Dialog", modal: true, bindings: [{ key: "escape", label: "Close", run: () => void ran.push("close") }] })
+    // a dialog's list is pushed before the dialog itself, as React runs a child's effects first: same height, still reached
+    const list = map.push({ id: "list", title: "List", z: 1, bindings: [{ key: "down", label: "Next", run: () => void ran.push("next") }] })
+    const off = map.push({ id: "dialog", title: "Dialog", z: 1, modal: true, bindings: [{ key: "escape", label: "Close", run: () => void ran.push("close") }] })
+    expect(map.dispatch({ name: "down" })).toBe(true)
+    ran.length = 0
     expect(map.dispatch({ name: "escape" })).toBe(true)
     expect(map.dispatch({ name: "p", ctrl: true })).toBe(false)
     expect(map.modal).toBe(true)
-    expect(map.active()).toEqual([{ title: "Dialog", bindings: [expect.objectContaining({ key: "escape", label: "Close" })] }])
+    expect(map.active().map((l) => l.title)).toEqual(["Dialog", "List"])
     off()
+    list()
     map.dispatch({ name: "escape" })
     map.dispatch({ name: "p", ctrl: true })
     expect(ran).toEqual(["close", "back", "palette"])

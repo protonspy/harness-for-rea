@@ -29,8 +29,12 @@ export interface Layer {
   /** the name the help groups this layer's keys under */
   title: string
   bindings: Binding[]
-  /** keys not bound here stop at this layer rather than reaching the ones below */
+  /** keys not bound here, nor by a layer of the same height, stop here rather than reaching lower layers */
   modal?: boolean
+  /** the height of the overlay the layer belongs to: a dialog's layers sit above the screen's, its list's included */
+  z?: number
+  /** what the help shows of the layer; a layer pushed again with the same id and signature changes nothing visible */
+  signature?: string
 }
 
 /** A key event as the string bindings use: modifiers in a fixed order, then the key's name. */
@@ -49,9 +53,15 @@ export class Keymap {
   /** Add a layer on top; returns its removal. A layer pushed again with the same id is replaced in place. */
   push(layer: Layer): () => void {
     const at = this.layers.findIndex((l) => l.id === layer.id)
+    const same = at >= 0 && layer.signature !== undefined && this.layers[at].signature === layer.signature && this.layers[at].z === layer.z
     if (at >= 0) this.layers[at] = layer
     else this.layers.push(layer)
-    this.changed()
+    // Stable: within one height, the layer pushed last is on top.
+    this.layers = this.layers
+      .map((l, i) => ({ l, i }))
+      .sort((a, b) => (a.l.z ?? 0) - (b.l.z ?? 0) || a.i - b.i)
+      .map((x) => x.l)
+    if (!same) this.changed()
     return () => {
       const before = this.layers.length
       this.layers = this.layers.filter((l) => l !== layer)
@@ -62,11 +72,9 @@ export class Keymap {
   /** Run the binding of the topmost layer that binds the key; whether one did. */
   dispatch(e: KeyLike): boolean {
     const key = keyOf(e)
-    for (let i = this.layers.length - 1; i >= 0; i--) {
-      const layer = this.layers[i]
+    for (const layer of this.reachable()) {
       const b = layer.bindings.find((x) => x.key === key)
       if (b && b.run() !== false) return true
-      if (layer.modal) return false
     }
     return false
   }
@@ -80,12 +88,23 @@ export class Keymap {
   active(): { title: string; bindings: Binding[] }[] {
     const seen = new Set<string>()
     const out: { title: string; bindings: Binding[] }[] = []
-    for (let i = this.layers.length - 1; i >= 0; i--) {
-      const layer = this.layers[i]
+    for (const layer of this.reachable()) {
       const bindings = layer.bindings.filter((b) => !seen.has(b.key))
       for (const b of bindings) seen.add(b.key)
       if (bindings.length) out.push({ title: layer.title, bindings })
-      if (layer.modal) break
+    }
+    return out
+  }
+
+  /** The layers a key can reach, topmost first: down to the lowest layer at the height of the topmost modal one. */
+  private reachable(): Layer[] {
+    const out: Layer[] = []
+    let floor = -Infinity
+    for (let i = this.layers.length - 1; i >= 0; i--) {
+      const layer = this.layers[i]
+      if ((layer.z ?? 0) < floor) break
+      out.push(layer)
+      if (layer.modal) floor = Math.max(floor, layer.z ?? 0)
     }
     return out
   }
