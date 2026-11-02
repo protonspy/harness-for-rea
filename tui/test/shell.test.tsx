@@ -85,6 +85,21 @@ describe("the shell (specs/tui-shell)", () => {
     expect(s.quits).toHaveLength(1)
   })
 
+  test.each([
+    ["an empty prompt", ""],
+    ["a prompt holding text", "draft"],
+  ])("quits with Ctrl+C twice while a dialog is open over %s (R2.5)", async (_, draft) => {
+    const { api } = scriptedApi()
+    s = await render({ api, start: { kind: "task", id: task().id } })
+    await s.until("[awaiting-user]")
+    if (draft) await s.type(draft)
+    await s.press("p", { ctrl: true })
+    await s.until("Commands")
+    await s.press("c", { ctrl: true })
+    await s.press("c", { ctrl: true })
+    expect(s.quits).toHaveLength(1)
+  })
+
   test("says a failed action in a toast (R3.2) and strips control characters from what it draws (R3.3)", async () => {
     const { api } = scriptedApi({
       getTask: () => ({ ...history(), task: task({ request: "Map \u001b]0;pwned\u0007 it" }) }),

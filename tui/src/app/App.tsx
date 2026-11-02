@@ -262,18 +262,28 @@ export function App(props: AppProps) {
       { key: "ctrl+p", label: "Commands", hint: true, run: () => void palette() },
       { key: "ctrl+b", label: "Sidebar", run: () => setSidebar((s) => !s) },
       { key: "escape", label: "Back", run: () => (mem.canGoBack() ? app.back() : false) },
+    ],
+    { z: -1 },
+  )
+  // Above every layer, a dialog's included, so Ctrl+C quits whatever is open (R2.5); with text in the prompt and nothing
+  // over it, the prompt takes the key and clears.
+  useLayer(
+    keymap,
+    "quit",
+    "Everywhere",
+    [
       {
         key: "ctrl+c",
         label: "Quit (twice)",
         run: () => {
-          // A second Ctrl+C within two seconds quits (R2.5).
-          const now = Date.now()
-          if (mem.armQuit(now)) return quit()
+          if (promptFocused && mem.promptText && !keymap.modal) return false
+          // A second Ctrl+C within two seconds quits.
+          if (mem.armQuit(Date.now())) return quit()
           toast("Press Ctrl+C again to quit.", "info")
         },
       },
     ],
-    { z: -1 },
+    { z: 1000 },
   )
 
   // The setup's banner: a step that stopped being ready once the setup was completed (specs/tui-panels R3.5).
