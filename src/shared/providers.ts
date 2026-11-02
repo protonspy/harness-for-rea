@@ -31,9 +31,17 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     baseUrl: "https://openrouter.ai/api/v1",
     editableBaseUrl: false,
     keyRequired: false,
-    defaultModel: "deepseek/deepseek-v4.1-flash-1017",
-    // Recommended first: DeepSeek by default, then GLM and the other Chinese coding models with tool calling.
-    models: ["deepseek/deepseek-v4.1-flash-1017", "z-ai/glm-5.3-flash", "moonshotai/kimi-k3.1-pro", "qwen/qwen3.8-flash", "minimax/minimax-m3.1-flash"],
+    defaultModel: "qwen/qwen3.8-flash",
+    // Recommended first: the Qwen flash models, which did best in reverse-engineering and security work, then the
+    // other Chinese models with tool calling and image input.
+    models: [
+      "qwen/qwen3.8-flash",
+      "qwen/qwen3.7-flash",
+      "deepseek/deepseek-v4.1-flash-1017",
+      "z-ai/glm-5.3-flash",
+      "moonshotai/kimi-k3.1-pro",
+      "minimax/minimax-m3.1-flash",
+    ],
     keyPlaceholder: "sk-or-v1-…",
   },
   deepseek: {

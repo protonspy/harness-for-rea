@@ -17,7 +17,7 @@ looks back at past tasks with what they cost.
 
 ## R1 · Settings
 
-- **R1.1** The desktop UI shall let the user set or clear the OpenRouter key, pick the orchestrator model from the provider's list — recommended models first, DeepSeek by default, then on OpenRouter the Chinese coding models — or by name, choose the reasoning effort of the orchestrator and of the specialist, and set the delegation timeout.
+- **R1.1** The desktop UI shall let the user set or clear the OpenRouter key, pick the orchestrator model from the provider's list — recommended models first, Qwen's flash models by default (MODIFIED), then on OpenRouter the Chinese coding models — or by name, choose the reasoning effort of the orchestrator and of the specialist, and set the delegation timeout.
 - **R1.2** The desktop UI shall show whether Docker is running, whether the sandbox images are ready or being prepared, and whether the specialist is signed in, with actions to prepare the images again and sign in.
 - **R1.3** While the specialist sign-in is in progress, the desktop UI shall show the Anthropic URL to open and a field for the code.
 
