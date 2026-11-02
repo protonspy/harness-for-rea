@@ -2,7 +2,7 @@
   "name": "harness-for-rea",
   "productName": "Harness for REA",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Desktop app where an OpenRouter orchestrator delegates deep analysis to a sandboxed Claude Code specialist.",
   "license": "MIT",
   "main": "./out/main/index.js",
