@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: fix/cli-sandbox-integrations
-delivery: in-progress
-pr: 13
+delivery: in-review
+pr: 25
 ---
 
 # Release — requirements
