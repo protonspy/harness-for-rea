@@ -273,8 +273,17 @@ export function migrate(d: DatabaseSync, by: Opener = { app: "desktop", version:
       )
     d.exec("COMMIT")
   } catch (e) {
-    d.exec("ROLLBACK")
+    rollback(d)
     throw e
+  }
+}
+
+/** Rolls back, if SQLite has not already: a failed rollback must not hide the error that caused it. */
+function rollback(d: DatabaseSync) {
+  try {
+    d.exec("ROLLBACK")
+  } catch {
+    // No transaction was open any more.
   }
 }
 
@@ -287,7 +296,7 @@ export function exclusive<T>(fn: () => T): T {
     d.exec("COMMIT")
     return r
   } catch (e) {
-    d.exec("ROLLBACK")
+    rollback(d)
     throw e
   }
 }

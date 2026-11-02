@@ -104,8 +104,10 @@ export class ChangeWatcher {
       }
       const v = this.dataVersion()
       if (v === this.version) return pushed
+      // Taken as seen only once the diff went through: one that failed part-way is read again at the next tick.
+      pushed += this.diff()
       this.version = v
-      return pushed + this.diff()
+      return pushed
     } catch {
       // The database closed under the timer at shutdown, or a row went between two reads: the next tick looks again.
       return pushed

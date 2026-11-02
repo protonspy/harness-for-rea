@@ -32,19 +32,23 @@ export class ProcessRegistry {
 
   /** Record this process and keep its heartbeat until `stop`. */
   start(): void {
-    getDb()
-      .prepare(
-        `INSERT INTO processes (key, app, pid, started_at, version, beat_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET beat_at = excluded.beat_at`,
-      )
-      .run(this.key, this.me.app, this.me.pid, this.me.since, this.version, this.now())
+    this.beat()
     this.timer = setInterval(() => this.beat(), BEAT_MS)
     this.timer.unref?.()
   }
 
+  /**
+    Writes this process's row with a fresh heartbeat. An upsert: a process another app pruned while its heartbeat was
+    stale — the machine slept, the event loop stalled — is recorded again at its next beat rather than lost for good.
+  */
   beat(): void {
     try {
-      getDb().prepare("UPDATE processes SET beat_at = ? WHERE key = ?").run(this.now(), this.key)
+      getDb()
+        .prepare(
+          `INSERT INTO processes (key, app, pid, started_at, version, beat_at) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET beat_at = excluded.beat_at`,
+        )
+        .run(this.key, this.me.app, this.me.pid, this.me.since, this.version, this.now())
     } catch {
       // The database closed under the timer at shutdown.
     }

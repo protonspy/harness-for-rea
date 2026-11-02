@@ -120,8 +120,9 @@ export const MAX_HIGHLIGHT = 100_000
 export function languageOf(info: string | null | undefined): string | null {
   const name = (info ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? ""
   if (!name) return null
-  if (name in PARSERS) return name
-  return ALIASES[name] ?? null
+  // Own keys only: a fence named `__proto__` or `constructor` is text from the target, not a key of the map.
+  if (Object.hasOwn(PARSERS, name)) return name
+  return Object.hasOwn(ALIASES, name) ? ALIASES[name] : null
 }
 
 const plain = (code: string): Token[][] => code.split("\n").map((text) => (text ? [{ text, classes: "", tag: "" }] : []))
@@ -130,9 +131,9 @@ const plain = (code: string): Token[][] => code.split("\n").map((text) => (text 
 export function highlight(code: string, info?: string | null): Token[][] {
   const lang = languageOf(info)
   if (!lang || code.length > MAX_HIGHLIGHT) return plain(code)
-  const parser = PARSERS[lang]()
   const lines: Token[][] = [[]]
   try {
+    const parser = PARSERS[lang]()
     highlightCode(
       code,
       parser.parse(code),

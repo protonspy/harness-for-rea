@@ -9,6 +9,7 @@ import { join, relative, sep } from "node:path"
 
 const SKIP = new Set(["node_modules", ".git", ".hg", ".svn", "__pycache__", ".venv", "dist", "build", "target", "out"])
 const MAX_RESULTS = 50
+const UNSAFE_NAME = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/
 const MAX_SCANNED = 20_000
 
 /** The `@` mention the cursor is in: where it starts and what is typed after the `@`, or null. */
@@ -37,7 +38,8 @@ export function suggestPaths(root: string, query: string, read: ReadDir = (d) =>
     }
     for (const e of entries) {
       if (++scanned > MAX_SCANNED) break
-      if (SKIP.has(e.name)) continue
+      // A name with controls, bidi marks or line breaks would carry them into the message; it is never offered.
+      if (SKIP.has(e.name) || UNSAFE_NAME.test(e.name)) continue
       const full = join(dir, e.name)
       const rel = relative(root, full).split(sep).join("/") + (e.isDirectory() ? "/" : "")
       const score = matchScore(q, rel.toLowerCase())

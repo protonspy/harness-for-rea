@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { existsSync, statSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { createCliRenderer } from "@opentui/core"
@@ -39,11 +39,13 @@ if ("print" in parsed) {
 const { args } = parsed
 
 // The folder is checked before the core starts: a mistyped path opens nothing (R1.7).
-const folder = resolve(args.path ?? process.cwd())
-if (!existsSync(folder)) {
-  console.error(`${folder} does not exist.`)
+const given = resolve(args.path ?? process.cwd())
+if (!existsSync(given)) {
+  console.error(`${given} does not exist.`)
   process.exit(1)
 }
+// The folder a link or junction leads to, so the data folder and broad folders are recognised however they are named.
+const folder = realpathSync.native(given)
 if (!statSync(folder).isDirectory()) {
   console.error(`${folder} is a file. Run harness-for-rea in its folder, or create a project on the file with /new.`)
   process.exit(2)

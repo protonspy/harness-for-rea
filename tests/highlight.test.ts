@@ -42,6 +42,13 @@ describe("the code highlighter", () => {
     expect(tagged(highlight('{"a": true}', "json"), "bool")).toEqual(["true"])
   })
 
+  it("takes a fence named for an object's own keys as text, not as a parser (__proto__, constructor)", () => {
+    for (const info of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(languageOf(info)).toBeNull()
+      expect(highlight("x = 1", info)).toEqual([[{ text: "x = 1", classes: "", tag: "" }]])
+    }
+  })
+
   it("shows code with no known language, or too long to parse, as plain lines", () => {
     const asm = "mov eax, 1\n\nret"
     const lines = highlight(asm, "asm")

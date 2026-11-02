@@ -150,6 +150,11 @@ export class EventLog {
     return getDb().prepare("SELECT 1 FROM tasks WHERE id = ?").get(id) !== undefined
   }
 
+  /** Records this process as the one that opened the task, before its containers come up (specs/shared-data-folder R2.1). */
+  claim(id: string): void {
+    if (this.owner) getDb().prepare("UPDATE tasks SET owner = ? WHERE id = ?").run(this.owner, id)
+  }
+
   /** The process that last opened a task. */
   taskOwner(id: string): string | null {
     const r = getDb().prepare("SELECT owner FROM tasks WHERE id = ?").get(id) as Row | undefined

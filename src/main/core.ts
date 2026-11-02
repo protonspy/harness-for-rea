@@ -102,7 +102,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
   // another data folder recorded.
   void SpecialistBoxes.sweep(dockerExecBuffer, (sandboxId) => {
     const r = getDb().prepare("SELECT project_id FROM sandboxes WHERE id = ?").get(sandboxId) as { project_id: string | null } | undefined
-    return !r || (!!r.project_id && locks.holder(projectLockName(r.project_id)) !== null)
+    // Held by a live app: another, or this one, which may already have opened a task of it at start.
+    return !r || (!!r.project_id && (claims.has(r.project_id) || locks.holder(projectLockName(r.project_id)) !== null))
   }).catch(() => undefined)
   // Projects: tasks from before them are given one each, once across apps starting together (specs/projects R3.3, R4.1).
   const projects = new ProjectStore(dataDir, push)
@@ -157,6 +158,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
     workspace: async (task) => {
       // The project is this app's while the task is open; another app holding it refuses the task (specs/shared-data-folder R1).
       const unclaim = task.projectId ? claim(task.projectId) : () => undefined
+      // The task is this process's before its container exists, so another app's sweep never takes it for an orphan.
+      log.claim(task.id)
       try {
         const blocked = await preflight(dockerExec)
         if (blocked) throw new Error(blocked)

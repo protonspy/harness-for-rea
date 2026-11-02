@@ -58,6 +58,38 @@ describe("processes (R2.1)", () => {
     me.stop()
     other.stop()
   })
+
+  it("records a live process again at its next beat after another app pruned it while its heartbeat was stale", () => {
+    openDb(":memory:")
+    let now = 1_000_000
+    const me = new ProcessRegistry(
+      "desktop",
+      "1.0.0",
+      () => now,
+      () => true,
+      1001,
+      500,
+    )
+    const sleeper = new ProcessRegistry(
+      "tui",
+      "1.0.0",
+      () => now,
+      () => true,
+      2002,
+      600,
+    )
+    me.start()
+    sleeper.start()
+    // the machine slept past the stale window; the other app pruned it at its start
+    now += STALE_MS + 1
+    me.beat()
+    me.prune()
+    expect(me.isLive(sleeper.key)).toBe(false)
+    sleeper.beat()
+    expect(me.isLive(sleeper.key)).toBe(true)
+    me.stop()
+    sleeper.stop()
+  })
 })
 
 describe("recovery (R2.2)", () => {
@@ -288,6 +320,41 @@ describe("changes made by another process (R5.3)", () => {
     holders = "project-pr=1:1"
     expect(w.tick()).toBe(1)
     expect(pushes.at(-1)?.type).toBe("project")
+    other.close()
+    w.stop()
+  })
+
+  it("reads a change again when the diff that saw it failed part-way", () => {
+    const file = join(tmp(), "hfr.db")
+    openDb(file)
+    const pushes: Push[] = []
+    const log = new EventLog(tmp())
+    let failOnce = true
+    const w = new ChangeWatcher(
+      {
+        push: (p) => pushes.push(p),
+        task: (id) => {
+          if (failOnce) {
+            failOnce = false
+            throw new Error("deleted between two reads")
+          }
+          return log.getTask(id)
+        },
+        step: stepRow,
+        event: eventRow,
+        patch: patchRow,
+        project: () => ({}) as never,
+        holders: () => "",
+        keysChanged: () => undefined,
+      },
+      60_000,
+    )
+    w.start()
+    const other = openOther(file)
+    other.prepare("INSERT INTO tasks (id, request, source_root, model, state, created_at, updated_at) VALUES ('t1', 'r', 'C:/x', 'm', 'running', 5, 5)").run()
+    expect(w.tick()).toBe(0)
+    expect(w.tick()).toBe(1)
+    expect(pushes[0]).toMatchObject({ type: "task" })
     other.close()
     w.stop()
   })
