@@ -188,7 +188,8 @@ export function ModelPanel({
         },
         (e: unknown) => {
           setModels([])
-          setModelsNote(message(e))
+          // A server with no model list still works: the model named here is checked with a test request (specs/onboarding R1.6).
+          setModelsNote(`${message(e)} Name the model below; the setup checks it with a one-token test request.`)
         },
       ),
     [api],
@@ -201,6 +202,8 @@ export function ModelPanel({
   const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
   // Switching provider swaps in that provider's endpoint, model and key; the model name of one is meaningless to another.
   const switchProvider = (id: ProviderId) =>
+    // Picking the provider already chosen changes nothing: its endpoint and model stay as they were saved.
+    id !== settings?.provider &&
     run(async () => {
       setModels([])
       setSettings(await api.saveSettings({ provider: id, baseUrl: PROVIDERS[id].baseUrl, model: PROVIDERS[id].defaultModel || settings?.model }))

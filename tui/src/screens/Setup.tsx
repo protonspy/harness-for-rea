@@ -37,7 +37,7 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     let model = arg.trim()
     if (!model) {
       const models = await app.attempt(() => api.listModels())
-      if (!models) return
+      if (!models) return app.toast("No model list here: name the model with /model <id>; the setup checks it with a test request.", "info")
       const id = await app.dialog<string>((done) => (
         <SelectDialog title={`Models of ${PROVIDERS[provider].label}`} items={models.map((m) => ({ id: m, label: m }))} initial={settings?.model} done={done} />
       ))

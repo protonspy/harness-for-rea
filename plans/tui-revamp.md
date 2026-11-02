@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 76b5615fde988801a7256e15f5519fb49fd6cae8c0374387c3bb2f3a5741c218
+checksum: 13ede9944b8ddff8d0900d40fbd9342526395dcf757a585d887632ff3e6c50d0
 ---
 
 # TUI revamp
@@ -100,6 +100,13 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       stream, so a long-running tool of the specialist shows as running with its elapsed
       time in the desktop app and the TUI, recorded as a delta to specs/chat-timeline
   _Reason Asked by the user during the run: the chat does not track tool_progress events_
+- [x] 1.13 (Unit) Ready the model step of an OpenAI-compatible provider without a model
+      list: a list refused with 401 or 403 is a refused key, any other failure is
+      checked with a one-token test request to the chosen model, cached while the
+      provider, endpoint, model and key stay the same; and keep the base URL and model
+      when the provider already chosen is picked again; recorded as a delta to
+      specs/onboarding R1.6
+  _Reason Asked by the user during the run: an OpenAI-compatible key and endpoint could not be saved into a ready setup because the server answered 404 to the model list_
 
 ## Done when
 

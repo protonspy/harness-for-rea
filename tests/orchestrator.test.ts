@@ -13,7 +13,7 @@ import { dockerLauncher, type Launcher } from "../src/main/delegation"
 import { claudeArgs } from "../src/main/sandbox/docker"
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { friendlyError } from "../src/main/orchestrator/errors"
-import { listModels } from "../src/main/orchestrator/models"
+import { listModels, probeModel, refusedKey } from "../src/main/orchestrator/models"
 import { fallbackModels, makeModel, usageOf } from "../src/main/orchestrator/model"
 import { READS_BEFORE_REMINDER, systemPrompt } from "../src/main/orchestrator/agent"
 import { TaskRunner } from "../src/main/orchestrator/runner"
@@ -731,6 +731,33 @@ describe("listing a provider's models (R1.9)", () => {
       globalThis.fetch = keep
     }
   }
+
+  it("tests a model with a one-token request when the provider has no model list (specs/onboarding R1.6)", async () => {
+    let body = ""
+    const keep = globalThis.fetch
+    const reply = (r: Response) =>
+      (globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") ?? "" })
+        body = String(init?.body ?? "")
+        return r
+      }) as typeof fetch)
+    try {
+      reply(json({ choices: [{ message: { content: "p" } }] }))
+      await probeModel({ provider: "custom", baseUrl: "https://llm.example/v1/", apiKey: "sk-custom-000000", model: "my-model" })
+      expect(seen.at(-1)).toEqual({ url: "https://llm.example/v1/chat/completions", auth: "Bearer sk-custom-000000" })
+      expect(JSON.parse(body)).toMatchObject({ model: "my-model", max_tokens: 1 })
+      reply(json({}, { status: 401 }))
+      const refused = await probeModel({ provider: "custom", baseUrl: "https://llm.example/v1", apiKey: "k", model: "m" }).catch((e: unknown) => e)
+      expect(refusedKey(refused)).toBe(true)
+      reply(json({ error: { message: "The model `m` does not exist" } }, { status: 404 }))
+      await expect(probeModel({ provider: "custom", baseUrl: "https://llm.example/v1", apiKey: "k", model: "m" })).rejects.toThrow(
+        "OpenAI-compatible answered 404 to a test request to m: The model `m` does not exist",
+      )
+      await expect(probeModel({ provider: "custom", baseUrl: "", apiKey: null, model: "m" })).rejects.toThrow("Set a base URL first.")
+    } finally {
+      globalThis.fetch = keep
+    }
+  })
 
   it("reads DeepSeek's /models with the key, sorted and de-duplicated", async () => {
     const ids = await withFetch(

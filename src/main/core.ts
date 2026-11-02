@@ -9,7 +9,7 @@ import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
 import { APP_LABEL, LockHeld, Locks, projectLockName, type AppName, type Holder } from "./lock"
 import { ProcessRegistry } from "./processes"
-import { listModels } from "./orchestrator/models"
+import { listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
 import { blocking, readiness } from "./readiness"
@@ -220,6 +220,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
         settings: getSettings,
         keySet: (provider) => keyStatus(provider).set,
         listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
+        probeModel: (run) => probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model }),
+        keyHint: (provider) => keyStatus(provider).hint,
       },
       o,
     )

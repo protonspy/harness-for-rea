@@ -19,11 +19,60 @@ function deps(o: Partial<Omit<ReadinessDeps, "settings">> & { settings?: Partial
     },
     keySet: () => true,
     listModels: async () => ["deepseek/deepseek-v4.1-flash-1017"],
+    probeModel: async () => undefined,
     ...o,
     settings: () => ({ ...DEFAULT_SETTINGS, ...o.settings }),
   }
   return d
 }
+
+describe("a provider with no model list (specs/onboarding R1.6)", () => {
+  const custom = { provider: "custom" as const, baseUrl: "https://llm.example/v1", model: "my-model" }
+  const noList = async () => Promise.reject(new Error("OpenAI-compatible answered 404 to the model list."))
+  const refused = Object.assign(new Error("OpenAI-compatible rejected the API key. Set a valid key in Settings."), { status: 401 })
+
+  it("is ready when a one-token test request to the chosen model answers", async () => {
+    let tried = 0
+    const r = await readiness(
+      deps({
+        settings: custom,
+        listModels: noList,
+        probeModel: async (run) => void (tried++, expect(run).toMatchObject({ model: "my-model", baseUrl: "https://llm.example/v1" })),
+      }),
+    )
+    expect(r.model).toMatchObject({ ready: true })
+    expect(tried).toBe(1)
+  })
+
+  it("does not spend a second test request on the same provider, endpoint, model and key", async () => {
+    let tried = 0
+    const d = deps({ settings: { ...custom, model: "cached-model" }, listModels: noList, probeModel: async () => void tried++, keyHint: () => "…abcd" })
+    await readiness(d)
+    await readiness(d)
+    expect(tried).toBe(1)
+    await readiness(deps({ settings: { ...custom, model: "cached-model" }, listModels: noList, probeModel: async () => void tried++, keyHint: () => "…wxyz" }))
+    expect(tried).toBe(2)
+  })
+
+  it("says why when the test request fails, and that a refused key is refused, test or no test", async () => {
+    const failed = await readiness(
+      deps({
+        settings: { ...custom, model: "missing" },
+        listModels: noList,
+        probeModel: async () => Promise.reject(new Error("answered 404 to a test request to missing.")),
+      }),
+    )
+    expect(failed.model).toMatchObject({ ready: false, reason: expect.stringMatching(/has no model list, and a test request failed: answered 404/) })
+    let tried = 0
+    const listRefused = await readiness(
+      deps({ settings: { ...custom, model: "other" }, listModels: async () => Promise.reject(refused), probeModel: async () => void tried++ }),
+    )
+    expect(listRefused.model).toMatchObject({ ready: false, reason: refused.message })
+    expect(tried).toBe(0)
+    const probeRefused = await readiness(deps({ settings: { ...custom, model: "third" }, listModels: noList, probeModel: async () => Promise.reject(refused) }))
+    expect(probeRefused.model.reason).toBe(refused.message)
+  })
+})
 
 describe("the setup's steps", () => {
   it("is ready when the sandbox, Claude Code and the model all are", async () => {
@@ -54,7 +103,6 @@ describe("the setup's steps", () => {
   it("asks for the provider's key, a model, and an answer from the provider (R1.6, R1.7)", async () => {
     expect((await readiness(deps({ keySet: () => false }))).model.reason).toBe("Set your OpenRouter API key.")
     expect((await readiness(deps({ settings: { model: " " } }))).model.reason).toBe("Choose a model from OpenRouter.")
-    expect((await readiness(deps({ listModels: async () => Promise.reject(new Error("401")) }))).model.reason).toMatch(/OpenRouter did not answer: 401/)
     expect((await readiness(deps({ listModels: async () => [] }))).model.reason).toMatch(/listed no models/)
     // a local OpenAI-compatible endpoint may take no key
     expect(needsKey("custom")).toBe(false)
