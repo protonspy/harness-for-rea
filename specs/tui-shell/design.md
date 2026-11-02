@@ -1,40 +1,45 @@
-# Tui shell — design
-
-<!-- The design must fit the decision being made. Every heading below except
-     "What changes" is OPTIONAL: delete the ones this change does not decide.
-
-     A heading filled with "N/A", or with prose written to satisfy the heading, is
-     worse than an absent heading — the next session reads invented architecture as
-     a decision somebody made, and honors it. Filler becomes binding.
-
-     Delete this comment too. -->
+# TUI shell — design
 
 ## What changes
 
-Serves R1.1.
+Serves R1–R4 under adr:0023-build-the-tui-on-opentuis-react-layer. The 0.1 screens (`tui/src/app.ts`,
+`tui/src/view.ts`) go; `tui/src/main.ts` becomes `main.tsx`.
 
-<!-- Required. What changes, where, and why. For a change that decides nothing
-     structural, this section is the whole design and that is the correct outcome.
+```
+tui/src/
+  main.tsx            flags, the folder, the core, the renderer, <App/>
+  app/
+    context.tsx       AppContext: the API, the push bus, the theme, toasts, dialogs, the router
+    App.tsx           the shell and the router of screens
+    keymap.ts         one key map: layers of bindings, the topmost that matches wins (R2.1)
+    commands.ts       slash commands, the same list the palette searches (R2.2, R2.3)
+    theme.ts          tokens from src/renderer/src/index.css's colors, and a light variant (R1.3)
+  components/         StatusLine, Prompt, Sidebar, Palette, Help, Dialogs, Toasts, Markdown, Diff
+  screens/            Setup, Projects, NewProject, Project, Task, EventLog, Settings
+  lib/                pure logic the screens call, tested by Vitest like the renderer's lib/
+```
 
-     Keep the "Serves" line above and make it real: the design has to name the
-     requirements it answers, or the trace from what to how is unreadable — and
-     `scc spec validate` says so. -->
+- **Layout (R1.1, R1.4).** A column: the status line, a row of the screen's body and the sidebar
+  when shown (Ctrl+B), the prompt, and one line of key hints. Yoga lays it out again on resize.
+- **Keys (R2).** `useKeyboard` is registered once, in `App`. Screens, dialogs and the prompt push a
+  layer of bindings while mounted; a key goes to the topmost layer that binds it, so an open dialog
+  takes every key. `?` reads the layers to list every binding (R2.1). A binding has a label, so the
+  help, the hint line and the palette read one list.
+- **Commands (R2.2, R2.3).** A command has a name, a title, an argument hint, where it applies and
+  a run. Typing `/` in the prompt lists those that apply on the screen, filtered by prefix, Tab
+  completing; Ctrl+P opens the palette over the same list with a fuzzy filter.
+- **Esc and Ctrl+C (R2.4, R2.5).** Esc closes the topmost overlay, else stops a running turn, else
+  goes back. Ctrl+C clears a non-empty prompt, else arms a two-second window in which a second
+  Ctrl+C quits, said in a toast.
+- **Lists keep their place (R1.5).** Screens hold the selected item's id, not its index, and
+  re-derive the index from the id after a push.
+- **Safe text (R3.3).** Everything drawn from the API goes through `terminalSafe`, kept from 0.1.
+- **Screen tests (R4.1).** `App` takes the API and the push bus as props; `tui/test/` drives it with
+  `testRender`, simulated keys and a scripted API that records the methods called.
 
-## Boundaries and contracts <!-- optional -->
+## Theme
 
-<!-- Only if this change moves a boundary or an external contract, and only for the
-     parts that actually move. -->
-
-## Data <!-- optional -->
-
-<!-- Only if a data shape changes. -->
-
-## Alternatives considered <!-- optional -->
-
-<!-- Only where there were real alternatives with trade-offs. Say which won and why.
-     If the decision is hard to reverse, write an ADR under docs/adr/ and cite it
-     here instead of arguing it twice. -->
-
-## Risks <!-- optional -->
-
-<!-- What could go wrong that the task list does not already cover. -->
+Tokens are named as the desktop app's CSS variables — `background`, `foreground`, `card`,
+`muted`, `mutedForeground`, `primary`, `border`, `success`, `warning`, `destructive` — with the same
+dark values; the light variant inverts the neutrals and keeps the accents. Code colors come from
+`SYNTAX` in `src/renderer/src/lib/highlight.ts`.
