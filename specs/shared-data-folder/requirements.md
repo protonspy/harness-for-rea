@@ -25,7 +25,7 @@ app's live tasks or containers, and sees what the others change.
 
 - **R2.1** The app shall identify each process by its pid and its start time, and record which process opened each task.
 - **R2.2** When an app starts, the app shall interrupt only the tasks left running, waiting or stopped whose process is gone.
-- **R2.3** When an app starts, the app shall stop only the running task containers whose task's process is gone, and only the running sandboxes whose project no live app holds.
+- **R2.3** When an app starts, the app shall stop only the running task containers whose task's process is gone, and only the running sandboxes whose project no live app holds, leaving alone every container of a task or sandbox its database does not record.
 
 ## R3 · The database
 

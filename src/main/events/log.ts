@@ -145,6 +145,11 @@ export class EventLog {
   /** The process this log writes for, recorded on each task it opens (specs/shared-data-folder R2.1). */
   owner: string | null = null
 
+  /** Whether this database holds the task: a container named for one it does not is another data folder's. */
+  hasTask(id: string): boolean {
+    return getDb().prepare("SELECT 1 FROM tasks WHERE id = ?").get(id) !== undefined
+  }
+
   /** The process that last opened a task. */
   taskOwner(id: string): string | null {
     const r = getDb().prepare("SELECT owner FROM tasks WHERE id = ?").get(id) as Row | undefined

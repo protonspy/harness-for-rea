@@ -96,17 +96,13 @@ export async function startCore(host: CoreHost): Promise<Core> {
   // Only what a gone process left running: a live app's tasks are its own (specs/shared-data-folder R2.2).
   log.recover((owner) => me.isLive(owner))
   // Task containers of the tasks recover() just interrupted, never those of a live app's task (R2.3).
-  void TaskBox.sweep(dockerExecBuffer, (taskId) => {
-    try {
-      return me.isLive(log.taskOwner(taskId))
-    } catch {
-      return false
-    }
-  }).catch(() => undefined)
-  // So the specialist's sandboxes (specs/specialist-sandbox R2.7), but those of a project a live app holds.
+  // A container of a task this database does not know belongs to another data folder, and is left alone.
+  void TaskBox.sweep(dockerExecBuffer, (taskId) => !log.hasTask(taskId) || me.isLive(log.taskOwner(taskId))).catch(() => undefined)
+  // So the specialist's sandboxes (specs/specialist-sandbox R2.7), but those of a project a live app holds, and those
+  // another data folder recorded.
   void SpecialistBoxes.sweep(dockerExecBuffer, (sandboxId) => {
     const r = getDb().prepare("SELECT project_id FROM sandboxes WHERE id = ?").get(sandboxId) as { project_id: string | null } | undefined
-    return !!r?.project_id && locks.holder(projectLockName(r.project_id)) !== null
+    return !r || (!!r.project_id && locks.holder(projectLockName(r.project_id)) !== null)
   }).catch(() => undefined)
   // Projects: tasks from before them are given one each, once across apps starting together (specs/projects R3.3, R4.1).
   const projects = new ProjectStore(dataDir, push)

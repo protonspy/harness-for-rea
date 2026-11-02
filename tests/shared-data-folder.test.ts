@@ -77,6 +77,9 @@ describe("recovery (R2.2)", () => {
     const s2 = log.addStep({ taskId: theirs.id, kind: "delegation", title: "y", agent: "specialist", state: "running" })
 
     expect(log.taskOwner(mine.id)).toBe("live:1")
+    // a container named for a task this database does not hold is another data folder's (R2.3)
+    expect(log.hasTask(mine.id)).toBe(true)
+    expect(log.hasTask("99999999-9999-4999-8999-999999999999")).toBe(false)
     expect(log.recover((owner) => owner === "live:1")).toBe(2)
     expect(log.getTask(mine.id).state).toBe("running")
     expect(log.getTask(theirs.id).state).toBe("interrupted")
