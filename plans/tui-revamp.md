@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 635b64cb2cc5260677dc2dc49d2a4520f048c1abdeffbcee1775b53dbf154e14
+checksum: 90c18f5b0ee1cb279bb4d5e5cf48406b07ab371dce27bf11323a6e43ac5f86ff
 ---
 
 # TUI revamp
@@ -92,6 +92,14 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       ADR amending adr:0017 with deltas to specs/task-persistence and
       specs/specialist-sandbox
   _Reason Asked by the user during the run: a forced stop removes the instances while persistence is kept_
+- [x] 1.11 (Unit) Tell the specialist, in its REA skill and operating guide, which
+      reverse-engineering tools its sandbox image already has and to use them rather
+      than install others, recorded as a delta to specs/rea-native
+  _Reason Asked by the user during the run: the specialist sometimes skips a pre-installed tool or installs another_
+- [ ] 1.12 (Unit) Track Claude Code's tool_progress heartbeats in the specialist's
+      stream, so a long-running tool of the specialist shows as running with its elapsed
+      time in the desktop app and the TUI, recorded as a delta to specs/chat-timeline
+  _Reason Asked by the user during the run: the chat does not track tool_progress events_
 
 ## Done when
 

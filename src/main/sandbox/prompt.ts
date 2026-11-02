@@ -18,6 +18,23 @@ export function workPath(rel: string): string {
 export const OWN_OUTPUT = "/root/out"
 
 /**
+  What the specialist's image already carries (sandbox/specialist-base/Dockerfile), stated where it decides what to
+  run (specs/rea-native R2.5): a specialist told only "install what you need" installed a second Ghidra or skipped REA.
+  REA's own skill is written for any machine, so the image's list wins where the skill says to install or connect.
+*/
+export const PREINSTALLED = [
+  "Your image already has these tools installed and configured. Use them before anything else, and never install another copy of them:",
+  "- REA, the reverse engineering MCP server, connected as `mcp__rea__*`, with its CLI `rea` on PATH and its skill at /opt/hfr/rea-skill/SKILL.md;",
+  "- Ghidra 12.1.4 at $GHIDRA_INSTALL_DIR (/opt/ghidra), headless analyzer at /opt/ghidra/support/analyzeHeadless, which REA drives;",
+  "- JDK 21 at $JAVA_HOME (/opt/jdk-21), `java` on PATH;",
+  "- jadx-headless-mcp at $REA_JADX_MCP_JAR (/opt/jadx/jadx-headless-mcp.jar), which REA drives for APKs and DEX;",
+  "- Apktool as `apktool` on PATH ($REA_APKTOOL_COMMAND);",
+  "- Node.js with npm, ripgrep (`rg`), `file`, `unzip` and `ps`.",
+  "Reach these through REA's tools first, and call the engine directly only when REA lacks the operation. Where REA's skill says to install, set up or connect an engine, this list wins: it is already done.",
+  "Install a tool that is not in this list (apt-get after apt-get update, pip or npm) only when none of these can answer the question, and name it and why in the report.",
+]
+
+/**
   The specialist's instructions. `sandbox` is true when it runs in a sandbox the orchestrator prepared, whose
   /work stays writable in read mode (specs/specialist-sandbox R4.7).
 */
@@ -32,7 +49,8 @@ export function renderSystemPrompt(pkg: ContextPackage, sandbox = false): string
     "You are a senior software engineer doing deep analysis of one well-scoped step of a larger task.",
     "The artifacts in /work are owned by the user or authorized for analysis, including reverse engineering of the user's own software.",
     "You see only the files copied into /work for this step. Work from them; when something you need is missing, say so in the report rather than guessing.",
-    `You run as root in a Linux container with full internet access and a shell (Bash): unpack, extract, disassemble, decompile, build and run whatever the analysis needs, yourself. Install the tools you need with apt-get (run apt-get update first), pip or npm. Keep everything you extract, build or download in ${OWN_OUTPUT} or /tmp, never in /work.`,
+    `You run as root in a Linux container with full internet access and a shell (Bash): unpack, extract, disassemble, decompile, build and run whatever the analysis needs, yourself. Keep everything you extract, build or download in ${OWN_OUTPUT} or /tmp, never in /work.`,
+    ...PREINSTALLED,
     edit,
     "Back every claim with evidence: a path relative to /work and a line range you actually read.",
     "When a fact you were not given would change your analysis, ask with mcp__hfr__ask_user, giving the reason and a default; otherwise do not ask. The orchestrator that wrote this prompt answers first, and passes to the user only what they alone know. Never ask for, or assume, ownership, authorization or purpose beyond what this prompt states.",

@@ -27,6 +27,7 @@ analysis to REA's workflow and evidence model, so its reports cite what REA reco
 - **R2.2** The delegation shall give Claude Code an MCP tool timeout no shorter than Ghidra's cold start or the longest question timeout Settings allows.
 - **R2.3** The specialist's system prompt shall contain the operating guide from `sandbox/specialist-base/AGENTS.md` and direct the specialist to read the skill at `/opt/hfr/rea-skill/SKILL.md` before its first REA call.
 - **R2.4** Where a delegation names no sandbox, the delegation shall bind the task's `outputs/<workspace>` folder writable at `/root/out`.
+- **R2.5** (ADDED) The specialist's system prompt shall list the tools its image already carries, direct the specialist to use them through REA before anything else and never install another copy of them, state that this list overrides the install and connect steps of REA's skill, and allow installing another tool only when none of them can answer, named in the report.
 
 ## R3 · Evidence
 
