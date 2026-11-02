@@ -18,7 +18,8 @@ import { filesOfStep } from "@/lib/store"
 */
 
 export function DelegationCard({ step, events, patches, run = [] }: { step: StepRow; events: EventRow[]; patches: PatchView[]; run?: SpecialistEntry[] }) {
-  const [open, setOpen] = useState(step.state === "running")
+  // Open from the start, with the run and reasoning under it (specs/chat-timeline R1.2).
+  const [open, setOpen] = useState(true)
   const files = useMemo(() => filesOfStep(events, step.id), [events, step.id])
   const pkg = step.data.context as ContextPackage | undefined
   const report = typeof step.data.report === "string" ? step.data.report : ""
@@ -94,12 +95,12 @@ export function DelegationCard({ step, events, patches, run = [] }: { step: Step
 
 const ICONS = { text: MessageSquareText, thinking: Brain, tool: Wrench, result: MessageSquareText, note: ChevronRight }
 
-/** One entry of the specialist's run: a line, its payload collapsed until opened (specs/chat-timeline R1.2). */
+/** One entry of the specialist's run — its text, reasoning or tool call — shown open (specs/chat-timeline R1.2). */
 function RunEntry({ entry }: { entry: SpecialistEntry }) {
   const Icon = ICONS[entry.kind]
   const running = entry.kind === "tool" && entry.output === undefined
   return (
-    <Collapsible className="rounded border bg-background/60">
+    <Collapsible defaultOpen className="rounded border bg-background/60">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <Icon size={12} />
         {entry.subagent && <Badge>{entry.subagent}</Badge>}

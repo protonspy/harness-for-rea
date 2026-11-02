@@ -62,7 +62,7 @@ export function ToolCall({ item, ctx }: { item: ToolItem; ctx: ToolContext }) {
   const step = item.name === "delegate_to_specialist" ? stepOf(item, ctx.steps) : undefined
   if (step) return <DelegationCard step={step} events={ctx.events} patches={ctx.patches} run={ctx.run(step.id)} />
   return (
-    <Collapsible className="rounded-md border bg-card/60">
+    <Collapsible defaultOpen className="rounded-md border bg-card/60">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <ChevronRight size={13} className="transition-transform group-data-[state=open]:rotate-90" />
         <Wrench size={12} />
@@ -83,7 +83,7 @@ export function ToolCall({ item, ctx }: { item: ToolItem; ctx: ToolContext }) {
   )
 }
 
-/** A run of the orchestrator's tool calls, folded into one line until opened. */
+/** A run of the orchestrator's tool calls, shown open and folded on request (specs/chat-timeline R1.2). */
 export function ToolRun({ items, ctx }: { items: ToolItem[]; ctx: ToolContext }) {
   if (items.length === 1)
     return (
@@ -94,7 +94,7 @@ export function ToolRun({ items, ctx }: { items: ToolItem[]; ctx: ToolContext })
   const last = items.at(-1)!
   const running = last.output === undefined
   return (
-    <Collapsible className="ml-10">
+    <Collapsible defaultOpen className="ml-10">
       <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground [&_svg]:shrink-0">
         <ChevronRight size={13} className="transition-transform group-data-[state=open]:rotate-90" />
         <Wrench size={12} />

@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: ba8eeaa695c2fb87ee25082d18e819b8a81517e37ff8bcdfc4f1e482f5d828ce
+checksum: b3d8ec3b3fe6a79bbaa4e177b372726feb23662e188ed31c86ffe90178dcf281
 ---
 
 # TUI revamp
@@ -81,6 +81,10 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
       the TUI's transcript draws too, recorded as a delta to specs/chat R7 with
       docs/stack.md entries
   _Reason Asked by the user during the run: markdown in the desktop chat and syntax colors from Lezer_
+- [ ] 1.9 (Unit) Show the conversation's tool calls, tool runs and the specialist's
+      reasoning and run expanded by default, in the desktop app and the TUI, each still
+      collapsible, recorded as a delta to specs/chat-timeline
+  _Reason Asked by the user during the run: tool calls and reasoning are collapsed today_
 
 ## Done when
 
