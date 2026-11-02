@@ -2,6 +2,7 @@ import { Brain, ChevronDown, ChevronRight, MessageSquareText, Wrench } from "luc
 import { useMemo, useState } from "react"
 import type { ContextPackage, Evidence } from "@shared/context"
 import type { EventRow, PatchView, StepRow } from "@shared/types"
+import Markdown from "@/components/Markdown"
 import Prose from "@/components/Prose"
 import { Mono } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
@@ -66,7 +67,7 @@ export function DelegationCard({ step, events, patches, run = [] }: { step: Step
           {report && (
             <section className="flex flex-col gap-2">
               <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Report</h4>
-              <Prose text={report} className="max-h-[480px] overflow-y-auto rounded-md border border-border bg-background p-3" />
+              <Markdown text={report} className="max-h-[480px] overflow-y-auto rounded-md border border-border bg-background p-3" />
             </section>
           )}
           {evidence.length > 0 && (

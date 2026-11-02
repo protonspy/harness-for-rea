@@ -35,6 +35,10 @@ themselves. -->
 - **shadcn/ui** on **radix-ui** — the renderer's components, copied in as source on Radix primitives for keyboard, focus and ARIA behaviour ([adr:0010-build-the-renderer-on-shadcn-ui-and-radix]).
 - **class-variance-authority**, **clsx** and **tailwind-merge** — the shadcn/ui helpers for variant classes and merging utilities.
 - **lucide-react** — icons, as in `study-lab`.
+- **react-markdown** with **remark-gfm** — the conversation's messages and reports as GitHub-flavoured markdown in the desktop app, raw HTML never interpreted (specs/chat R7.6).
+- **mdast-util-from-markdown**, **mdast-util-gfm** and **micromark-extension-gfm** — the same markdown parsed to a tree the TUI draws, so both apps read a message alike.
+- **@types/mdast** — the types of that tree.
+- **Lezer** (`@lezer/highlight`, `@lezer/common` and the `@lezer/javascript`, `python`, `json`, `cpp`, `rust`, `java`, `go`, `html`, `css`, `xml` and `yaml` parsers) — CodeMirror's incremental parsers, coloring the code in a message for both apps from one palette, with no WASM and no DOM.
 - **node:sqlite** — built into the Node that Electron bundles, so no native module to rebuild; holds tasks, steps and events ([adr:0005-store-events-in-sqlite-with-raw-jsonl-per-task]).
 - **deepagents** — orchestration: planning, delegation tools, filesystem backends and approval interrupts ([adr:0001-use-deepagents-on-openrouter-for-orchestration]).
 - **@langchain/openai** — the OpenAI chat client behind the DeepSeek and custom orchestrator providers, which only need a base URL and a key ([adr:0014-add-openai-compatible-orchestrator-providers]); already installed beneath DeepAgents and `@langchain/openrouter`.

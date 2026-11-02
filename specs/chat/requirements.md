@@ -73,6 +73,7 @@ and checkpointer (specs/orchestrator R3) and the live task view (specs/desktop-u
 - **R7.3** When a tool call awaits a decision, the desktop UI shall show the call with its arguments and offer approve, edit and reject.
 - **R7.4** When the agent asks a question, the desktop UI shall show it with the input its kind calls for and a control to answer.
 - **R7.5** When a turn is stopped, the desktop UI shall offer to continue it; when a turn ends awaiting the user, the desktop UI shall show that it is the user's turn.
+- **R7.6** (ADDED) The desktop UI shall show the agent's and the user's messages and the specialist's report as markdown, without interpreting HTML, following links or loading images, and the code blocks in them with syntax colors from CodeMirror's Lezer parsers.
 
 ## Out of scope
 

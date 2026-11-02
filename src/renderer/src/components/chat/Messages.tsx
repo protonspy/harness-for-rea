@@ -1,7 +1,7 @@
 import { Bot, CheckCheck, ChevronRight, Clock, Wrench } from "lucide-react"
 import type { EventRow, PatchView, StepRow } from "@shared/types"
 import { DelegationCard } from "@/components/DelegationCard"
-import Prose from "@/components/Prose"
+import Markdown from "@/components/Markdown"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -16,7 +16,7 @@ export function UserMessage({ item }: { item: UserItem }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[80%] rounded-lg rounded-br-sm border border-primary/25 bg-primary/10 px-3.5 py-2.5">
-        <Prose text={item.text} />
+        <Markdown text={item.text} />
         <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground">
           {clock(item.at)}
           <Tooltip>
@@ -44,7 +44,7 @@ export function AgentMessage({ item }: { item: AgentItem }) {
           <span className="font-medium text-foreground">Orchestrator</span>
           {clock(item.at)}
         </div>
-        <Prose text={item.text} />
+        <Markdown text={item.text} />
       </div>
     </div>
   )

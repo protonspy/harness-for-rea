@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 495c3f89e37d5d0beec8021cf771d7c88fa8e9588aad1d2624c2087719a6cd15
+checksum: f799ee4f9e0793e28ad5470a10bba055b29e6b595846dbb2c43524c931bbab05
 ---
 
 # TUI revamp
@@ -75,7 +75,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
 - [ ] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
   _Depends 1.6_
   _Priority 3_
-- [ ] 1.8 (Unit) Render the chat's agent and user messages as markdown with
+- [x] 1.8 (Unit) Render the chat's agent and user messages as markdown with
       react-markdown in the desktop app, and color the code blocks in them with
       CodeMirror's Lezer parsers through one highlighter in src/renderer/src/lib that
       the TUI's transcript draws too, recorded as a delta to specs/chat R7 with
