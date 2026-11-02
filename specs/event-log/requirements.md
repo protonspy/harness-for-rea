@@ -30,7 +30,7 @@ adr:0005-store-events-in-sqlite-with-raw-jsonl-per-task.
 
 ## R3 · Recovery
 
-- **R3.1** When the app starts, the event log shall mark every task and step left running or waiting as interrupted and record an event saying so.
+- **R3.1** (MODIFIED) When the app starts, the event log shall mark every task and step left running or waiting by a process that is gone as interrupted and record an event saying so, leaving a live app's tasks as they are (specs/shared-data-folder R2.2).
 
 ## Out of scope
 

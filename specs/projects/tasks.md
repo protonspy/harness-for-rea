@@ -17,3 +17,4 @@
 - [x] 3.1 (Unit) List projects with their tasks in the sidebar, and lock project creation until the setup is completed — R4.1, R4.4
 - [x] 3.2 (Unit) Build the guided new-project setup: target with its kind, goal cards, name, model, efforts and folder — R4.2, R1.6
 - [x] 3.3 (Unit) Build the project view: target, kind, goal and model, its tasks and analyses, and a request with ideas for the goal — R4.3
+- [x] 3.4 (Unit) Mark a project another app holds in the sidebar and the project view, without Start or Delete — R4.5

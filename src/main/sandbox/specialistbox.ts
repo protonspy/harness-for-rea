@@ -460,12 +460,22 @@ export class SpecialistBoxes {
     return [...this.boxes.keys()]
   }
 
-  /** Stop, and keep, every sandbox a previous run of the app left running (R2.7, specs/task-persistence R3.4). */
-  static async sweep(exec: ExecBuffer): Promise<number> {
-    const r = await exec(["ps", "-q", "--filter", "name=^hfr-sbx-"])
-    const ids = r.code === 0 ? r.stdout.toString("utf8").split(/\s+/).filter(Boolean) : []
-    if (ids.length) await exec(["stop", "-t", "2", ...ids])
-    return ids.length
+  /**
+    Stop, and keep, the sandboxes a gone process left running (R2.7, specs/task-persistence R3.4); those of a
+    project a live app holds are left alone (specs/shared-data-folder R2.3). `heldByLive` answers for a sandbox id.
+  */
+  static async sweep(exec: ExecBuffer, heldByLive: (sandboxId: string) => boolean = () => false): Promise<number> {
+    const r = await exec(["ps", "--filter", "name=^hfr-sbx-", "--format", "{{.Names}}"])
+    const names =
+      r.code === 0
+        ? r.stdout
+            .toString("utf8")
+            .split(/\s+/)
+            .filter((n) => n.startsWith("hfr-sbx-"))
+        : []
+    const stale = names.filter((n) => !heldByLive(n.slice("hfr-sbx-".length)))
+    if (stale.length) await exec(["stop", "-t", "2", ...stale])
+    return stale.length
   }
 }
 

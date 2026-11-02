@@ -12,14 +12,15 @@ pr: 13
 
 A terminal UI for Harness for REA beside the desktop app, for a user who works in a terminal or on a
 machine without a desktop: the same core, the same data folder and the same projects and tasks, on
-OpenTUI under Bun (adr:0022-run-the-tui-on-bun-with-opentui). Only one of the two apps holds the data
-folder at a time.
+OpenTUI under Bun (adr:0022-run-the-tui-on-bun-with-opentui). Any number of TUIs run beside the desktop
+app on one data folder (specs/shared-data-folder); the revamped TUI is specified by specs/tui-shell,
+specs/tui-launch, specs/tui-conversation and specs/tui-panels.
 
 ## R1 · Start
 
-- **R1.1** The TUI shall run the core the desktop app runs, on the data folder the desktop app uses, behind the same handlers.
-- **R1.2** If the desktop app holds the data folder, then the TUI shall print which app holds it and exit without opening the database.
-- **R1.3** The TUI shall keep each provider's key in the OS keychain, asked for once and read from there at every start.
+- **R1.1** (MODIFIED) The TUI shall run the core the desktop app runs, on the data folder the desktop app uses, behind the same handlers, while the desktop app and other TUIs run on it too.
+- **R1.2** (MODIFIED) If another app is running a task of a project, then the TUI shall refuse to start or reopen a task of that project, naming that app (specs/shared-data-folder R1.2).
+- **R1.3** (MODIFIED) The TUI shall keep each provider's key in the OS-keychain store the desktop app reads too, asked for once in either app (specs/shared-data-folder R5.1).
 
 ## R2 · Setup
 
@@ -36,5 +37,4 @@ folder at a time.
 
 ## Out of scope
 
-- Reviewing a patch's diff in the terminal: patches are applied without asking in every task (specs/chat R4.1).
 - Mouse interaction beyond what OpenTUI gives by default.

@@ -30,6 +30,7 @@ are changed later.
 
 - **R2.1** While a step that was ready no longer is, the desktop UI shall show which one and a way to fix it, and shall not let a task start, checking a task's start against the provider, key, endpoint and model of its project.
 - **R2.2** The setup shall be reachable again from Settings.
+- **R2.3** (ADDED) When another app on the same data folder readied a step, the setup shall show the step ready without the user doing it again (specs/shared-data-folder R4, R5).
 
 ## Out of scope
 

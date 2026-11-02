@@ -140,7 +140,7 @@ describe("credentials (R3.1–R3.3)", () => {
   it("refuses to store the key when encryption is unavailable, writing nothing", async () => {
     stub.encryption = false
     await expect(saveKey("sk-or-v1-abcdef1234567890")).rejects.toThrow(CredentialError)
-    expect(getDb().prepare("SELECT COUNT(*) AS n FROM settings").get()).toEqual({ n: 0 })
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM settings WHERE key <> 'schema.by'").get()).toEqual({ n: 0 })
     expect(readKey()).toBeNull()
   })
 

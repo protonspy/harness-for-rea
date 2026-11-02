@@ -206,10 +206,16 @@ describe("creating, controlling and destroying sandboxes (R1.4, R1.5, R2)", () =
   })
 
   it("stops, and keeps, the sandboxes a previous run of the app left running", async () => {
-    const f = fake({ "ps -q": { stdout: Buffer.from("aaa\nbbb\n") } })
+    const f = fake({ "ps --filter": { stdout: Buffer.from("hfr-sbx-aaa\nhfr-sbx-bbb\n") } })
     expect(await SpecialistBoxes.sweep(f.exec)).toBe(2)
-    expect(f.calls[0].args).toEqual(["ps", "-q", "--filter", "name=^hfr-sbx-"])
-    expect(f.calls[1].args).toEqual(["stop", "-t", "2", "aaa", "bbb"])
+    expect(f.calls[0].args).toEqual(["ps", "--filter", "name=^hfr-sbx-", "--format", "{{.Names}}"])
+    expect(f.calls[1].args).toEqual(["stop", "-t", "2", "hfr-sbx-aaa", "hfr-sbx-bbb"])
+  })
+
+  it("leaves running the sandboxes of a project a live app holds (specs/shared-data-folder R2.3)", async () => {
+    const f = fake({ "ps --filter": { stdout: Buffer.from("hfr-sbx-aaa\nhfr-sbx-bbb\n") } })
+    expect(await SpecialistBoxes.sweep(f.exec, (id) => id === "aaa")).toBe(1)
+    expect(f.calls[1].args).toEqual(["stop", "-t", "2", "hfr-sbx-bbb"])
   })
 
   it("holds a sandbox for one delegation at a time", async () => {

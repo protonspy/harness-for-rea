@@ -38,7 +38,7 @@ export interface ProjectAnalysis {
 /** A turn under way or stopped part-way: after a restart it can only be retried. */
 const LIVE: TaskState[] = ["pending", "running", "waiting", "stopped"]
 
-function taskRow(r: Row): TaskRow {
+export function taskRow(r: Row): TaskRow {
   return {
     id: String(r.id),
     projectId: r.project_id === null || r.project_id === undefined ? null : String(r.project_id),
@@ -57,7 +57,7 @@ function taskRow(r: Row): TaskRow {
   }
 }
 
-function stepRow(r: Row): StepRow {
+export function stepRow(r: Row): StepRow {
   return {
     id: String(r.id),
     taskId: String(r.task_id),
@@ -72,7 +72,7 @@ function stepRow(r: Row): StepRow {
   }
 }
 
-function eventRow(r: Row): EventRow {
+export function eventRow(r: Row): EventRow {
   return {
     id: Number(r.id),
     taskId: String(r.task_id),
@@ -87,7 +87,7 @@ function eventRow(r: Row): EventRow {
   }
 }
 
-function patchRow(r: Row): PatchView {
+export function patchRow(r: Row): PatchView {
   return {
     id: String(r.id),
     taskId: String(r.task_id),
@@ -142,6 +142,15 @@ export class EventLog {
     this.push = push
   }
 
+  /** The process this log writes for, recorded on each task it opens (specs/shared-data-folder R2.1). */
+  owner: string | null = null
+
+  /** The process that last opened a task. */
+  taskOwner(id: string): string | null {
+    const r = getDb().prepare("SELECT owner FROM tasks WHERE id = ?").get(id) as Row | undefined
+    return r?.owner === null || r?.owner === undefined ? null : String(r.owner)
+  }
+
   /** A task's folder: under its project's folder (specs/projects R2.2), or the app's data folder for one without. */
   taskDir(taskId: string): string {
     const r = getDb().prepare("SELECT p.folder AS folder FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ?").get(taskId) as Row | undefined
@@ -154,8 +163,10 @@ export class EventLog {
     const id = randomUUID()
     const at = this.now()
     getDb()
-      .prepare("INSERT INTO tasks (id, project_id, request, source_root, model, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)")
-      .run(id, t.projectId ?? null, redact(t.request), t.sourceRoot, t.model, at, at)
+      .prepare(
+        "INSERT INTO tasks (id, project_id, request, source_root, model, state, created_at, updated_at, owner) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+      )
+      .run(id, t.projectId ?? null, redact(t.request), t.sourceRoot, t.model, at, at, this.owner)
     return this.emitTask(id)
   }
 
@@ -195,9 +206,11 @@ export class EventLog {
 
   updateTask(id: string, patch: { state?: TaskState; result?: string; error?: string }): TaskRow {
     const cur = this.getTask(id)
+    // A task set running here is this process's: recovery leaves it alone while this process lives (R2.2).
+    const owner = patch.state && LIVE.includes(patch.state) && this.owner ? this.owner : this.taskOwner(id)
     getDb()
-      .prepare("UPDATE tasks SET state = ?, result = ?, error = ?, updated_at = ? WHERE id = ?")
-      .run(patch.state ?? cur.state, redact(patch.result ?? cur.result), redact(patch.error ?? cur.error), this.now(), id)
+      .prepare("UPDATE tasks SET state = ?, result = ?, error = ?, updated_at = ?, owner = ? WHERE id = ?")
+      .run(patch.state ?? cur.state, redact(patch.result ?? cur.result), redact(patch.error ?? cur.error), this.now(), owner, id)
     return this.emitTask(id)
   }
 
@@ -379,21 +392,31 @@ export class EventLog {
   }
 
   /**
-    At startup: every task and step left running, waiting or stopped is interrupted, and says so; a conversation
-    that waited for the user stays open, to be continued from its checkpoint (specs/task-persistence R2.3).
-    Returns how many were interrupted.
+    At startup: every task left running, waiting or stopped by a process that is gone, and its steps, is interrupted
+    and says so; a live app's tasks are left alone (specs/shared-data-folder R2.2). A conversation that waited for
+    the user stays open, to be continued from its checkpoint (specs/task-persistence R2.3). Returns how many were
+    interrupted.
   */
-  recover(): number {
+  recover(isLive: (owner: string | null) => boolean = () => false): number {
     const marks = LIVE.map(() => "?").join(", ")
     const tasks = (
       getDb()
-        .prepare(`SELECT id FROM tasks WHERE state IN (${marks})`)
+        .prepare(`SELECT id, owner FROM tasks WHERE state IN (${marks})`)
         .all(...LIVE) as Row[]
-    ).map((r) => String(r.id))
+    )
+      .filter((r) => !isLive(r.owner === null || r.owner === undefined ? null : String(r.owner)))
+      .map((r) => String(r.id))
     const at = this.now()
-    getDb()
-      .prepare(`UPDATE steps SET state = 'interrupted', updated_at = ? WHERE state IN (${marks})`)
-      .run(at, ...LIVE)
+    // A step left under way by a gone process is interrupted whatever its task's state.
+    const stepTasks = (
+      getDb()
+        .prepare(`SELECT DISTINCT t.id AS id, t.owner AS owner FROM steps s JOIN tasks t ON t.id = s.task_id WHERE s.state IN (${marks})`)
+        .all(...LIVE) as Row[]
+    ).filter((r) => !isLive(r.owner === null || r.owner === undefined ? null : String(r.owner)))
+    for (const r of stepTasks)
+      getDb()
+        .prepare(`UPDATE steps SET state = 'interrupted', updated_at = ? WHERE task_id = ? AND state IN (${marks})`)
+        .run(at, String(r.id), ...LIVE)
     for (const id of tasks) {
       getDb().prepare("UPDATE tasks SET state = 'interrupted', updated_at = ? WHERE id = ?").run(at, id)
       this.append({

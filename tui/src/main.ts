@@ -4,10 +4,12 @@ import { API_METHODS, type Api } from "../../src/shared/api"
 import type { Push } from "../../src/shared/types"
 import { startCore } from "../../src/main/core"
 import { makeDispatcher } from "../../src/main/ipc"
-import { DataFolderBusy, defaultDataDir } from "../../src/main/lock"
+import { SchemaTooNew } from "../../src/main/db"
+import { keyringStore } from "../../src/main/keys"
+import { defaultDataDir } from "../../src/main/lock"
 import { App } from "./app"
 import pkg from "../../package.json"
-import { keychainKeyStore } from "./keys"
+import { bunSecretsKeyStore } from "./keys"
 import { answerFlags, sandboxDirFor } from "./paths"
 
 /*
@@ -39,13 +41,15 @@ let core: Awaited<ReturnType<typeof startCore>>
 try {
   core = await startCore({
     app: "tui",
+    version: pkg.version,
     dataDir: process.env.HFR_DATA_DIR ?? defaultDataDir(),
     sandboxDir,
     push: (p) => (app ? app.onPush(p) : pending.push(p)),
-    keys: keychainKeyStore(),
+    keys: keyringStore(),
+    formerKeys: bunSecretsKeyStore(),
   })
 } catch (e) {
-  if (!(e instanceof DataFolderBusy)) throw e
+  if (!(e instanceof SchemaTooNew)) throw e
   console.error(e.message)
   process.exit(1)
 }

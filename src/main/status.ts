@@ -8,6 +8,19 @@ import { ClaudeAccount, failureReason, loginUrl, type AccountState, type LoginIn
   Claude login (specs/desktop-ui R1.2, R1.3). Each change is pushed through `onChange`.
 */
 
+/**
+  A job done once across the apps on a data folder (specs/shared-data-folder R4.2, R4.3): `take` returns the release,
+  or the app that holds the job when another live process is doing it.
+*/
+export interface OnceGuard {
+  take(): (() => void) | { heldBy: string }
+}
+
+const noGuard: OnceGuard = { take: () => () => undefined }
+
+/** How often an app waiting on another app's image build looks again. */
+export const ELSEWHERE_POLL_MS = 2000
+
 export class SandboxService {
   private readonly exec: Exec
   private readonly sandboxDir: string
@@ -16,10 +29,36 @@ export class SandboxService {
   private prepared = false
   private current: SandboxStatus = { docker: false, dockerError: "", images: false, building: false, buildLog: "", claudeVersion: CLAUDE_CODE_VERSION }
 
-  constructor(exec: Exec, sandboxDir: string, onChange: (s: SandboxStatus) => void = () => undefined) {
+  constructor(
+    exec: Exec,
+    sandboxDir: string,
+    onChange: (s: SandboxStatus) => void = () => undefined,
+    private readonly guard: OnceGuard = noGuard,
+    private readonly pollMs = ELSEWHERE_POLL_MS,
+  ) {
     this.exec = exec
     this.sandboxDir = sandboxDir
     this.onChange = onChange
+  }
+
+  /** Another app is preparing the images: show it, and read the images' state again once it is done (R4.2). */
+  private elsewhere(heldBy: string): { status: SandboxStatus; done: Promise<SandboxStatus> } {
+    this.prepared = true
+    const status = this.set({ building: true, buildLog: `The sandbox image is being prepared by ${heldBy}.\n` })
+    const done = new Promise<SandboxStatus>((resolve) => {
+      const look = () => {
+        const g = this.guard.take()
+        if ("heldBy" in g) {
+          setTimeout(look, this.pollMs).unref?.()
+          return
+        }
+        g()
+        this.set({ building: false, buildLog: `${this.current.buildLog}Done in ${heldBy}.\n` })
+        void this.status().then(resolve)
+      }
+      setTimeout(look, this.pollMs).unref?.()
+    })
+    return { status, done }
   }
 
   /**
@@ -45,15 +84,19 @@ export class SandboxService {
   /** Start preparing the image; resolves with the status at the start, then pushes the outcome. */
   build(): { status: SandboxStatus; done: Promise<SandboxStatus> } {
     if (this.current.building) return { status: this.current, done: Promise.resolve(this.current) }
+    const g = this.guard.take()
+    if ("heldBy" in g) return this.elsewhere(g.heldBy)
     this.prepared = true
     const status = this.set({
       building: true,
       buildLog: "Preparing the sandbox image: pulling the base, then adding Claude Code, downloaded and verified.\n",
     })
-    const done = prepareImages(this.exec, this.sandboxDir).then(async (r) => {
-      this.set({ building: false, buildLog: `${this.current.buildLog}${r.log}${r.ok ? "Done.\n" : "Preparing the image failed.\n"}`.slice(-20_000) })
-      return this.status()
-    })
+    const done = prepareImages(this.exec, this.sandboxDir)
+      .finally(g)
+      .then(async (r) => {
+        this.set({ building: false, buildLog: `${this.current.buildLog}${r.log}${r.ok ? "Done.\n" : "Preparing the image failed.\n"}`.slice(-20_000) })
+        return this.status()
+      })
     return { status, done }
   }
 }
@@ -66,7 +109,11 @@ export class LoginService {
   private text = ""
   private error = ""
 
-  constructor(start: StartAuth, onChange: (s: LoginStatus) => void = () => undefined) {
+  constructor(
+    start: StartAuth,
+    onChange: (s: LoginStatus) => void = () => undefined,
+    private readonly guard: OnceGuard = noGuard,
+  ) {
     this.account = new ClaudeAccount(start)
     this.onChange = onChange
   }
@@ -102,14 +149,24 @@ export class LoginService {
   /** Start the sign-in; `done` settles when it finishes, with the refreshed state. */
   start(): { status: LoginStatus; done: Promise<LoginStatus> } {
     if (this.login) return { status: this.current(), done: Promise.resolve(this.current()) }
+    // One sign-in across the apps on this data folder (specs/shared-data-folder R4.3).
+    const g = this.guard.take()
+    if ("heldBy" in g) throw new Error(`Claude is being signed in from ${g.heldBy}; finish it there.`)
     this.text = ""
     this.error = ""
-    const l = this.account.login((t) => {
-      this.text += t
-      this.changed()
-    })
+    let l: LoginInProgress
+    try {
+      l = this.account.login((t) => {
+        this.text += t
+        this.changed()
+      })
+    } catch (e) {
+      g()
+      throw e
+    }
     this.login = l
     const done = l.done.then(async ({ ok, text }) => {
+      g()
       this.login = null
       this.text = ""
       this.state = await this.account.state()

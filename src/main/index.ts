@@ -4,8 +4,9 @@ import type { Push } from "@shared/types"
 import { startCore } from "./core"
 import { contentSecurityPolicy } from "./csp"
 import { makeDispatcher } from "./ipc"
+import { SchemaTooNew } from "./db"
+import { keyringStore } from "./keys"
 import { electronKeyStore } from "./keys-electron"
-import { DataFolderBusy } from "./lock"
 import { lockNavigation, webPreferences } from "./window"
 
 /*
@@ -28,7 +29,7 @@ function sandboxDir(): string {
   return app.isPackaged ? join(process.resourcesPath, "sandbox") : join(app.getAppPath(), "sandbox")
 }
 
-// One instance at a time: a second would sweep the first's task containers as orphans at start.
+// One desktop instance per profile (specs/shared-data-folder R4.4); terminal UIs run beside it on the same data folder.
 const primary = app.requestSingleInstanceLock()
 if (!primary) app.quit()
 app.on("second-instance", () => {
@@ -46,17 +47,20 @@ app.whenReady().then(async () => {
   try {
     core = await startCore({
       app: "desktop",
+      version: app.getVersion(),
       dataDir: app.getPath("userData"),
       sandboxDir: sandboxDir(),
       push,
-      keys: electronKeyStore(),
+      // The shared keychain both apps read; the keys `safeStorage` kept are moved into it (specs/shared-data-folder R5).
+      keys: keyringStore(),
+      formerKeys: electronKeyStore(),
       pickFolder: () => pick(["openDirectory"]),
       pickTarget: (kind) => pick([kind === "file" ? "openFile" : "openDirectory"]),
       openExternal: (url) => shell.openExternal(url),
     })
   } catch (e) {
-    // The terminal UI holds the data folder: say so, and leave it to it (plans/finish-the-harness 1.9).
-    if (!(e instanceof DataFolderBusy)) throw e
+    // A newer app migrated the database: name it, and touch nothing (specs/shared-data-folder R3.3).
+    if (!(e instanceof SchemaTooNew)) throw e
     console.error(e.message)
     dialog.showErrorBox("Harness for REA", e.message)
     app.exit(1)

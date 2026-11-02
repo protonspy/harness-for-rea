@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { Push } from "../src/shared/types"
-import { closeDb, getDb, migrate, openDb } from "../src/main/db"
+import { closeDb, getDb, migrate, openDb, SCHEMA_VERSION } from "../src/main/db"
 import { capPayload, EventLog, PAYLOAD_CAP } from "../src/main/events/log"
 import { forgetSecrets, registerSecret } from "../src/main/events/redact"
 
@@ -30,9 +30,9 @@ afterEach(() => closeDb())
 
 describe("database (R2.1)", () => {
   it("migrates once and records the version", () => {
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(4)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(SCHEMA_VERSION)
     migrate(getDb())
-    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(4)
+    expect((getDb().prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(SCHEMA_VERSION)
   })
 })
 

@@ -158,32 +158,137 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX unknowns_project ON unknowns(project_id, created_at);
   `,
+  // Several processes on one data folder (adr:0024-share-the-data-folder-between-processes): each records itself with a
+  // heartbeat, and a task records the process that opened it (specs/shared-data-folder R2.1).
+  `
+  CREATE TABLE processes (
+    key TEXT PRIMARY KEY,
+    app TEXT NOT NULL,
+    pid INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    version TEXT NOT NULL,
+    beat_at INTEGER NOT NULL
+  );
+  ALTER TABLE tasks ADD COLUMN owner TEXT;
+  CREATE INDEX tasks_updated ON tasks(updated_at);
+  CREATE INDEX steps_updated ON steps(updated_at);
+  CREATE INDEX projects_updated ON projects(updated_at);
+  `,
 ]
+
+/** The schema this app knows. */
+export const SCHEMA_VERSION = MIGRATIONS.length
+
+/** Which app opens the database, recorded with each migration it runs so an older app can name it (R3.3). */
+export interface Opener {
+  app: string
+  version: string
+}
+
+/** A database migrated by a newer app than this one, refused before anything is written (specs/shared-data-folder R3.3). */
+export class SchemaTooNew extends Error {
+  constructor(
+    readonly found: number,
+    readonly by: Opener | null,
+  ) {
+    super(
+      by
+        ? `This data folder was upgraded by Harness for REA ${by.version} (${by.app === "tui" ? "the terminal UI" : "the desktop app"}); update this app to open it.`
+        : `This data folder was upgraded by a newer Harness for REA (schema ${found}); update this app to open it.`,
+    )
+    this.name = "SchemaTooNew"
+  }
+}
 
 let db: DatabaseSync | null = null
 
-export function openDb(file: string): DatabaseSync {
+export function openDb(file: string, by: Opener = { app: "desktop", version: "" }): DatabaseSync {
   closeDb()
   if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true })
   const d = new DatabaseSync(file)
-  d.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
-  migrate(d)
+  // Another process may be writing: wait for it rather than fail (specs/shared-data-folder R3.1).
+  d.exec("PRAGMA busy_timeout = 5000;")
+  try {
+    walMode(d)
+    d.exec("PRAGMA foreign_keys = ON;")
+    migrate(d, by)
+  } catch (e) {
+    d.close()
+    throw e
+  }
   db = d
   return d
 }
 
-export function migrate(d: DatabaseSync) {
-  const version = (d.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-  for (let v = version; v < MIGRATIONS.length; v++) {
-    d.exec("BEGIN")
+/**
+  Switch to WAL. On a new file two apps starting together race for it, and SQLite does not run the busy handler for a
+  journal-mode change, so a locked database is retried here for as long as the busy timeout (R3.1, R3.2).
+*/
+function walMode(d: DatabaseSync) {
+  const until = Date.now() + 5000
+  for (;;) {
     try {
+      d.exec("PRAGMA journal_mode = WAL;")
+      return
+    } catch (e) {
+      if (!/locked|busy/i.test((e as Error).message) || Date.now() > until) throw e
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+}
+
+const userVersion = (d: DatabaseSync) => (d.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
+
+function migratedBy(d: DatabaseSync): Opener | null {
+  try {
+    const row = d.prepare("SELECT value FROM settings WHERE key = 'schema.by'").get() as { value: string } | undefined
+    return row ? (JSON.parse(row.value) as Opener) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+  Bring the schema up to date, once across processes: the version is read again inside `BEGIN IMMEDIATE`, which no
+  two connections hold at once, so of two apps starting together the second finds the work done (R3.2). A schema
+  newer than this app knows is refused before anything is written (R3.3).
+*/
+export function migrate(d: DatabaseSync, by: Opener = { app: "desktop", version: "" }) {
+  const check = () => {
+    const v = userVersion(d)
+    if (v > MIGRATIONS.length) throw new SchemaTooNew(v, migratedBy(d))
+    return v
+  }
+  if (check() === MIGRATIONS.length) return
+  d.exec("BEGIN IMMEDIATE")
+  try {
+    const version = check()
+    for (let v = version; v < MIGRATIONS.length; v++) {
       d.exec(MIGRATIONS[v])
       d.exec(`PRAGMA user_version = ${v + 1}`)
-      d.exec("COMMIT")
-    } catch (e) {
-      d.exec("ROLLBACK")
-      throw e
     }
+    if (version < MIGRATIONS.length)
+      d.prepare("INSERT INTO settings (key, value) VALUES ('schema.by', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+        JSON.stringify({ ...by, schema: MIGRATIONS.length }),
+      )
+    d.exec("COMMIT")
+  } catch (e) {
+    d.exec("ROLLBACK")
+    throw e
+  }
+}
+
+/** Runs `fn` in one write transaction no other process can interleave with (R4.1). */
+export function exclusive<T>(fn: () => T): T {
+  const d = getDb()
+  d.exec("BEGIN IMMEDIATE")
+  try {
+    const r = fn()
+    d.exec("COMMIT")
+    return r
+  } catch (e) {
+    d.exec("ROLLBACK")
+    throw e
   }
 }
 

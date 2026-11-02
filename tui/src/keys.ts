@@ -1,14 +1,13 @@
 import type { KeyStore } from "../../src/main/credentials"
 
 /*
-  The TUI's key store (specs/tui R1.3): each provider's key in the OS keychain itself — Credential Manager on
-  Windows, the Keychain on macOS, libsecret on Linux — through `Bun.secrets`, one entry per slot under one service.
-  Nothing of it is written to the data folder.
+  Where the 0.1 TUI kept keys before the shared keychain (specs/shared-data-folder R5.2): `Bun.secrets`, one entry per
+  slot under one service. Read once at start, moved into the shared store and removed from here.
 */
 
 export const SERVICE = "harness-for-rea"
 
-export function keychainKeyStore(service = SERVICE): KeyStore {
+export function bunSecretsKeyStore(service = SERVICE): KeyStore {
   return {
     available: () => typeof Bun !== "undefined" && typeof Bun.secrets?.get === "function",
     read: async (slot) => (await Bun.secrets.get({ service, name: slot })) ?? null,

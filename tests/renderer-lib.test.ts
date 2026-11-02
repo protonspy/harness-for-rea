@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { EventRow, PatchView, ProjectRow, StepRow, TaskHistory, TaskRow } from "../src/shared/types"
-import { bytes, foldProjects, GOAL_CARDS, goalCard, nameFrom, tasksOf } from "../src/renderer/src/lib/projects"
+import { bytes, foldProjects, GOAL_CARDS, goalCard, heldLabel, nameFrom, tasksOf } from "../src/renderer/src/lib/projects"
 import { canRetry, filesOfStep, fold, foldTasks, isLive, usageByAgent } from "../src/renderer/src/lib/store"
 import { clock, diffLines, tokens, tone, usd, when } from "../src/renderer/src/lib/format"
 
@@ -225,5 +225,14 @@ describe("the project views (specs/projects R4)", () => {
     expect(nameFrom("C:/apps/MyTool/")).toBe("MyTool")
     expect(bytes(512)).toBe("512 B")
     expect(bytes(3 * 1024 ** 3)).toBe("3.00 GB")
+  })
+})
+
+describe("a project another app holds (specs/shared-data-folder R1.3)", () => {
+  it("names the app and its process, and nothing when the project is free", () => {
+    expect(heldLabel({ heldBy: { app: "tui", pid: 42 } })).toBe("In use by a terminal UI (process 42)")
+    expect(heldLabel({ heldBy: { app: "desktop", pid: 7 } })).toBe("In use by the desktop app (process 7)")
+    expect(heldLabel({ heldBy: null })).toBeNull()
+    expect(heldLabel({})).toBeNull()
   })
 })

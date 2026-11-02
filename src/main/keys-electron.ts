@@ -2,7 +2,10 @@ import { safeStorage } from "electron"
 import type { KeyStore } from "./credentials"
 import { getSetting, setSetting } from "./db"
 
-/* The desktop app's key store: each key encrypted with `safeStorage` (the OS keychain; DPAPI on Windows), kept in the database. */
+/*
+  Where the desktop app kept keys before the shared keychain (specs/shared-data-folder R5.2): each encrypted with
+  `safeStorage` into the database. Read once at start, moved into the shared store and removed from here.
+*/
 
 export function electronKeyStore(): KeyStore {
   return {

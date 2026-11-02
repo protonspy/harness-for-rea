@@ -1,4 +1,4 @@
-import { Bug, Code2, FileSearch, Lightbulb, Map as MapIcon, Play, Plug, Trash2, type LucideIcon } from "lucide-react"
+import { Bug, Code2, FileSearch, Lightbulb, Lock, Map as MapIcon, Play, Plug, Trash2, type LucideIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import type { AnalysisSummary, Goal, ProjectRow, TaskRow, UnknownRow } from "@shared/types"
 import { ErrorText, Mono } from "@/components/common"
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { tone, usd, when } from "@/lib/format"
-import { goalCard } from "@/lib/projects"
+import { goalCard, heldLabel } from "@/lib/projects"
 
 /*
   A project (specs/projects R4.3): its target, kind, goal and model; a request to start a task from, with ideas that fit
@@ -30,7 +30,13 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
     load()
     // A task of the project that moves, or one that goes, changes what the view lists.
     return window.hfr.onPush((p) => {
-      if ((p.type === "task" && p.task.projectId === id) || p.type === "taskDeleted" || (p.type === "step" && p.step.kind === "delegation")) load()
+      if (
+        (p.type === "task" && p.task.projectId === id) ||
+        p.type === "taskDeleted" ||
+        (p.type === "step" && p.step.kind === "delegation") ||
+        (p.type === "project" && p.project.id === id)
+      )
+        load()
     })
   }, [load, id])
 
@@ -52,6 +58,8 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
   const { project, tasks, analyses, unknowns } = data
   const card = goalCard(project.goal)
   const GoalIcon = GOAL_ICONS[project.goal]
+  // Another app running a task of it holds it: its tasks are read here, and run there (specs/shared-data-folder R1.3).
+  const held = heldLabel(project)
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5 p-8">
       <header className="flex items-start justify-between gap-4">
@@ -65,6 +73,11 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
               <GoalIcon size={12} /> {card.title}
             </Badge>
             <Mono className="text-muted-foreground">{project.model}</Mono>
+            {held && (
+              <Badge variant="warn">
+                <Lock size={12} /> {held}
+              </Badge>
+            )}
           </div>
           <Mono className="mt-1.5 block truncate text-muted-foreground" title={project.targetPath}>
             {project.targetPath}
@@ -73,6 +86,7 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
         <Button
           size="sm"
           variant="destructive"
+          disabled={!!held}
           onClick={() =>
             // Deleting removes the project's tasks, sandboxes and folder for good (specs/projects R3.2).
             window.confirm(`Delete "${project.name}" with its tasks, sandboxes and files? This cannot be undone.`) &&
@@ -101,7 +115,7 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
               {idea}
             </Button>
           ))}
-          <Button className="ml-auto" disabled={!request.trim() || busy} onClick={start}>
+          <Button className="ml-auto" disabled={!request.trim() || busy || !!held} title={held ?? undefined} onClick={start}>
             <Play size={14} /> Start
           </Button>
         </div>

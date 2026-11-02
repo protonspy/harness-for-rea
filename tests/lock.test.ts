@@ -2,67 +2,89 @@ import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { DataFolderBusy, defaultDataDir, LOCK_FILE, lockDataFolder } from "../src/main/lock"
+import { defaultDataDir, LOCKS_DIR, LockHeld, Locks, projectLockName, type Holder } from "../src/main/lock"
 
-/* plans/finish-the-harness 1.9: one app on a data folder at a time. */
+/* specs/shared-data-folder R1: a project held by one app at a time, a stale lock taken over. */
 
 const dir = () => mkdtempSync(join(tmpdir(), "hfr-lock-"))
+const desktop: Holder = { app: "desktop", pid: 1001, since: 10 }
+const tui: Holder = { app: "tui", pid: 2002, since: 20 }
+const busy = (h: Holder) => `held by ${h.app} (process ${h.pid})`
+const file = (d: string, name: string) => join(d, LOCKS_DIR, `${name}.lock`)
 
-describe("the data folder's lock", () => {
-  it("lets the second app know which app holds the folder, and refuses it", () => {
+describe("the locks of a shared data folder", () => {
+  it("refuses a project another live app holds, naming it, and takes it once released (R1.1, R1.2)", () => {
     const d = dir()
-    const release = lockDataFolder(d, "desktop", 1001, () => true)
-    expect(() => lockDataFolder(d, "tui", 2002, () => true)).toThrow(DataFolderBusy)
-    expect(() => lockDataFolder(d, "tui", 2002, () => true)).toThrow(/already open in the desktop app \(process 1001\)/)
+    const a = new Locks(d, desktop, () => true)
+    const b = new Locks(d, tui, () => true)
+    const name = projectLockName("p1")
+    const release = a.take(name, busy)
+    expect(() => b.take(name, busy)).toThrow(LockHeld)
+    expect(() => b.take(name, busy)).toThrow("held by desktop (process 1001)")
+    expect(b.holder(name)).toEqual(desktop)
+    expect(a.holder(name)).toBeNull()
+    // another project is free
+    b.take(projectLockName("p2"), busy)()
     release()
-    expect(existsSync(join(d, LOCK_FILE))).toBe(false)
-    const tui = lockDataFolder(d, "tui", 2002, () => true)
-    expect(() => lockDataFolder(d, "desktop", 1001, () => true)).toThrow(/already open in the terminal UI \(process 2002\)/)
-    tui()
+    expect(existsSync(file(d, name))).toBe(false)
+    b.take(name, busy)
+    expect(a.holder(name)).toEqual(tui)
   })
 
-  it("takes over a lock whose process is gone, or that cannot be read", () => {
+  it("lets the process holding a lock take it again", () => {
     const d = dir()
-    lockDataFolder(d, "desktop", 1001, () => true)
-    const release = lockDataFolder(d, "tui", 2002, (pid) => pid !== 1001)
-    expect(JSON.parse(readFileSync(join(d, LOCK_FILE), "utf8"))).toMatchObject({ app: "tui", pid: 2002 })
-    release()
-    writeFileSync(join(d, LOCK_FILE), "not json")
-    utimesSync(join(d, LOCK_FILE), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-    lockDataFolder(d, "desktop", 1001, () => true)()
+    const a = new Locks(d, desktop, () => true)
+    a.take("x", busy)
+    expect(() => a.take("x", busy)).not.toThrow()
   })
 
-  it("checks a real process: this one holds it, a finished one does not", () => {
+  it("takes over a lock whose process is gone, or that cannot be read and is old (R1.4)", () => {
     const d = dir()
-    const release = lockDataFolder(d, "desktop")
-    expect(() => lockDataFolder(d, "tui", process.pid + 1)).toThrow(DataFolderBusy)
+    new Locks(d, desktop, () => true).take("p", busy)
+    const b = new Locks(d, tui, (h) => h.pid !== 1001)
+    expect(b.holder("p")).toBeNull()
+    const release = b.take("p", busy)
+    expect(JSON.parse(readFileSync(file(d, "p"), "utf8"))).toMatchObject({ app: "tui", pid: 2002, since: 20 })
     release()
-    writeFileSync(join(d, LOCK_FILE), JSON.stringify({ app: "tui", pid: 2 ** 30, since: 0 }))
-    lockDataFolder(d, "desktop")()
+    writeFileSync(file(d, "p"), "not json")
+    expect(() => b.take("p", busy)).toThrow(/another app may be taking it/)
+    utimesSync(file(d, "p"), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    b.take("p", busy)()
   })
 
-  it("leaves alone a lock another process took after this one's went stale", () => {
+  it("tells a reused pid from the process that took the lock by its start time", () => {
     const d = dir()
-    const release = lockDataFolder(d, "desktop", 1001, () => true)
-    writeFileSync(join(d, LOCK_FILE), JSON.stringify({ app: "tui", pid: 2002, since: 0 }))
-    release()
-    expect(existsSync(join(d, LOCK_FILE))).toBe(true)
+    new Locks(d, { ...desktop, since: 1 }, () => true).take("p", busy)
+    // the same pid, started later: not the holder, so the liveness check decides
+    const again = new Locks(d, { ...desktop, since: 2 }, (h) => h.since !== 1)
+    expect(again.holder("p")).toBeNull()
+    again.take("p", busy)()
   })
 
-  it("does not take over an unreadable lock another app may be writing, nor a stale one another process is clearing", () => {
+  it("leaves alone a lock another process took after this one's went stale, and a takeover another is doing", () => {
     const d = dir()
-    writeFileSync(join(d, LOCK_FILE), "")
-    expect(() => lockDataFolder(d, "tui", 2002, () => false)).toThrow(/another app may be starting/)
-    utimesSync(join(d, LOCK_FILE), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-    lockDataFolder(d, "tui", 2002, () => false)()
+    const a = new Locks(d, desktop, () => true)
+    const release = a.take("p", busy)
+    writeFileSync(file(d, "p"), JSON.stringify(tui))
+    release()
+    expect(existsSync(file(d, "p"))).toBe(true)
 
-    writeFileSync(join(d, LOCK_FILE), JSON.stringify({ app: "desktop", pid: 1001, since: 0 }))
-    writeFileSync(join(d, `${LOCK_FILE}.takeover`), "")
-    expect(() => lockDataFolder(d, "tui", 2002, (p) => p !== 1001)).toThrow(/another app may be starting/)
-    // a guard left by a process that died is cleared once it is old
-    utimesSync(join(d, `${LOCK_FILE}.takeover`), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-    lockDataFolder(d, "tui", 2002, (p) => p !== 1001)()
-    expect(existsSync(join(d, `${LOCK_FILE}.takeover`))).toBe(false)
+    writeFileSync(file(d, "q"), JSON.stringify(desktop))
+    writeFileSync(`${file(d, "q")}.takeover`, "")
+    const b = new Locks(d, tui, (h) => h.pid !== 1001)
+    expect(() => b.take("q", busy)).toThrow(/another app may be taking it/)
+    utimesSync(`${file(d, "q")}.takeover`, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    b.take("q", busy)()
+    expect(existsSync(`${file(d, "q")}.takeover`)).toBe(false)
+  })
+
+  it("lists what live apps other than this one hold (R1.3)", () => {
+    const d = dir()
+    new Locks(d, desktop, () => true).take(projectLockName("p1"), busy)
+    new Locks(d, { app: "tui", pid: 3003, since: 30 }, () => true).take(projectLockName("p2"), busy)
+    const mine = new Locks(d, tui, (h) => h.pid !== 3003)
+    mine.take(projectLockName("p3"), busy)
+    expect([...mine.held()]).toEqual([[projectLockName("p1"), desktop]])
   })
 
   it("finds the folder the desktop app keeps its data in, on each platform", () => {

@@ -4,7 +4,7 @@ ci: wait
 status: approved
 pr: per-plan
 merge: manual
-checksum: 1580d78c4288ee6c9a57dd4ce816bc7d77196b0385379083c8ac32047f338b39
+checksum: 495c3f89e37d5d0beec8021cf771d7c88fa8e9588aad1d2624c2087719a6cd15
 ---
 
 # TUI revamp
@@ -65,7 +65,7 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
   _Priority 1_
 - [x] 1.3 (Unit) Record as an ADR sharing the data folder between processes, amending adr:0017 and the folder-wide lock of plans/finish-the-harness 1.9: the per-project lock and when each app takes it, process-owned tasks identified by pid and start time, recovery and both container sweeps scoped to processes that are gone and run at the next start of any app, the SQLite busy timeout, migrations under a lock and the refusal of a newer schema, the first-start upgrade, image build and sign-in done once, the Electron single-instance lock kept, how an app learns another process changed a task and how fast, and the shared keychain store with `@napi-rs/keyring` and its `docs/stack.md` entry
   _Priority 1_
-- [ ] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
+- [x] 1.4 (Unit) Record as deltas, in the branch that delivers the shared-data-folder spec, the requirements it changes: the tui spec (Purpose, R1.1, R1.2, R1.3 and the out-of-scope line on patches), event-log R3.1, task-persistence R2.3 and R3.4, specialist-sandbox R2.7, projects R2.3 and R4, desktop-ui, and onboarding for the shared key store
   _Depends 1.3_
   _Priority 1_
 - [ ] 1.5 (Unit) Run the Bun core tests and the TUI screen tests in CI with Bun 1.4.4 set up as `release.yml` does, folding their results into the total of `scripts/test-gate.mjs` and the recorded command in `.claude/rules/project.md`, with one smoke screen test so the job fails when OpenTUI's test renderer does not start
@@ -75,6 +75,12 @@ collapsible tool calls, markdown and syntax-highlighted code, diffs, and dialogs
 - [ ] 1.7 (Unit) Rewrite the README's terminal UI sections for the new TUI: starting in a folder, the keys, the commands and running beside the desktop app
   _Depends 1.6_
   _Priority 3_
+- [ ] 1.8 (Unit) Render the chat's agent and user messages as markdown with
+      react-markdown in the desktop app, and color the code blocks in them with
+      CodeMirror's Lezer parsers through one highlighter in src/renderer/src/lib that
+      the TUI's transcript draws too, recorded as a delta to specs/chat R7 with
+      docs/stack.md entries
+  _Reason Asked by the user during the run: markdown in the desktop chat and syntax colors from Lezer_
 
 ## Done when
 
