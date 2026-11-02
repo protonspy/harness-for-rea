@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/settings-tabs
-delivery: in-review
+delivery: merged
 pr: 22
 ---
 

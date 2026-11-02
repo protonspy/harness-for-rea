@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: feat/tui-revamp
-delivery: in-review
+delivery: merged
 pr: 17
 ---
 

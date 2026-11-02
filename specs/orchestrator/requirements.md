@@ -2,7 +2,7 @@
 autonomy: auto
 ci: wait
 branch: fix/provider-base-url
-delivery: in-review
+delivery: merged
 pr: 23
 ---
 
