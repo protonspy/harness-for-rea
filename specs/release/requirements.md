@@ -1,9 +1,9 @@
 ---
 autonomy: auto
 ci: wait
-branch: feat/finish-the-harness
-delivery: merged
-pr: 13
+branch: fix/cli-sandbox-integrations
+delivery: in-review
+pr: 25
 ---
 
 # Release — requirements
@@ -19,7 +19,7 @@ first-run step.
 
 - **R1.1** The release workflow shall run only when a maintainer dispatches it by hand on `main`.
 - **R1.2** The release workflow shall build the desktop app as an unsigned Windows x64 installer and unsigned macOS arm64 and x64 disk images.
-- **R1.3** The release workflow shall build the CLI/TUI as a standalone binary for Windows x64, macOS arm64 and macOS x64, each archived with the sandbox sources it prepares the specialist's image from.
+- **R1.3** (MODIFIED) The release workflow shall build the CLI/TUI as a standalone binary for Windows x64, macOS arm64 and macOS x64, each archived with the sandbox sources it prepares the specialist's image from and the files of the MCP integrations its tasks use.
 - **R1.4** If a CLI binary built for its runner's platform does not print its version, then the release workflow shall fail before publishing anything.
 
 ## R2 · Publish

@@ -435,6 +435,15 @@ To release, bump `version` in `package.json` and run the **Release** workflow on
 everything above for Windows and macOS, publishes a GitHub Release, and publishes the CLI to npm
 with the `NPM_TOKEN` repository secret.
 
+### Hopper request attribution
+
+When an OpenAI-compatible provider uses `https://api.withhopper.com/v1`, the
+app identifies itself with `X-Hopper-Client: harness-for-rea` on model-list,
+connection-test and orchestrator requests, including streams. The header contains
+only the app name; it adds no user, project or machine identifiers. Other
+provider origins receive no Hopper attribution header. Any partner pricing is
+controlled by Hopper; this header does not grant access or guarantee a discount.
+
 ## License
 
 [MIT](LICENSE).

@@ -7,6 +7,7 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import type { BunPlugin } from "bun"
+import { CLI_SANDBOX } from "./cli-sandbox"
 
 const root = join(import.meta.dir, "..")
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version
@@ -21,10 +22,10 @@ const raw: BunPlugin = {
   },
 }
 
-/** Only what the image build reads at run time: the specialist's Dockerfile folder. */
+/** Only the parts of sandbox/ the CLI reads at run time (scripts/cli-sandbox.ts). */
 function copySandbox(to: string) {
   rmSync(join(to, "sandbox"), { recursive: true, force: true })
-  cpSync(join(root, "sandbox", "specialist"), join(to, "sandbox", "specialist"), { recursive: true })
+  for (const part of CLI_SANDBOX) cpSync(join(root, "sandbox", part), join(to, "sandbox", part), { recursive: true })
 }
 
 /**
