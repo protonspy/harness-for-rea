@@ -1,3 +1,4 @@
+import { attributionHeaders } from "./attribution"
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { ChatOpenAI } from "@langchain/openai"
 import { ChatOpenRouter } from "@langchain/openrouter"
@@ -69,7 +70,7 @@ export function makeModel(o: ModelOptions): BaseChatModel {
     return new ChatOpenAI({
       model: o.model,
       apiKey: o.apiKey,
-      configuration: { baseURL },
+      configuration: { baseURL, defaultHeaders: attributionHeaders(baseURL) },
       temperature: 0.2,
       streamUsage: true,
       ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),
