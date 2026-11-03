@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: fix/delegation-idle-timeout
-delivery: in-progress
-pr: 1
+delivery: in-review
+pr: 30
 ---
 
 # Claude specialist — requirements
