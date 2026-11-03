@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/ida-pro-mcp
-delivery: in-progress
+delivery: in-review
+pr: 29
 ---
 
 # Ida pro — requirements
