@@ -2,8 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/integration-skills
-delivery: in-progress
-pr: 22
+delivery: in-review
+pr: 32
 ---
 
 # Mcp integrations — requirements
