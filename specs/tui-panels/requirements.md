@@ -38,5 +38,5 @@ call (plans/tui-revamp 1.6). Fixes the setup and settings defects and the parity
 
 ## R4 · Settings
 
-- **R4.1** The settings editor shall let the user change the provider, the model, the orchestrator's and the specialist's effort, the delegation timeout and the approval and question timeouts.
+- **R4.1** (MODIFIED) The settings editor shall let the user change the provider, the model, the orchestrator's and the specialist's effort, the delegation's inactivity timeout and the approval and question timeouts.
 - **R4.2** The settings editor shall open the setup again.

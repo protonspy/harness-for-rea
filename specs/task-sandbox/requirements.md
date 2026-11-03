@@ -29,7 +29,7 @@ only through an approved patch.
 - **R2.2** While the step is in read mode, the sandbox shall mount `/work` read-only.
 - **R2.3** The sandbox shall run the container as root with every capability dropped but those installing packages needs, `no-new-privileges`, a writable root filesystem, and no memory, CPU, process or size limit (adr:0016-let-the-orchestrator-run-the-specialists-sandbox).
 - **R2.4** The sandbox shall give the container full internet access on Docker's default network, through no proxy (adr:0013-give-the-sandboxes-full-internet-access).
-- **R2.5** When a delegation is cancelled or exceeds its timeout, the sandbox shall kill its container and record the delegation as cancelled or timed out.
+- **R2.5** (MODIFIED) When a delegation is cancelled or times out (specs/claude-specialist/R1.3), the sandbox shall kill its container and record the delegation as cancelled or timed out.
 - **R2.6** If Docker is unavailable or the sandbox image fails verification, then the sandbox shall refuse the delegation and report the reason, without running the specialist on the host.
 
 ## R3 · Context isolation

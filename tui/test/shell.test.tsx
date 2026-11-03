@@ -68,7 +68,7 @@ describe("the shell (specs/tui-shell)", () => {
     for (const cmd of ["/close", "/delete", "/events", "/projects", "/settings", "/quit"]) expect(s.frame()).toContain(cmd)
     await s.type("settings")
     await s.enter()
-    await s.until("Delegation timeout (minutes)")
+    await s.until("Delegation inactivity timeout (minutes)")
   })
 
   test("Ctrl+C clears the prompt, then asks for a second press before it quits (R2.5)", async () => {

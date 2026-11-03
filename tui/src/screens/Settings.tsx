@@ -8,7 +8,7 @@ import { providerCommands } from "./Setup"
 
 /*
   The settings editor (specs/tui-panels R4): the provider, model and key through the setup's commands, the
-  orchestrator's and the specialist's effort, and the delegation, approval and question timeouts, each saved as it is
+  orchestrator's and the specialist's effort, and the delegation's inactivity, approval and question timeouts, each saved as it is
   changed; /setup opens the setup again.
 */
 
@@ -92,7 +92,7 @@ export function SettingsScreen() {
         onChange={(v) => void save({ specialistEffort: v }, `Specialist's effort: ${v}.`)}
         focused={on("specialist")}
       />
-      {minutes("timeout", "Delegation timeout (minutes)")}
+      {minutes("timeout", "Delegation inactivity timeout (minutes)")}
       {minutes("approval", "Approval timeout (minutes)")}
       {minutes("question", "Question timeout (minutes)")}
     </box>

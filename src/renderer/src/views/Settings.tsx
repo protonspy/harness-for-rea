@@ -12,7 +12,7 @@ import { FIRST_SECTION, SETTINGS_SECTIONS, type SettingsSection } from "@/lib/se
 
 /*
   Settings, one tab per section (specs/desktop-ui R1.4): the orchestrator's provider, key, endpoint, model and effort;
-  the sandbox images and the delegation timeout; the Claude sign-in and the specialist's effort; the MCP integrations
+  the sandbox images and the delegation's inactivity timeout; the Claude sign-in and the specialist's effort; the MCP integrations
   (specs/mcp-integrations R1, R2); and the waits on the user (specs/desktop-ui R1). The first-run setup is reachable
   again from here (specs/onboarding R2.2).
 */
@@ -80,7 +80,10 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
             <div className="p-4">
               <SandboxPanel>
                 <div className="grid grid-cols-2 gap-4">
-                  <Field label="Timeout per delegation (minutes)">
+                  <Field
+                    label="Delegation inactivity timeout (minutes)"
+                    hint="Stops the specialist after this long with no output. A running tool, a question to you and the time between turns do not count."
+                  >
                     <Input
                       type="number"
                       min={1}
