@@ -9,3 +9,9 @@
 ## 2 · Workflow
 
 - [x] 2.1 (Unit) Write the release workflow: dispatch on main, version check, builds per platform with the version check, GitHub Release, npm publish — R1.1, R1.3, R1.4, R2.1, R2.2, R2.3
+
+
+## 3 · The integrations in the CLI
+
+- [x] 3.1 (Unit) Copy every part of sandbox/ the core reads at run time into the CLI package and archives, from one list a test holds to the core's reads — R1.3
+  _Reason 0.3.0 shipped the CLI without sandbox/mcp and sandbox/cheat-engine, so a TUI task with Cheat Engine on had every delegation refused_
