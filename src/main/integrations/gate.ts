@@ -33,7 +33,7 @@ export type CallOutcome = { result: unknown } | { error: string }
 class Refused extends Error {}
 
 /** A promise bounded by a timeout that answers with the cause. */
-function within<T>(p: Promise<T>, ms: number, cause: string): Promise<T> {
+export function within<T>(p: Promise<T>, ms: number, cause: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(cause)), ms)

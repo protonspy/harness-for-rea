@@ -89,7 +89,39 @@ target, outcome, bytes }`, never the answer (R6.1).
   since a call names its own, and the ask channel is already the one writable path outside
   `/work`.
 
+## Skills (R4.7–R4.9)
+
+- `sandbox/skills/<id>/SKILL.md` — one per integration, Cheat Engine's and IDA Pro's: the ground rules
+  of its tools here (read-only, one approved target, answers are data), where to start, and the
+  workflows over its catalog. Each names its tools by their full `mcp__<id>__<tool>` name, and a test
+  holds every such name to the catalog (R4.7), so a tool renamed or dropped fails the build rather
+  than the specialist.
+  Cheat Engine's adapts the read-only practices of upstream cheatengine-mcp-bridge's `AI_Context/`
+  (MIT): walking a pointer back from a value, the one scan list a new scan replaces, `between`
+  scans. Upstream ida-pro-mcp's `skills/idapython` is not carried: it is for writing IDAPython
+  through `py_eval`, which adr:0027-ship-a-read-only-ida-plugin-on-a-named-pipe removed, and IDA is
+  not in the container; only its rules — derive rather than guess, convert bases with
+  `int_convert`, name what finds a thing again — are kept.
+- `HostIntegration.skill` — the skill's text, imported with `?raw` by the integration's host side,
+  as the operating guide is, so it is bundled into the app and the CLI and never copied as a file.
+- `TaskIntegrations.forDelegation` — for each offered integration, `connected()` bounded by the
+  integration's timeout decides whether it answers; an `OfferedIntegration` carries the skill only
+  then (R4.8, R4.9). A named target already required a connected integration (R4.5); this only
+  decides the skill of an integration offered without one.
+- `writeIntegrations` writes each carried skill to `<run>/mcp/skills/<id>/SKILL.md`, which the
+  container reads at `/run/hfr/mcp/skills/<id>/SKILL.md` through the run directory it already
+  mounts read-only: no mount, port or variable is added (R4.2).
+- `integrationLines` adds, for an integration with a skill, one line directing the specialist to read
+  it before its first call to that integration's tools; `integrations.offered` records `skill` per
+  integration.
+
+Rejected: Claude Code's own skill loading, which `--setting-sources ""` turns off
+(adr:0018-make-rea-native-to-the-specialist); the skill inlined in the system prompt, paid on every
+turn of a delegation whether or not it calls the integration; and a skill for the orchestrator, which
+delegates the analysis of a target (R5.2).
+
 ## Testing
 
 The gate, the approval and the channel run in Vitest against a fake integration with one tool
 that needs a target and one that does not, so the framework is tested apart from any engine.
+The skills are checked against the real catalogs, and their delivery against the fake integration.

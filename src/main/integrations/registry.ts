@@ -15,6 +15,8 @@ export interface HostIntegration {
   info: IntegrationInfo
   /** how long one call may take before it is answered with an error (R4.4) */
   timeoutMs: number
+  /** how to work with its tools, for the specialist while it answers (specs/mcp-integrations R4.7, R4.8) */
+  skill?: string
   checks(config: Record<string, unknown>): Promise<IntegrationCheck[]>
   connected(config: Record<string, unknown>): Promise<boolean>
   /** the tools it offers now; static for an engine whose catalog the app carries */

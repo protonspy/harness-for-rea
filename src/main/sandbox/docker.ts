@@ -208,6 +208,11 @@ export const ASK_USER_TOOL = "mcp__hfr__ask_user"
 /** Where a delegation's integration servers are in the container: the run directory, read-only (specs/mcp-integrations R4.2). */
 export const INTEGRATIONS_DIR = "/run/hfr/mcp"
 
+/** Where an integration's skill is in the container, under its run directory (specs/mcp-integrations R4.8). */
+export function integrationSkillPath(id: string): string {
+  return `${INTEGRATIONS_DIR}/skills/${id}/SKILL.md`
+}
+
 /**
   The specialist's MCP servers: ask-user and REA, both baked into its image (adr:0018-make-rea-native-to-the-specialist),
   and one per integration the delegation offers, from its run directory (adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations).

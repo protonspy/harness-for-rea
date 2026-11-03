@@ -276,7 +276,13 @@ export function writeIntegrations(runDir: string, offered: OfferedIntegration[],
   if (!offered.length) return
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   copyFileSync(server, join(dir, "server.mjs"))
-  for (const i of offered) writeFileSync(join(dir, `${i.id}.json`), JSON.stringify(mcpListing(i.tools)))
+  for (const i of offered) {
+    writeFileSync(join(dir, `${i.id}.json`), JSON.stringify(mcpListing(i.tools)))
+    if (!i.skill) continue
+    // The skill of an integration that answers, read at integrationSkillPath (R4.8).
+    mkdirSync(join(dir, "skills", i.id), { recursive: true, mode: 0o700 })
+    writeFileSync(join(dir, "skills", i.id, "SKILL.md"), i.skill)
+  }
 }
 
 /** Empty a sandbox's ask channel, so an earlier delegation's questions are not answered again (specs/specialist-sandbox R4.8). */
@@ -379,7 +385,7 @@ export async function delegate(
   }
   if (offered.length)
     ev("integrations.offered", `Offered ${offered.map((i) => `${i.title} (${i.tools.length} tools)`).join(", ")}`, {
-      integrations: offered.map((i) => ({ id: i.id, tools: i.tools.map((t) => t.name), target: i.target ?? null })),
+      integrations: offered.map((i) => ({ id: i.id, tools: i.tools.map((t) => t.name), target: i.target ?? null, skill: i.skill !== undefined })),
     })
 
   try {

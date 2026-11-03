@@ -11,6 +11,7 @@ import {
   PLUGIN_VERSION,
 } from "@shared/idapro"
 import type { IntegrationActionResult, IntegrationCheck } from "@shared/integrations"
+import skill from "../../../sandbox/skills/ida-pro/SKILL.md?raw"
 import { BridgeClient } from "../cheatengine/pipe"
 import type { HostIntegration, IntegrationSession } from "../integrations/registry"
 
@@ -155,6 +156,7 @@ export function idaPro(deps: IdaProDeps): HostIntegration {
   return {
     info: IDA_PRO_INFO,
     timeoutMs: CALL_TIMEOUT_MS,
+    skill,
     checks,
     async connected() {
       const p = await ping()

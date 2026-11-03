@@ -49,3 +49,4 @@ themselves. -->
 - **integration target** — what an MCP integration's tools work on, such as one Windows process by pid for Cheat Engine or one database by its input file's SHA-256 for IDA Pro, approved by the user in every task; not a project's target. Avoid: attached process
 - **bridge** — the app's read-only Lua script in Cheat Engine's autorun folder, derived from the upstream cheatengine-mcp-bridge, answering the app on its own named pipe. Avoid: CE script
 - **IDA plugin** — the app's read-only Python plugin in IDA's user plugins folder, derived from the upstream ida-pro-mcp, answering the app on its own named pipe (adr:0027-ship-a-read-only-ida-plugin-on-a-named-pipe). Avoid: IDA bridge
+- **integration skill** — the guide an MCP integration carries for the specialist on working with its tools, written into a delegation's run directory only while the integration answers; not REA's skill. Avoid: integration prompt, tool guide

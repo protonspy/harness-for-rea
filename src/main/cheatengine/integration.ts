@@ -13,6 +13,7 @@ import {
   type CheatEngineConfig,
 } from "@shared/cheatengine"
 import type { IntegrationActionResult, IntegrationCheck } from "@shared/integrations"
+import skill from "../../../sandbox/skills/cheat-engine/SKILL.md?raw"
 import type { HostIntegration, IntegrationSession } from "../integrations/registry"
 import { BridgeClient } from "./pipe"
 
@@ -167,6 +168,7 @@ export function cheatEngine(deps: CheatEngineDeps): HostIntegration {
   return {
     info: CHEAT_ENGINE_INFO,
     timeoutMs: CALL_TIMEOUT_MS,
+    skill,
     checks,
     connected,
     catalog: async () => CHEAT_ENGINE_TOOLS,
