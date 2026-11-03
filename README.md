@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.png" alt="Harness for REA — an orchestrator plans, a sandboxed Claude Code specialist takes the target apart" width="100%">
+  <img src=".github/assets/banner.png" alt="Harness for REA — an orchestrator plans, a sandboxed specialist takes the target apart" width="100%">
 </p>
 
 <p align="center">
