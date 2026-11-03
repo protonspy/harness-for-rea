@@ -68,3 +68,4 @@ themselves. -->
 - **oxlint** — the lint layer, as in the MagnoTech desktop app.
 - **Prettier** — formatting, as in the MagnoTech desktop app.
 - **electron-builder** — Windows NSIS installer.
+- **CodeQL** (`github/codeql-action`) — code scanning of the TypeScript sources and the workflows in CI, free for a public repository.
