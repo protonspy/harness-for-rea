@@ -16,10 +16,19 @@ production wiring in `src/main/index.ts` only ever builds the Docker one.
 ## Boundaries and contracts
 
 ```
-executor.start(launch, { onEvent, onRaw, signal, timeoutMs }) → Session
+executor.start(launch, { onEvent, onRaw, signal, idleMs }) → Session
+                       idleMs: the inactivity timeout (R1.3, R1.6). The timer runs only
+                       while a turn is pending with no tool call open (between a tool.call
+                       and its tool.result — a question to the user, an integration call or
+                       a long REA analysis included), and every line with a stream event
+                       restarts it; a blank or unknown line does not. A subagent's Agent call
+                       does not hold it, its calls inside do. With a call open, the ceiling
+                       is MCP_TOOL_TIMEOUT_MS, restarted only when a call opens or closes
+                       (R1.7). No wall-clock limit: the user, the orchestrator or the app
+                       cancels.
 session.send(text)     one {"type":"user","message":{"role":"user","content":text}} line
 session.result()       resolves on the next result event: text, usage, cost, session id
-session.close()        ends stdin, waits for exit
+session.close()        ends stdin, waits for exit; stops the CLI after 30 s (R1.8)
 session.kill(reason)   launch.kill() (docker kill) and the process tree
 ```
 

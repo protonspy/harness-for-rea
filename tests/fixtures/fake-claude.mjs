@@ -68,6 +68,40 @@ for await (const line of createInterface({ input: process.stdin })) {
   turn++
   log({ turn, prompt })
   if (mode === "hang") continue
+  // "slow-tool" holds one tool call open, silent, for HFR_FAKE_MS; "chatty" writes a line every HFR_FAKE_STEP_MS for
+  // HFR_FAKE_MS; "silent-after-tool" closes a quick tool call, then goes silent. Each then answers, but the last.
+  const ms = Number(process.env.HFR_FAKE_MS ?? 1000)
+  const sleep = (n) => new Promise((r) => setTimeout(r, n))
+  if (mode === "slow-tool" || mode === "silent-after-tool") {
+    out({ type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: `tu_s${turn}`, name: "Bash", input: { command: "make" } }] } })
+    if (mode === "slow-tool") await sleep(ms)
+    out({ type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: `tu_s${turn}`, content: "built" }] } })
+    if (mode === "silent-after-tool") continue
+  }
+  if (mode === "noise-hang") {
+    // Blank and unknown lines, often, and never an answer.
+    for (;;) {
+      process.stdout.write("\n")
+      out({ type: "brand_new_event", session_id: session })
+      await sleep(100)
+    }
+  }
+  if (mode === "silent-subagent") {
+    // A subagent starts and stalls: its Agent call stays open with nothing inside it.
+    out({
+      type: "assistant",
+      session_id: session,
+      message: { content: [{ type: "tool_use", id: `tu_a${turn}`, name: "Agent", input: { subagent_type: "Explore", prompt: "look" } }] },
+    })
+    continue
+  }
+  if (mode === "chatty") {
+    const step = Number(process.env.HFR_FAKE_STEP_MS ?? 200)
+    for (let t = 0; t < ms; t += step) {
+      out({ type: "assistant", session_id: session, message: { content: [{ type: "text", text: `working ${t}` }] } })
+      await sleep(step)
+    }
+  }
   if (["refusal", "refusal-quiet", "refusal-text", "policy-claim"].includes(mode)) {
     // A safeguard refusal: the API's stop reason with Claude Code's error line ("refusal"), the stop reason alone
     // ("refusal-quiet"), or the error line alone ("refusal-text"). "policy-claim" is a failed turn whose text only
@@ -216,4 +250,6 @@ for await (const line of createInterface({ input: process.stdin })) {
     modelUsage: { "claude-opus-test": {} },
   })
 }
-process.exit(0)
+// "linger" keeps running once stdin ends, as a CLI holding a child would.
+if (mode === "linger") setInterval(() => undefined, 1000)
+else process.exit(0)

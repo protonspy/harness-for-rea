@@ -98,7 +98,7 @@ describe("the setup (specs/tui-panels R3)", () => {
     await s.type("/done")
     await s.enter()
     await s.until(() => called("completeSetup").length === 1)
-    await s.until("Delegation timeout (minutes)")
+    await s.until("Delegation inactivity timeout (minutes)")
   })
 
   test("shows a banner when a step stops being ready after the setup, naming it (R3.5)", async () => {
@@ -114,7 +114,7 @@ describe("settings (specs/tui-panels R4)", () => {
   test("changes the efforts and the timeouts, and opens the setup again", async () => {
     const { api, called } = scriptedApi()
     const s = await show({ api, start: { kind: "settings" } })
-    await s.until("Delegation timeout (minutes)")
+    await s.until("Delegation inactivity timeout (minutes)")
     await s.press("right")
     await s.until(() => called("saveSettings").some((c) => JSON.stringify(c.args).includes("orchestratorEffort")))
     await s.press("tab")

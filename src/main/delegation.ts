@@ -396,7 +396,7 @@ export async function delegate(
         held?.box.name,
       ),
       {
-        timeoutMs: settings.timeoutMinutes * 60_000,
+        idleMs: settings.timeoutMinutes * 60_000,
         signal: o.signal,
         onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
         onEvent: (e) => {

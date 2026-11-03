@@ -11,6 +11,14 @@
 - [x] 1.5 (Unit) Pass the chosen effort to Claude Code as `--effort` through the launcher — R1.5
   _Depends 1.3_
 
+- [x] 1.6 (TDD) Time a delegation out on inactivity rather than on the clock: restart the timer on every output line, hold it while a tool call is open or no turn is pending, and label the setting as an inactivity timeout — R1.3, R1.6
+  _Depends 1.4_
+  _Reason Long analyses were cut mid-work by the wall-clock timeout_
+
+- [x] 1.7 (TDD) Bound what inactivity alone does not: stop a delegation whose tool call stays open past the MCP tool timeout with no other call moving, count only lines with stream events as activity, leave a subagent's own call out of the open calls, and stop a CLI that does not exit after its stdin ends — R1.6, R1.7, R1.8
+  _Depends 1.6_
+  _Reason The code and security reviews of 1.6 found ways a delegation could now run forever_
+
 ## 2 · Login
 
 - [x] 2.1 (Unit) Report login state and run the subscription login through the sandbox image, exposing only an Anthropic URL — R3.1, R3.2

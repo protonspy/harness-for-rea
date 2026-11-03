@@ -169,7 +169,7 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
     const f = fakeLaunch("answer")
     const events: StreamEvent[] = []
     const raw: string[] = []
-    const s = new SpecialistSession(f.launch, { timeoutMs: 20_000, onEvent: (e) => events.push(e), onRaw: (l) => raw.push(l) })
+    const s = new SpecialistSession(f.launch, { idleMs: 20_000, onEvent: (e) => events.push(e), onRaw: (l) => raw.push(l) })
     const first = await s.send("Look at /work/src/a.ts please")
     expect(first).toMatchObject({ text: expect.stringContaining("Turn 1: analysed src/a.ts"), costUsd: 0.42, tokensIn: 1200, cacheTokens: 60 })
     const second = await s.send("And again /work/src/a.ts")
@@ -185,7 +185,7 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
   })
 
   it("reports an exit without a result by its last error line, classified", async () => {
-    const s = new SpecialistSession(fakeLaunch("auth-fail").launch, { timeoutMs: 20_000 })
+    const s = new SpecialistSession(fakeLaunch("auth-fail").launch, { idleMs: 20_000 })
     const err = await s.send("hi").catch((e) => e)
     expect(err).toBeInstanceOf(SpecialistError)
     expect(err.kind).toBe("auth")
@@ -193,7 +193,7 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
   })
 
   it("rejects a failed result as a plan limit", async () => {
-    const s = new SpecialistSession(fakeLaunch("limit").launch, { timeoutMs: 20_000 })
+    const s = new SpecialistSession(fakeLaunch("limit").launch, { idleMs: 20_000 })
     await expect(s.send("hi")).rejects.toMatchObject({ kind: "limit", message: expect.stringContaining("resets 3pm") })
     await s.close()
   })
@@ -201,7 +201,7 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
   it("rejects a safeguard refusal as its own kind, from the usage-policy message or the refusal stop reason (specs/specialist-lifecycle R2.1)", async () => {
     for (const mode of ["refusal", "refusal-quiet", "refusal-text"]) {
       const f = fakeLaunch(mode)
-      const s = new SpecialistSession(f.launch, { timeoutMs: 20_000 })
+      const s = new SpecialistSession(f.launch, { idleMs: 20_000 })
       await expect(s.send("hi"), mode).rejects.toMatchObject({ kind: "refused", message: expect.stringMatching(/usage policy/i) })
       await s.close()
       // the CLI exited on its own: its container goes with it, nothing to kill (specs/specialist-lifecycle R3.1)
@@ -210,41 +210,111 @@ describe("SpecialistSession (R1.1–R1.4)", () => {
   })
 
   it("does not take a failed turn that only talks about the usage policy for a refusal", async () => {
-    const s = new SpecialistSession(fakeLaunch("policy-claim").launch, { timeoutMs: 20_000 })
+    const s = new SpecialistSession(fakeLaunch("policy-claim").launch, { idleMs: 20_000 })
     await expect(s.send("hi")).rejects.toMatchObject({ kind: "failed" })
     await s.close()
   })
 
   it("keeps unknown lines as events", async () => {
     const events: StreamEvent[] = []
-    const s = new SpecialistSession(fakeLaunch("noise").launch, { timeoutMs: 20_000, onEvent: (e) => events.push(e) })
+    const s = new SpecialistSession(fakeLaunch("noise").launch, { idleMs: 20_000, onEvent: (e) => events.push(e) })
     await s.send("x")
     await s.close()
     expect(events.filter((e) => e.kind === "unknown")).toHaveLength(2)
   })
 
-  it("stops the launch and the process on timeout and reports it", async () => {
+  it("stops the launch and the process once a turn is inactive past the timeout, and reports it (R1.3)", async () => {
     const f = fakeLaunch("hang")
-    const s = new SpecialistSession(f.launch, { timeoutMs: 800 })
+    const s = new SpecialistSession(f.launch, { idleMs: 800 })
     await expect(s.send("x")).rejects.toMatchObject({ kind: "timeout" })
     await s.kill("timeout")
     expect(s.outcome).toBe("timeout")
     expect(f.stopped()).toBe(1)
   })
 
+  describe("inactivity (R1.6)", () => {
+    const slow = (mode: string, env: Record<string, string>) => {
+      const f = fakeLaunch(mode)
+      f.launch.env = { ...f.launch.env, ...env }
+      return f
+    }
+
+    it("keeps a turn whose tool call stays open, silent, past the timeout", async () => {
+      const f = slow("slow-tool", { HFR_FAKE_MS: "1500" })
+      const s = new SpecialistSession(f.launch, { idleMs: 500 })
+      await expect(s.send("x")).resolves.toBeTruthy()
+      await s.close()
+      expect(s.outcome).toBeNull()
+    })
+
+    it("keeps a turn that writes more often than the timeout, however long it runs", async () => {
+      const f = slow("chatty", { HFR_FAKE_MS: "1500", HFR_FAKE_STEP_MS: "150" })
+      const s = new SpecialistSession(f.launch, { idleMs: 500 })
+      await expect(s.send("x")).resolves.toBeTruthy()
+      await s.close()
+      expect(s.outcome).toBeNull()
+    })
+
+    it("times a turn out once it goes silent after its tool call closed", async () => {
+      const f = slow("silent-after-tool", {})
+      const s = new SpecialistSession(f.launch, { idleMs: 500 })
+      await expect(s.send("x")).rejects.toMatchObject({ kind: "timeout" })
+      expect(f.stopped()).toBe(1)
+    })
+
+    it("times a turn out when a subagent stalls, its Agent call still open", async () => {
+      const f = slow("silent-subagent", {})
+      const s = new SpecialistSession(f.launch, { idleMs: 500 })
+      await expect(s.send("x")).rejects.toMatchObject({ kind: "timeout" })
+      expect(f.stopped()).toBe(1)
+    })
+
+    it("does not count blank or unknown lines as activity", async () => {
+      const f = slow("noise-hang", {})
+      const s = new SpecialistSession(f.launch, { idleMs: 500 })
+      await expect(s.send("x")).rejects.toMatchObject({ kind: "timeout", message: expect.stringMatching(/inactive for 1 s/) })
+    })
+
+    it("stops a turn whose tool call stays open past the ceiling with no other call opening or closing (R1.7)", async () => {
+      const f = slow("slow-tool", { HFR_FAKE_MS: "3000" })
+      const s = new SpecialistSession(f.launch, { idleMs: 10_000, openCeilingMs: 500 })
+      await expect(s.send("x")).rejects.toMatchObject({ kind: "timeout", message: expect.stringMatching(/tool call .* stayed open/) })
+      expect(f.stopped()).toBe(1)
+    })
+
+    it("stops a CLI that does not exit once the delegation ends, keeping the answer (R1.8)", async () => {
+      const f = fakeLaunch("linger")
+      const s = new SpecialistSession(f.launch, { idleMs: 10_000, exitGraceMs: 300 })
+      await expect(s.send("x")).resolves.toBeTruthy()
+      await s.close()
+      expect(f.stopped()).toBe(1)
+      expect(s.outcome).toBeNull()
+    })
+
+    it("counts no time while no turn is in progress", async () => {
+      const f = fakeLaunch("answer")
+      const s = new SpecialistSession(f.launch, { idleMs: 400 })
+      await s.send("first")
+      await new Promise((r) => setTimeout(r, 900))
+      await expect(s.send("second")).resolves.toBeTruthy()
+      await s.close()
+      expect(s.outcome).toBeNull()
+    })
+  })
+
   it("stops on cancel and refuses to start when already cancelled", async () => {
     const f = fakeLaunch("hang")
     const ac = new AbortController()
-    const s = new SpecialistSession(f.launch, { timeoutMs: 20_000, signal: ac.signal })
+    const s = new SpecialistSession(f.launch, { idleMs: 20_000, signal: ac.signal })
     const pending = s.send("x")
     setTimeout(() => ac.abort(), 200)
     await expect(pending).rejects.toMatchObject({ kind: "cancelled" })
     expect(s.outcome).toBe("cancelled")
-    expect(() => new SpecialistSession(f.launch, { timeoutMs: 1000, signal: ac.signal })).toThrow(/Cancelled/)
+    expect(() => new SpecialistSession(f.launch, { idleMs: 1000, signal: ac.signal })).toThrow(/Cancelled/)
   })
 
   it("reports a launch that cannot start", async () => {
-    const s = new SpecialistSession({ command: join(tmpdir(), "no-such-binary.exe"), args: [] }, { timeoutMs: 5000 })
+    const s = new SpecialistSession({ command: join(tmpdir(), "no-such-binary.exe"), args: [] }, { idleMs: 5000 })
     await expect(s.send("x")).rejects.toThrow()
   })
 

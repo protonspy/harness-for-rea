@@ -35,7 +35,7 @@ describe.skipIf(!process.env.HFR_DOCKER)("files planted in /work (adr:0018)", ()
     const calls: string[] = []
     const session = new SpecialistSession(
       { command: "docker", args: [...dockerRunArgs({ id, workspace: work, runDir: run, out, mode: "read" }), ...specialistCommand(claudeArgs("read"))] },
-      { timeoutMs: 240_000, onEvent: (e) => void (e.kind === "tool.call" && calls.push(e.summary)) },
+      { idleMs: 240_000, onEvent: (e) => void (e.kind === "tool.call" && calls.push(e.summary)) },
     )
     // A loaded CLAUDE.md shows in the answer: the planted instruction makes the canary its first word.
     const result = await session.send("Reply with one word: hello")
