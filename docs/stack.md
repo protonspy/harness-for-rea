@@ -57,6 +57,8 @@ themselves. -->
 - **GitHub Container Registry** — hosts the specialist's base image, everything but Claude Code, published by the Images workflow and pulled by digest ([adr:0012-pull-the-specialists-base-image-from-ghcr]).
 - **Cheat Engine** (on the user's Windows machine, not shipped) — the first MCP integration: the agents read a live process's memory through it, only through the app ([adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations]).
 - **The bridge** (`sandbox/cheat-engine/hfr-bridge.lua`) — the app's own read-only fork of `miscusi-peek/cheatengine-mcp-bridge` (MIT) at commit `6bd7ce90`, its write, injection, execution and debugging handlers deleted; upstream fixes come in by hand ([adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations]).
+- **IDA Pro** (on the user's Windows machine, not shipped) — the second MCP integration: the agents read the database the user has open in IDA — decompilation, disassembly, cross-references, types and bytes — only through the app ([adr:0027-ship-a-read-only-ida-plugin-on-a-named-pipe]).
+- **The IDA plugin** (`sandbox/ida-pro/`) — the app's own read-only fork of `mrexodia/ida-pro-mcp` (MIT) at commit `c133c38`, Python that runs inside IDA: upstream's read-only tools on a named pipe, its HTTP server, write, debugger and Python-evaluation tools deleted; upstream fixes come in by hand ([adr:0027-ship-a-read-only-ida-plugin-on-a-named-pipe]).
 
 ## Development
 

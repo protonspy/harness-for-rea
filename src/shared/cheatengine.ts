@@ -27,7 +27,7 @@ export const CheatEngineConfigSchema = z
       .trim()
       .max(1000)
       .refine(
-        (p) => p === "" || (/^([A-Za-z]:[\\/]|\/(?!\/))/.test(p) && /\.exe$/i.test(p)),
+        (p) => p === "" || (/^([A-Za-z]:[\\/]|\/(?![\\/]))/.test(p) && /\.exe$/i.test(p)),
         "Give the local path to Cheat Engine's .exe, not a network path.",
       ),
   })

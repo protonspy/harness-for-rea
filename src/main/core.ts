@@ -5,6 +5,7 @@ import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
 import type { ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
+import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
@@ -155,8 +156,11 @@ export async function startCore(host: CoreHost): Promise<Core> {
   const registry = new SandboxRegistry(
     (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
   )
-  // The MCP integrations the app carries, Cheat Engine first, and the gate every call passes (specs/mcp-integrations R1.1).
-  const integrationRegistry = new IntegrationRegistry([cheatEngine({ script: join(host.sandboxDir, "cheat-engine", BRIDGE_FILE) })])
+  // The MCP integrations the app carries, Cheat Engine and IDA Pro, and the gate every call passes (specs/mcp-integrations R1.1).
+  const integrationRegistry = new IntegrationRegistry([
+    cheatEngine({ script: join(host.sandboxDir, "cheat-engine", BRIDGE_FILE) }),
+    idaPro({ pluginDir: join(host.sandboxDir, "ida-pro") }),
+  ])
   const integrations = {
     registry: integrationRegistry,
     gate: new IntegrationGate({ registry: integrationRegistry, settings: getSettings, log }),
