@@ -17,7 +17,8 @@ describe.each(hosts.map((h) => [h.host.info.id, h] as const))("the %s skill (R4.
   const skill = host.skill ?? ""
 
   it("is carried by the integration, named after it", () => {
-    expect(skill).toMatch(new RegExp(`^---\\nname: ${id}\\ndescription: .+\\n---\\n`))
+    // A Windows checkout carries the file with CRLF, as CI's does.
+    expect(skill).toMatch(new RegExp(`^---\\r?\\nname: ${id}\\r?\\ndescription: .+\\r?\\n---\\r?\\n`))
   })
 
   it("names only tools of the catalog, by their full names", () => {
