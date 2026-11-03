@@ -26,7 +26,9 @@ export const FAKE_INFO: IntegrationInfo = {
   A fake engine: `lookup` echoes its target, `slow` never answers, `broken` throws; `targets` are the ones that exist,
   and `generation` is each one's identity, which a test bumps to stand for an id reused by another target.
 */
-export function fakeIntegration(o: { timeoutMs?: number; connected?: boolean; targets?: string[] } = {}): HostIntegration & {
+export function fakeIntegration(
+  o: { timeoutMs?: number; connected?: boolean; targets?: string[]; skill?: string; answers?: () => Promise<boolean> } = {},
+): HostIntegration & {
   opened: string[]
   generation: Map<string, number>
 } {
@@ -42,8 +44,9 @@ export function fakeIntegration(o: { timeoutMs?: number; connected?: boolean; ta
       return targets.has(name) ? `${name}#${generation.get(name) ?? 0}` : null
     },
     timeoutMs: o.timeoutMs ?? 1000,
+    ...(o.skill !== undefined ? { skill: o.skill } : {}),
     checks: async () => [{ name: "ready", ok: o.connected ?? true, detail: "", ...(o.connected === false ? { fix: "start it" } : {}) }],
-    connected: async () => o.connected ?? true,
+    connected: o.answers ?? (async () => o.connected ?? true),
     catalog: async () => FAKE_INFO.tools,
     describeTarget: async (_c, t) => {
       const { name } = t as { name: string }

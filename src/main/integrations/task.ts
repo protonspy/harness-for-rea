@@ -4,7 +4,7 @@ import { integrationSettings, type IntegrationTool } from "@shared/integrations"
 import type { Settings } from "@shared/types"
 import type { EventLog } from "../events/log"
 import { TaskApprovals } from "./approval"
-import type { CallOutcome, IntegrationGate } from "./gate"
+import { within, type CallOutcome, type IntegrationGate } from "./gate"
 import type { HostIntegration, IntegrationRegistry } from "./registry"
 
 /*
@@ -33,6 +33,8 @@ export interface OfferedIntegration {
   /** the approved target, and what identifies it, when the delegation named one */
   target?: unknown
   described?: string
+  /** how to work with its tools, offered only while the integration answers (R4.8, R4.9) */
+  skill?: string
 }
 
 /** A tool's MCP listing: its name, description and arguments as JSON Schema. */
@@ -104,18 +106,27 @@ export class TaskIntegrations {
         return { error: `${host.info.title} could not open the target: ${(e as Error).message}` }
       }
     }
-    return (await this.d.gate.checked("specialist"))
-      .map(({ host, tools }) => {
-        const target = targets[host.info.id]
-        return {
-          id: host.info.id,
-          title: host.info.title,
-          tools: tools.filter((t) => !t.target || target !== undefined),
-          ...(host.info.targetDescription ? { targetDescription: host.info.targetDescription } : {}),
-          ...(target !== undefined ? { target, described: this.approvals.described(host.info.id, target) } : {}),
-        }
+    const offered = []
+    for (const { host, tools } of await this.d.gate.checked("specialist")) {
+      const target = targets[host.info.id]
+      const own = tools.filter((t) => !t.target || target !== undefined)
+      if (!own.length) continue
+      offered.push({
+        id: host.info.id,
+        title: host.info.title,
+        tools: own,
+        ...(host.info.targetDescription ? { targetDescription: host.info.targetDescription } : {}),
+        ...(target !== undefined ? { target, described: this.approvals.described(host.info.id, target) } : {}),
+        ...(host.skill && (await this.answers(host)) ? { skill: host.skill } : {}),
       })
-      .filter((o) => o.tools.length)
+    }
+    return offered
+  }
+
+  /** Whether an integration answers now, within its timeout: what decides whether its skill is offered (R4.8, R4.9). */
+  private async answers(host: HostIntegration): Promise<boolean> {
+    const config = integrationSettings(host.info, this.d.settings().integrations).config
+    return within(host.connected(config), host.timeoutMs, "").catch(() => false)
   }
 
   /** A call the specialist wrote to the run channel, checked as the specialist's against the delegation's targets (R4.3). */

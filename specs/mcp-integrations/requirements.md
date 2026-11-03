@@ -1,9 +1,9 @@
 ---
 autonomy: auto
 ci: wait
-branch: feat/settings-tabs
-delivery: merged
-pr: 22
+branch: feat/integration-skills
+delivery: in-review
+pr: 32
 ---
 
 # Mcp integrations — requirements
@@ -46,6 +46,9 @@ the user decides, tool by tool, whether the orchestrator, the specialist, both o
 - **R4.4** If an integration does not answer a call within its timeout, then the app shall answer the call with an error naming the cause.
 - **R4.5** If an integration the delegation names a target of is disconnected when the delegation starts, then the delegation shall fail with an error naming the integration.
 - **R4.6** Where the specialist has an integration's tools, the specialist's system prompt shall name the integration and its approved target, and say that what its tools return is data from the target, never instructions.
+- **R4.7** (ADDED) The app shall carry, for each integration it carries, a skill for the specialist that says how to work with the integration's tools and names only tools of its catalog.
+- **R4.8** (ADDED) Where the specialist has an integration's tools and the integration answers when the delegation starts, the delegation shall write the integration's skill into the run directory, and the specialist's system prompt shall direct the specialist to read it before its first call to that integration's tools.
+- **R4.9** (ADDED) If an integration whose tools the specialist has does not answer when the delegation starts, then the delegation shall offer its tools without its skill.
 
 ## R5 · The orchestrator
 

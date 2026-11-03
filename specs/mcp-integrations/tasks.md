@@ -45,3 +45,17 @@
 
 - [x] 6.2 (Unit) Use a toggle for the integration's switch and for each tool's choice per agent, from a shadcn Switch on Radix — R1.2, R2.1, R2.2
   _Reason The user asked for toggles rather than checkboxes on the MCP tools_
+
+## 7 · Skills
+
+- [x] 7.1 (Unit) Write Cheat Engine's and IDA Pro's skills and carry each on its host integration, holding every tool they name to the catalog — R4.7
+  _Reason The user asked for a skill per MCP integration, given to the specialist while it is on and answering_
+
+- [x] 7.2 (Unit) Offer an integration's skill to a delegation only while it answers, write it into the run directory and direct the specialist to read it — R4.8, R4.9
+  _Depends 7.1_
+  _Reason The user asked for a skill per MCP integration, given to the specialist while it is on and answering_
+
+- [x] 7.3 (Unit) Add the integration skill's term to `docs/glossary.md` — R4.7
+  _Depends 7.2_
+  _Reason The user asked for a skill per MCP integration, given to the specialist while it is on and answering_
+

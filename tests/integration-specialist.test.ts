@@ -24,7 +24,7 @@ import { EventLog } from "../src/main/events/log"
 import { IntegrationGate } from "../src/main/integrations/gate"
 import { IntegrationRegistry } from "../src/main/integrations/registry"
 import { TaskIntegrations } from "../src/main/integrations/task"
-import { claudeArgs, dockerRunArgs, INTEGRATIONS_DIR, mcpConfig } from "../src/main/sandbox/docker"
+import { claudeArgs, dockerRunArgs, integrationSkillPath, INTEGRATIONS_DIR, mcpConfig } from "../src/main/sandbox/docker"
 import { renderSystemPrompt } from "../src/main/sandbox/prompt"
 import { askDir } from "../src/main/sandbox/workspace"
 import { fakeIntegration } from "./fixtures/fake-integration"
@@ -45,6 +45,8 @@ let fake: ReturnType<typeof fakeIntegration>
 let task: TaskIntegrations
 let asked: Question[]
 let launched: { integrations?: string[] }[]
+/** each launch's skill file, read as the container starts */
+let skills: (string | null)[]
 
 function integrations(o: Parameters<typeof fakeIntegration>[0] = {}) {
   fake = fakeIntegration(o)
@@ -77,6 +79,7 @@ beforeEach(() => {
   settings = { ...DEFAULT_SETTINGS, timeoutMinutes: 1, integrations: { fake: { enabled: true, config: {}, tools: {} } } }
   asked = []
   launched = []
+  skills = []
   integrations()
 })
 afterEach(() => {
@@ -89,6 +92,8 @@ function launcher(mode = "integration", env: Record<string, string> = {}): Launc
     preflight: async () => null,
     launch: (ws, m, o) => {
       launched.push({ integrations: o.integrations })
+      const skill = join(integrationsDir(ws.runDir), "skills", "fake", "SKILL.md")
+      skills.push(existsSync(skill) ? readFileSync(skill, "utf8") : null)
       return {
         command: process.execPath,
         args: [FAKE, ...claudeArgs(m, undefined, "default", o.integrations).slice(1)],
@@ -281,7 +286,7 @@ describe("a delegation with an integration (R3.1, R4.1, R4.5)", () => {
     expect(r.report).toContain('"target":{"name":"t1"}')
     expect(fake.opened).toEqual(["t1"])
     const offeredEvent = log.history(taskId).events.find((e) => e.kind === "integrations.offered")!
-    expect(offeredEvent.payload.integrations).toEqual([{ id: "fake", tools: ["lookup", "list", "slow", "broken"], target: { name: "t1" } }])
+    expect(offeredEvent.payload.integrations).toEqual([{ id: "fake", tools: ["lookup", "list", "slow", "broken"], target: { name: "t1" }, skill: false }])
   })
 
   it("offers only the tools that need no target when the delegation names none", async () => {
@@ -303,5 +308,45 @@ describe("a delegation with an integration (R3.1, R4.1, R4.5)", () => {
       new DelegationRefused("Fake is not connected: open it, or check it in Settings, and delegate again."),
     )
     expect(launched).toEqual([])
+  })
+})
+
+describe("an integration's skill (R4.7, R4.8, R4.9)", () => {
+  const SKILL = "---\nname: fake\ndescription: d\n---\n\n# Fake\n"
+  const offeredSkill = () => (log.history(taskId).events.find((e) => e.kind === "integrations.offered")!.payload.integrations as { skill: boolean }[])[0].skill
+
+  it("writes the skill of an integration that answers into the run directory, and directs the specialist to read it", async () => {
+    integrations({ skill: SKILL })
+    await delegate(deps("answer"), { taskId, sourceRoot: root, pkg: pkg(), integrations: { task, targets: {} } })
+    expect(skills).toEqual([SKILL])
+    const [run] = fakeRuns()
+    expect(run.system).toContain(`Read Fake's skill at ${integrationSkillPath("fake")} before your first call to its tools`)
+    expect(integrationSkillPath("fake")).toBe(`${INTEGRATIONS_DIR}/skills/fake/SKILL.md`)
+    expect(offeredSkill()).toBe(true)
+  })
+
+  it("offers the tools without the skill while the integration does not answer", async () => {
+    integrations({ skill: SKILL, connected: false })
+    await delegate(deps("answer"), { taskId, sourceRoot: root, pkg: pkg(), integrations: { task, targets: {} } })
+    expect(skills).toEqual([null])
+    const [run] = fakeRuns()
+    expect(run.system).toContain("## Fake (mcp__fake__*)")
+    expect(run.system).not.toContain("Fake's skill")
+    expect(offeredSkill()).toBe(false)
+  })
+
+  it("offers no skill when the integration's answer outlasts its timeout or fails", async () => {
+    integrations({ skill: SKILL, timeoutMs: 20, answers: () => new Promise(() => undefined) })
+    expect((await task.forDelegation({})) as unknown[]).toEqual([expect.not.objectContaining({ skill: expect.anything() })])
+    integrations({ skill: SKILL, answers: async () => Promise.reject(new Error("pipe closed")) })
+    expect((await task.forDelegation({})) as unknown[]).toEqual([expect.not.objectContaining({ skill: expect.anything() })])
+  })
+
+  it("clears a skill an earlier delegation wrote when this one offers it no longer", () => {
+    const run = join(base, "run")
+    writeIntegrations(run, [{ id: "fake", title: "Fake", tools: [], skill: SKILL }], SERVER)
+    expect(existsSync(join(integrationsDir(run), "skills", "fake", "SKILL.md"))).toBe(true)
+    writeIntegrations(run, [{ id: "fake", title: "Fake", tools: [] }], SERVER)
+    expect(existsSync(join(integrationsDir(run), "skills", "fake"))).toBe(false)
   })
 })
