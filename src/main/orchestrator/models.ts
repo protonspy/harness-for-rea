@@ -1,4 +1,5 @@
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
+import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
 
 /*
@@ -33,7 +34,7 @@ export async function listModels(o: { provider: ProviderId; baseUrl: string; api
   let res: Response
   try {
     res = await fetch(`${base}/models`, {
-      headers: { accept: "application/json", ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}) },
+      headers: { ...attributionHeaders(base), accept: "application/json", ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}) },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
   } catch (e) {
@@ -78,7 +79,12 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
   try {
     res = await fetch(`${base}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}) },
+      headers: {
+        ...attributionHeaders(base),
+        "content-type": "application/json",
+        accept: "application/json",
+        ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}),
+      },
       body: JSON.stringify({ model: o.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     })
