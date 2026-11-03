@@ -1,3 +1,24 @@
+<p align="center">
+  <img src=".github/assets/banner.png" alt="Harness for REA — an orchestrator plans, a sandboxed Claude Code specialist takes the target apart" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/protonspy/harness-for-rea/releases"><img src="https://img.shields.io/github/v/release/protonspy/harness-for-rea?style=flat-square&color=818cf8" alt="Latest release"></a>
+  <a href="https://www.npmjs.com/package/harness-for-rea"><img src="https://img.shields.io/npm/v/harness-for-rea?style=flat-square&color=38bdf8" alt="npm"></a>
+  <a href="https://github.com/protonspy/harness-for-rea/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/protonspy/harness-for-rea/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-475569?style=flat-square" alt="Windows and macOS">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f472b6?style=flat-square" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="#how-a-task-runs">How a task runs</a> ·
+  <a href="#isolation">Isolation</a> ·
+  <a href="#mcp-integrations">MCP integrations</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#using-it">Using it</a> ·
+  <a href="#development">Development</a>
+</p>
+
 # Harness for REA
 
 A desktop app and a terminal UI for deep analysis of software you own or are authorized to study:
@@ -6,13 +27,13 @@ reimplementing what it does.
 
 You describe what you want in a chat. Two agents do the work:
 
-- **The orchestrator** is the agent you talk to. It runs on a model from OpenRouter, DeepSeek or any
-  OpenAI-compatible provider. It plans the task, prepares each step, writes and runs its own code
-  (a decoder, a reimplementation, a probe) and answers you. It does not analyse the target itself.
-- **The specialist** does the deep analysis. It is Claude Opus running the Claude Code CLI on your
-  own Claude plan, inside a Docker container that holds only the files a step needs, with
-  [REA](https://github.com/morluto/rea) — a reverse engineering MCP server for native binaries,
-  Android, .NET, Electron and JavaScript targets — built in, and a root shell to install any other tool.
+| Agent                | Runs on                                                                    | Does                                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **The orchestrator** | a model from OpenRouter, DeepSeek or any OpenAI-compatible provider        | the agent you talk to: plans the task, prepares each step, writes and runs its own code (a decoder, a reimplementation, a probe), answers you |
+| **The specialist**   | Claude Opus running the Claude Code CLI on your own Claude plan, in Docker | the deep analysis, in a container holding only the files a step needs, with [REA](https://github.com/morluto/rea) built in and a root shell |
+
+[REA](https://github.com/morluto/rea) is a reverse engineering MCP server for native binaries,
+Android, .NET, Electron and JavaScript targets. The orchestrator does not analyse the target itself.
 
 The split keeps the expensive, careful work with the specialist and the cheap planning and coding
 with the orchestrator, and keeps the target away from your machine: the specialist only ever sees
@@ -20,22 +41,55 @@ copies of the files it was handed.
 
 ## How a task runs
 
+```mermaid
+flowchart LR
+    you(["You"]) <-->|"chat, questions,<br/>patches to approve"| orch["Orchestrator<br/>your provider's model"]
+    orch -.-> log[("Event log<br/>SQLite + JSONL")]
+
+    subgraph specc["Specialist container"]
+        claude["Specialist<br/>Claude Code"] --- rea["REA"]
+        claude --- work["Copies of the<br/>listed files"]
+    end
+
+    subgraph taskc["Task container"]
+        tools["Orchestrator's tools<br/>workspace read-only<br/>scratch writable"]
+    end
+
+    orch -->|"context package"| claude
+    claude -.->|"report + evidence<br/>+ contract"| orch
+    orch -->|"writes and runs its code,<br/>replays test vectors"| tools
 ```
- you ──chat──▶ orchestrator (your provider's model, in the app)
-                  │  plans the steps, reads your code, writes its own in /scratch
-                  │  (its tools run in a task container: /workspace read-only, /scratch writable)
-                  │
-                  ├─ delegate a step ──▶ specialist (Claude Code in a container per step)
-                  │    context package:      /work = copies of the files listed
-                  │    brief, objective,     REA, a shell, internet
-                  │    files, questions      ── report + evidence + contract ──▶ back
-                  │
-                  ├─ replay test vectors ─▶ its own code, in the task container
-                  └─ propose a patch ─────▶ you approve, then it is applied to your files
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor You
+    participant O as Orchestrator
+    participant H as Harness
+    participant S as Specialist
+    participant T as Task container
+
+    You->>O: Request
+    O->>O: Break it into steps
+    O->>H: Delegate a step with a context package
+    H->>S: Fresh container, files copied into /work
+    S->>S: Analyse with REA and a shell
+    S-->>H: Report citing evidence, ending with a contract
+    H->>H: Validate the contract
+    opt The contract fails
+        H->>S: Send it back for a correction, up to twice
+        S-->>H: Corrected report
+    end
+    H-->>O: Report and contract
+    O->>T: Write its code and run replay_vectors
+    T-->>O: Outputs compared byte for byte
+    O-->>You: Answer, and a patch to approve
+    You->>H: Approve the patch
+    H->>H: Apply it to your files
 ```
 
 1. **You start a task** in a project with a request. The orchestrator breaks it into steps.
-2. **For each analysis**, the orchestrator writes a *context package*: a technical brief (what the
+2. **For each analysis**, the orchestrator writes a _context package_: a technical brief (what the
    artifact is, what is already known), the objective, the files, the questions and the report
    format. The specialist sees that package and nothing else — not your request, not the chat.
 3. **The specialist runs** in a fresh container (or a sandbox the orchestrator prepared with tools
@@ -43,13 +97,26 @@ copies of the files it was handed.
    evidence: a line range, an address in a binary, or an REA evidence id.
 4. **Every report ends with a contract**, a JSON block the app validates: the functions mapped with
    their inputs, outputs and side effects; the constants found, each with a source or marked
-   estimated; the questions left open; and *test vectors* — inputs given to the target and the
+   estimated; the questions left open; and _test vectors_ — inputs given to the target and the
    output it produced, observed by running it. A report whose contract fails is sent back to the
    specialist for a correction, up to twice.
 5. **The orchestrator writes its code** from the report and checks it with `replay_vectors`, which
    runs the vectors against its reimplementation and compares outputs byte for byte.
 6. **Changes to your files** come back as patches. Nothing outside the task's containers changes
    until a patch is applied.
+
+### Questions and refusals
+
+```mermaid
+flowchart TD
+    q["The specialist asks a question"] --> om{"Can the orchestrator's model<br/>answer it from the context package?"}
+    om -- "yes" --> back["The answer goes back to the specialist"]
+    om -- "no: only you know" --> user["You are asked"]
+    r["The specialist declines a step<br/>under its usage policy"] --> wait["The task waits for you"]
+    wait --> stop["Stop the task"]
+    wait --> skip["Skip the step"]
+    wait --> other["Ask for a different<br/>technical approach"]
+```
 
 **Questions.** Either agent can ask you a question mid-run. The specialist's questions go first to
 the orchestrator's model, which answers from the context package when it can; questions about
@@ -65,6 +132,29 @@ earlier tasks found, and the questions one analysis left open are handed to the 
 
 ## Isolation
 
+```mermaid
+flowchart TB
+    subgraph host["Your machine"]
+        files["Your files"]
+        keys["OS keychain<br/>one entry per provider"]
+        data[("App data folder<br/>event log + raw output")]
+        app["Harness for REA"]
+
+        subgraph docker["Docker"]
+            taskc["Task container<br/>your source read-only<br/>its own scratch area"]
+            specc["Specialist container<br/>copies only, as root,<br/>internet, no user settings"]
+            vol[("Volume<br/>Claude sign-in token")]
+        end
+    end
+
+    files -- "mounted read-only" --> taskc
+    files -- "copied" --> specc
+    vol --- specc
+    keys --> app
+    app --> data
+    app -. "patch, on your approval" .-> files
+```
+
 - The specialist runs in a container per delegation, or in a sandbox the orchestrator created for
   the project; it sees only the files copied into it, as root, with internet access. Its Claude
   Code runs with no user or project settings, so a `CLAUDE.md` or settings left in `/work` by an
@@ -77,6 +167,49 @@ earlier tasks found, and the questions one analysis left open are handed to the 
 - Everything the agents do is recorded per task: an event log in SQLite and each agent's raw output
   as JSONL, in the app's data folder.
 
+## MCP integrations
+
+Engines that run on your machine reach the agents only through the app. **Cheat Engine** is the
+first: the agents read the live memory of a Windows process you approved, through a bridge the app
+ships and that answers read-only commands only.
+
+```mermaid
+flowchart LR
+    subgraph specc["Specialist container"]
+        cc["Claude Code"] --> mcp["MCP server<br/>the tools you allowed"]
+    end
+    orch["Orchestrator"]
+
+    subgraph host["Your machine"]
+        app{"Harness for REA<br/>checks the agent,<br/>the tool and the target"}
+        ce["Cheat Engine<br/>+ read-only bridge"]
+        proc["The approved process"]
+    end
+
+    mcp -- "calls over the run directory" --> app
+    orch -- "its allowed tools" --> app
+    app --> ce
+    ce -- "reads memory" --> proc
+```
+
+- **Settings → MCP** lists the integrations the app carries, each off by default. Turning one on
+  runs its checks — for Cheat Engine: the executable exists, the bridge script is installed in its
+  `autorun` folder, and the bridge answers with the version the app carries — and a failed check
+  says what fixes it.
+- **Each integration has its own page**, with one toggle per tool for the orchestrator and one for
+  the specialist. The specialist starts with every tool; the orchestrator starts with `status` and
+  `get_process_list` only, and turning on a tool that reads a target warns that what it returns
+  goes to the orchestrator's provider.
+- **Every target is approved by you**, shown by its name, PID and executable path, even in an
+  automatic task. A delegation with an approved process cannot reach any other.
+- **The bridge only reads**: the process list, modules, memory regions, memory, value and byte
+  scans, pointer chains, disassembly, symbols and structures. Writing memory, injecting code and
+  debugging are not there to call.
+- **The container gets nothing new**: no mount, port or environment variable. Each call is
+  recorded in the task's event log with its agent, tool, target and outcome, never its answer.
+
+Integrations are set up in the desktop app; the terminal UI uses them as Settings has them.
+
 ## What you need
 
 - **Docker** (Docker Desktop on Windows and macOS), running. At the first start the app pulls the
@@ -84,17 +217,18 @@ earlier tasks found, and the questions one analysis left open are handed to the 
 - **A Claude plan** (Pro or Max) for the specialist.
 - **An API key** for the orchestrator's provider: OpenRouter by default, DeepSeek, or any
   OpenAI-compatible endpoint.
+- **Cheat Engine** on Windows, only for its integration.
 
 ## Install
 
 Download the build for your system from the
 [releases](https://github.com/protonspy/harness-for-rea/releases):
 
-| System | Desktop app | Terminal UI |
-|---|---|---|
-| Windows x64 | `harness-for-rea-<version>-windows-x64-setup.exe` | `harness-for-rea-cli-<version>-windows-x64.zip` |
-| macOS arm64 (Apple silicon) | `harness-for-rea-<version>-macos-arm64.dmg` | `harness-for-rea-cli-<version>-macos-arm64.tar.gz` |
-| macOS x64 (Intel) | `harness-for-rea-<version>-macos-x64.dmg` | `harness-for-rea-cli-<version>-macos-x64.tar.gz` |
+| System                      | Desktop app                                       | Terminal UI                                        |
+| --------------------------- | ------------------------------------------------- | -------------------------------------------------- |
+| Windows x64                 | `harness-for-rea-<version>-windows-x64-setup.exe` | `harness-for-rea-cli-<version>-windows-x64.zip`    |
+| macOS arm64 (Apple silicon) | `harness-for-rea-<version>-macos-arm64.dmg`       | `harness-for-rea-cli-<version>-macos-arm64.tar.gz` |
+| macOS x64 (Intel)           | `harness-for-rea-<version>-macos-x64.dmg`         | `harness-for-rea-cli-<version>-macos-x64.tar.gz`   |
 
 Nothing is signed or notarized, so each system asks once:
 
@@ -113,7 +247,8 @@ Nothing is signed or notarized, so each system asks once:
   ./harness-for-rea
   ```
 
-  Keep the `sandbox/` folder next to the binary: it holds the specialist image's sources.
+  Keep the `sandbox/` folder next to the binary: it holds the specialist image's sources and the
+  MCP integrations' files.
 
 The terminal UI is also on npm, for Windows and macOS:
 
@@ -124,6 +259,13 @@ harness-for-rea
 ```
 
 ## First run
+
+```mermaid
+flowchart LR
+    images["1 · Sandbox images<br/>Docker running,<br/>specialist image prepared"] --> login["2 · Claude sign-in<br/>in a container,<br/>with your Claude plan"]
+    login --> orch["3 · Orchestrator<br/>provider, API key,<br/>model"]
+    orch --> ready(["Ready"])
+```
 
 Both apps open on a setup of three steps, and nothing else opens until all three are ready:
 
@@ -144,7 +286,8 @@ in the other.
 a chat: the messages, each tool call, and each delegation as a card with the specialist's own steps
 inside it. Long tasks load their history in pages as you scroll up. The side panel has the plan,
 the delegations with their reports and evidence, the cost per agent, and the raw event log. The
-project page lists its tasks, what the specialist found, and the questions still open.
+project page lists its tasks, what the specialist found, and the questions still open. Settings is
+split into tabs: model, sandbox, specialist, MCP and loop.
 
 **Terminal UI.** Run `harness-for-rea` in the folder you want to analyse, or give its path:
 `harness-for-rea C:\samples\app`. The folder is the target of the project it opens — the one
@@ -159,19 +302,19 @@ evidence, files and the specialist's own steps, and a working line with the elap
 cost. Questions and gated tool calls open as dialogs; a proposed patch shows as a diff. The sidebar
 has the plan, the delegations, the cost per agent and the files touched.
 
-| Key | Does |
-|---|---|
-| Enter | send the message; Shift+Enter or Ctrl+J starts a new line |
-| ↑ ↓ | the messages sent this session, at the prompt's first and last line |
-| `/` | the screen's commands, completed with Tab |
-| `@` | a path from the project's folder, completed with Tab |
-| Ctrl+P | every command, searchable |
-| Tab | move between the prompt and the transcript or list |
-| Ctrl+O | expand or collapse every tool call and delegation |
-| Ctrl+B | show or hide the sidebar |
-| Esc | stop the running turn, close a dialog, or go back |
-| Ctrl+C | clear the prompt; twice to quit |
-| `?` | every key on the screen |
+| Key    | Does                                                               |
+| ------ | ------------------------------------------------------------------ |
+| Enter  | send the message; Shift+Enter or Ctrl+J starts a new line          |
+| ↑ ↓    | the messages sent this session, at the prompt's first and last line |
+| `/`    | the screen's commands, completed with Tab                          |
+| `@`    | a path from the project's folder, completed with Tab               |
+| Ctrl+P | every command, searchable                                          |
+| Tab    | move between the prompt and the transcript or list                 |
+| Ctrl+O | expand or collapse every tool call and delegation                  |
+| Ctrl+B | show or hide the sidebar                                           |
+| Esc    | stop the running turn, close a dialog, or go back                  |
+| Ctrl+C | clear the prompt; twice to quit                                    |
+| `?`    | every key on the screen                                            |
 
 Commands on a task: `/stop`, `/continue`, `/close`, `/cancel`, `/start-over`, `/delete`, `/answer`,
 `/decide`, `/approve-patch`, `/reject-patch`, `/events` (the event log, filtered by agent) and
@@ -186,6 +329,19 @@ one app is used by the others. `harness-for-rea --version` and `--help` work at 
 
 ## How the code is organized
 
+```mermaid
+flowchart LR
+    desktop["Desktop app<br/>Electron, React, shadcn/ui"] -- "IPC" --> dispatch
+    tui["Terminal UI<br/>OpenTUI on Bun"] -- "in process" --> dispatch
+    dispatch{"Validating dispatcher<br/>zod schemas"} --> core["startCore()"]
+    core --> events[("Event log<br/>SQLite + JSONL")]
+    core --> runner["Task runner<br/>and orchestrator"]
+    core --> integrations["MCP integrations"]
+    runner --> delegation["Delegations"]
+    delegation --> docker["Docker<br/>task and specialist containers"]
+    integrations --> delegation
+```
+
 ```
 src/main/            the core (Node): Electron shell and everything behind it
   core.ts            wires the database, event log, projects, sandboxes, runner and API handlers
@@ -194,12 +350,14 @@ src/main/            the core (Node): Electron shell and everything behind it
   delegation.ts      one delegation: workspace, specialist run, contract check, patch
   specialist/        running Claude Code and reading its stream-json output
   sandbox/           Docker: images, containers, sandboxes, prompts, patches
+  integrations/      the MCP integrations: registry, tool gate, target approval, settings
+  cheatengine/       Cheat Engine's integration and the pipe to its bridge
   events/            the event log (SQLite + JSONL) and redaction
   unknowns.ts        the per-project ledger of open questions
 src/shared/          types and the IPC contract (zod schemas) shared with the views
 src/renderer/        the desktop UI (React, Tailwind, shadcn/ui on Radix)
 tui/                 the terminal UI (OpenTUI's React layer on Bun) and its npm package
-sandbox/             the specialist's images: the published base and the local layer with Claude Code
+sandbox/             the specialist's images, the integrations' MCP server and Cheat Engine's bridge
 scripts/             test gate, image pinning, CLI build
 tests/               Vitest suite; the specialist is faked by tests/fixtures/fake-claude.mjs
 ```
@@ -251,10 +409,22 @@ bun scripts/build-cli.ts binary bun-windows-x64 cli
 Tests run the TypeScript sources directly. The specialist is `tests/fixtures/fake-claude.mjs`, which
 speaks Claude Code's stream-json; the orchestrator's provider is a scripted `fetch`.
 
+### Releasing
+
+```mermaid
+flowchart LR
+    bump["Bump version<br/>in package.json"] --> run["Run Release<br/>on main"]
+    run --> check["check<br/>the tag and npm<br/>version are free"]
+    check --> win["windows<br/>installer + CLI"]
+    check --> mac["macos<br/>arm64 and x64 images + CLI"]
+    win --> pub["publish<br/>GitHub Release, then npm"]
+    mac --> pub
+```
+
 To release, bump `version` in `package.json` and run the **Release** workflow on `main`. It builds
 everything above for Windows and macOS, publishes a GitHub Release, and publishes the CLI to npm
 with the `NPM_TOKEN` repository secret.
 
 ## License
 
-MIT.
+[MIT](LICENSE).
