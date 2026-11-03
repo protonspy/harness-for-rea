@@ -16,8 +16,8 @@ function partsRead(): string[] {
 }
 
 describe("the CLI's sandbox folder (R1.3)", () => {
-  it("carries every part the core reads: the specialist's image, the integrations' MCP server and Cheat Engine's bridge", () => {
-    expect(partsRead()).toEqual(["cheat-engine", "mcp", "specialist"])
+  it("carries every part the core reads: the specialist's image, the integrations' MCP server, Cheat Engine's bridge and IDA Pro's plugin", () => {
+    expect(partsRead()).toEqual(["cheat-engine", "ida-pro", "mcp", "specialist"])
     expect([...CLI_SANDBOX].sort()).toEqual(partsRead())
   })
 

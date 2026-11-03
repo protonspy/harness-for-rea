@@ -2,7 +2,7 @@ import { dirname, join } from "node:path"
 
 /*
   Where the CLI finds its `sandbox/` (specs/release R1.3, R2.4) — `specialist/` it builds the specialist's image from,
-  the integrations' `mcp/` server and Cheat Engine's `cheat-engine/` bridge — beside it however it was installed — named by the npm shim, next to a compiled binary, or in the repository when
+  the integrations' `mcp/` server, Cheat Engine's `cheat-engine/` bridge and IDA Pro's `ida-pro/` plugin — beside it however it was installed — named by the npm shim, next to a compiled binary, or in the repository when
   run from source — and what it answers before the core starts.
 */
 
@@ -34,7 +34,7 @@ terminal UIs on the same data folder.
 
 Environment:
   HFR_DATA_DIR      the data folder (default: the desktop app's)
-  HFR_SANDBOX_DIR   the folder holding specialist/, mcp/ and cheat-engine/`
+  HFR_SANDBOX_DIR   the folder holding specialist/, mcp/, cheat-engine/ and ida-pro/`
 
 export interface Args {
   /** the target folder as given, or null for the folder it is run in */

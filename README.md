@@ -176,9 +176,12 @@ flowchart TB
 
 ## MCP integrations
 
-Engines that run on your machine reach the agents only through the app. **Cheat Engine** is the
-first: the agents read the live memory of a Windows process you approved, through a bridge the app
-ships and that answers read-only commands only.
+Engines that run on your machine reach the agents only through the app. **Cheat Engine**: the
+agents read the live memory of a Windows process you approved, through a bridge the app ships and
+that answers read-only commands only. **IDA Pro**: the agents read the database you have open in
+IDA — decompilation, disassembly, cross-references, types and bytes — through a plugin the app
+ships, derived from [ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp), with its read-only
+tools only.
 
 ```mermaid
 flowchart LR
@@ -191,30 +194,41 @@ flowchart LR
         app{"Harness for REA<br/>checks the agent,<br/>the tool and the target"}
         ce["Cheat Engine<br/>+ read-only bridge"]
         proc["The approved process"]
+        ida["IDA Pro<br/>+ read-only plugin"]
+        idb["The approved database"]
     end
 
     mcp -- "calls over the run directory" --> app
     orch -- "its allowed tools" --> app
     app --> ce
     ce -- "reads memory" --> proc
+    app --> ida
+    ida -- "reads" --> idb
 ```
 
 - **Settings → MCP integrations** lists the integrations the app carries, each off by default. Turning one on
   runs its checks — for Cheat Engine: the executable exists, the bridge script is installed in its
-  `autorun` folder, and the bridge answers with the version the app carries — and a failed check
-  says what fixes it.
+  `autorun` folder, and the bridge answers with the version the app carries; for IDA Pro: the
+  plugin is installed in IDA's user `plugins` folder and answers with the version the app carries —
+  and a failed check says what fixes it.
 - **Each integration has its own page**, with one toggle per tool for the orchestrator and one for
-  the specialist. The specialist starts with every tool; the orchestrator starts with `status` and
-  `get_process_list` only, and turning on a tool that reads a target warns that what it returns
+  the specialist. The specialist starts with every tool; the orchestrator starts with `status`
+  (and Cheat Engine's `get_process_list`) only, and turning on a tool that reads a target warns that what it returns
   goes to the orchestrator's provider.
-- **Every target is approved by you**, shown by its name, PID and executable path, even in an
-  automatic task. A delegation with an approved process cannot reach any other. What the tools
+- **Every target is approved by you**, even in an automatic task: a process by its name, PID and
+  executable path; a database by its input file's name, its path and its SHA-256. A delegation
+  with an approved target cannot reach any other. What the tools
   read from it — secrets included — goes to the agents' models and their reports, and the
   specialist's container has full internet access.
 - **The bridge only reads**: the process list, modules, memory regions, memory, value and byte
   scans, pointer chains, disassembly, symbols and structures. Writing memory, injecting code and
   debugging are not there to call. Its pipe takes any local client, so while Cheat Engine runs
   with the bridge, the app's checks bind the agents but not other programs on your machine.
+- **The IDA plugin only reads**: upstream's read-only profile — functions, globals, imports,
+  strings, decompilation, disassembly, cross-references, call graphs, searches, types, stack
+  frames and the database's bytes. Renaming, commenting, typing, patching, the debugger and Python
+  evaluation are not there to call, and upstream's HTTP server is replaced by the same kind of
+  local pipe. It serves while a database is open, and one IDA at a time.
 - **The container gets nothing new**: no mount, port or environment variable. Each call is
   recorded in the task's event log with its agent, tool, target and outcome, never its answer.
 
@@ -228,6 +242,8 @@ Integrations are set up in the desktop app; the terminal UI uses them as Setting
 - **An API key** for the orchestrator's provider: OpenRouter by default, DeepSeek, or any
   OpenAI-compatible endpoint.
 - **Cheat Engine** on Windows, only for its integration.
+- **IDA Pro** 8.3 or later (9 recommended, IDA Free is not supported) on Windows with
+  IDAPython on Python 3.11 or later, only for its integration.
 
 ## Install
 
@@ -362,12 +378,14 @@ src/main/            the core (Node): Electron shell and everything behind it
   sandbox/           Docker: images, containers, sandboxes, prompts, patches
   integrations/      the MCP integrations: registry, tool gate, target approval, settings
   cheatengine/       Cheat Engine's integration and the pipe to its bridge
+  idapro/            IDA Pro's integration
   events/            the event log (SQLite + JSONL) and redaction
   unknowns.ts        the per-project ledger of open questions
 src/shared/          types and the IPC contract (zod schemas) shared with the views
 src/renderer/        the desktop UI (React, Tailwind, shadcn/ui on Radix)
 tui/                 the terminal UI (OpenTUI's React layer on Bun) and its npm package
-sandbox/             the specialist's images, the integrations' MCP server and Cheat Engine's bridge
+sandbox/             the specialist's images, the integrations' MCP server, Cheat Engine's bridge
+                     and IDA Pro's plugin
 scripts/             test gate, image pinning, CLI build
 tests/               Vitest suite; the specialist is faked by tests/fixtures/fake-claude.mjs
 ```

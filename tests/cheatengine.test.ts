@@ -122,6 +122,7 @@ describe("the catalog (R2.1, R2.4, R2.5, R3.1, R3.2)", () => {
     expect(s.safeParse({ executablePath: "C:\\Program Files\\Cheat Engine\\cheatengine-x86_64.exe" }).success).toBe(true)
     expect(s.safeParse({ executablePath: "" }).success).toBe(true)
     expect(s.safeParse({ executablePath: "\\\\server\\share\\ce.exe" }).success).toBe(false)
+    expect(s.safeParse({ executablePath: "/\\server\\share\\ce.exe" }).success).toBe(false)
     expect(s.safeParse({ executablePath: "//server/share/ce.exe" }).success).toBe(false)
     expect(s.safeParse({ executablePath: "C:\\tools\\notes.txt" }).success).toBe(false)
   })

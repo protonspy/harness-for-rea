@@ -24,6 +24,9 @@ export interface BridgeClientOptions {
   /** the pipe's path, or a local socket's in tests */
   path: string
   timeoutMs: number
+  /** the engine its errors name, and what answers on the pipe: Cheat Engine's bridge unless said otherwise */
+  engine?: string
+  peer?: string
   connect?: (path: string) => Socket
 }
 
@@ -35,7 +38,13 @@ export class BridgeClient {
   private nextId = 1
   private idle: NodeJS.Timeout | null = null
 
-  constructor(private readonly o: BridgeClientOptions) {}
+  private readonly engine: string
+  private readonly peer: string
+
+  constructor(private readonly o: BridgeClientOptions) {
+    this.engine = o.engine ?? "Cheat Engine"
+    this.peer = o.peer ?? "The Cheat Engine bridge"
+  }
 
   /** Calls one method, after any call already in flight; the bridge's error comes back as a BridgeError. */
   call(method: string, params: Record<string, unknown> = {}, timeoutMs = this.o.timeoutMs): Promise<unknown> {
@@ -44,7 +53,9 @@ export class BridgeClient {
 
   /**
     Runs several calls as one unit, with no other call between them: a check and the call it guards. The timeout
-    counts from when the unit is queued, so a unit that waited it out behind a long scan is dropped, never sent.
+    counts from when the unit is queued, so a unit that waited it out behind a long scan is dropped, never sent. All
+    of a unit's calls go over one connection: one that dropped between them may now reach another engine, so the
+    unit fails rather than send the rest elsewhere.
   */
   exclusive<T>(
     fn: (send: (method: string, params?: Record<string, unknown>) => Promise<unknown>) => Promise<T>,
@@ -52,9 +63,13 @@ export class BridgeClient {
     label = "the call",
   ): Promise<T> {
     const deadline = Date.now() + timeoutMs
-    const late = () => new BridgeError(`Cheat Engine did not answer ${label} within ${Math.round(timeoutMs / 1000)} s.`)
-    const work = () =>
-      Date.now() >= deadline ? Promise.reject(late()) : fn((method, params = {}) => this.send(method, params, Math.max(1, deadline - Date.now()), late))
+    const late = () => new BridgeError(`${this.engine} did not answer ${label} within ${Math.round(timeoutMs / 1000)} s.`)
+    const work = () => {
+      const unit: { socket?: Socket } = {}
+      return Date.now() >= deadline
+        ? Promise.reject(late())
+        : fn((method, params = {}) => this.send(method, params, Math.max(1, deadline - Date.now()), late, unit))
+    }
     const run = this.queue.then(work, work)
     this.queue = run.catch(() => undefined)
     return run
@@ -72,7 +87,7 @@ export class BridgeClient {
     if (this.socket && !this.socket.destroyed) return Promise.resolve(this.socket)
     return new Promise((resolve, reject) => {
       const s = (this.o.connect ?? ((p) => connect(p)))(this.o.path)
-      const fail = (e: Error) => reject(new BridgeError(`The Cheat Engine bridge is not answering on ${this.o.path}: ${e.message}`))
+      const fail = (e: Error) => reject(new BridgeError(`${this.peer} is not answering on ${this.o.path}: ${e.message}`))
       s.once("error", fail)
       s.once("connect", () => {
         s.off("error", fail)
@@ -83,16 +98,18 @@ export class BridgeClient {
         s.on("close", () => {
           if (this.socket === s) this.socket = null
           // Only the call this connection carried: one already on a new connection is not its to fail.
-          if (this.pending?.socket === s) this.settle(new BridgeError("The Cheat Engine bridge closed the connection."))
+          if (this.pending?.socket === s) this.settle(new BridgeError(`${this.peer} closed the connection.`))
         })
         resolve(s)
       })
     })
   }
 
-  private async send(method: string, params: Record<string, unknown>, timeoutMs: number, late: () => BridgeError): Promise<unknown> {
+  private async send(method: string, params: Record<string, unknown>, timeoutMs: number, late: () => BridgeError, unit: { socket?: Socket }): Promise<unknown> {
     if (this.idle) clearTimeout(this.idle)
     const socket = await this.open()
+    if (unit.socket && unit.socket !== socket) throw new BridgeError(`The connection to ${this.engine} was reopened during ${method}; the call is refused.`)
+    unit.socket = socket
     const id = this.nextId++
     const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, method, params }), "utf8")
     const head = Buffer.alloc(4)
