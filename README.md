@@ -141,27 +141,34 @@ flowchart TB
         app["Harness for REA"]
 
         subgraph docker["Docker"]
-            taskc["Task container<br/>your source read-only<br/>its own scratch area"]
-            specc["Specialist container<br/>copies only, as root,<br/>internet, no user settings"]
+            taskc["Task container<br/>your source read-only,<br/>scratch area, internet"]
+            specc["Specialist container<br/>copies of your files,<br/>as root, internet"]
             vol[("Volume<br/>Claude sign-in token")]
         end
     end
 
     files -- "mounted read-only" --> taskc
     files -- "copied" --> specc
-    vol --- specc
+    vol -- "mounted" --> specc
     keys --> app
     app --> data
     app -. "patch, on your approval" .-> files
 ```
 
 - The specialist runs in a container per delegation, or in a sandbox the orchestrator created for
-  the project; it sees only the files copied into it, as root, with internet access. Its Claude
-  Code runs with no user or project settings, so a `CLAUDE.md` or settings left in `/work` by an
-  earlier step are never loaded.
-- The orchestrator's tools run in a task container where your source is mounted read-only; it
-  writes only to its own scratch area.
-- The specialist signs in with your Claude plan once; the token lives in a Docker volume.
+  the project; of your files it sees only the copies made for it, as root, with internet access.
+  Its Claude Code runs with no user or project settings, so a `CLAUDE.md` or settings left in
+  `/work` by an earlier step are never loaded.
+- The orchestrator's tools run in a task container, as root with internet access, where your
+  source is mounted read-only; they write to your machine only through its scratch area.
+- The specialist signs in with your Claude plan once; the token lives in a Docker volume mounted
+  into the specialist's container.
+
+> [!WARNING]
+> The container keeps a target away from your machine, not from your Claude account. The specialist
+> has a root shell and internet access beside the sign-in token, so a hostile target that steers it
+> can read the token and send it out. Do not analyse an untrusted sample with an account you cannot
+> afford to expose.
 - Provider API keys are kept in the OS keychain, in one entry per provider both apps read, and
   redacted from everything the app records or sends to a model.
 - Everything the agents do is recorded per task: an event log in SQLite and each agent's raw output
@@ -192,7 +199,7 @@ flowchart LR
     ce -- "reads memory" --> proc
 ```
 
-- **Settings → MCP** lists the integrations the app carries, each off by default. Turning one on
+- **Settings → MCP integrations** lists the integrations the app carries, each off by default. Turning one on
   runs its checks — for Cheat Engine: the executable exists, the bridge script is installed in its
   `autorun` folder, and the bridge answers with the version the app carries — and a failed check
   says what fixes it.
@@ -201,10 +208,13 @@ flowchart LR
   `get_process_list` only, and turning on a tool that reads a target warns that what it returns
   goes to the orchestrator's provider.
 - **Every target is approved by you**, shown by its name, PID and executable path, even in an
-  automatic task. A delegation with an approved process cannot reach any other.
+  automatic task. A delegation with an approved process cannot reach any other. What the tools
+  read from it — secrets included — goes to the agents' models and their reports, and the
+  specialist's container has full internet access.
 - **The bridge only reads**: the process list, modules, memory regions, memory, value and byte
   scans, pointer chains, disassembly, symbols and structures. Writing memory, injecting code and
-  debugging are not there to call.
+  debugging are not there to call. Its pipe takes any local client, so while Cheat Engine runs
+  with the bridge, the app's checks bind the agents but not other programs on your machine.
 - **The container gets nothing new**: no mount, port or environment variable. Each call is
   recorded in the task's event log with its agent, tool, target and outcome, never its answer.
 
@@ -287,7 +297,7 @@ a chat: the messages, each tool call, and each delegation as a card with the spe
 inside it. Long tasks load their history in pages as you scroll up. The side panel has the plan,
 the delegations with their reports and evidence, the cost per agent, and the raw event log. The
 project page lists its tasks, what the specialist found, and the questions still open. Settings is
-split into tabs: model, sandbox, specialist, MCP and loop.
+split into tabs: Orchestrator model, Sandbox, Specialist, MCP integrations and You in the loop.
 
 **Terminal UI.** Run `harness-for-rea` in the folder you want to analyse, or give its path:
 `harness-for-rea C:\samples\app`. The folder is the target of the project it opens — the one
