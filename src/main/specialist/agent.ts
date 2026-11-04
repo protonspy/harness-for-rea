@@ -133,15 +133,24 @@ export async function startAgentSpecialist(
     await run.container.stop()
   }
   try {
-    for (const [name, server] of Object.entries(run.servers)) {
-      try {
-        const c = await McpClient.start(name, "docker", mcpExecArgs(run.container.name, server), run.startServer)
-        clients.push(c)
-        tools.push(...(await c.tools(MCP_TOOL_TIMEOUT_MS)))
-      } catch (e) {
-        failed.push(`${name}: ${(e as Error).message}`)
-      }
+    // All at once, so one slow server holds up the start by its own handshake only; their tools in the servers' order.
+    const started = await Promise.all(
+      Object.entries(run.servers).map(async ([name, server]) => {
+        let client: McpClient | null = null
+        try {
+          client = await McpClient.start(name, "docker", mcpExecArgs(run.container.name, server), run.startServer)
+          clients.push(client)
+          return { tools: await client.tools(MCP_TOOL_TIMEOUT_MS) }
+        } catch (e) {
+          return { tools: [], error: `${name}: ${(e as Error).message}` }
+        }
+      }),
+    )
+    for (const s of started) {
+      tools.push(...s.tools)
+      if (s.error) failed.push(s.error)
     }
+    if (o.signal?.aborted) throw new SpecialistError("cancelled", "Cancelled.")
     const label = PROVIDERS[run.provider].label
     const s = new AgentSpecialist({
       ...o,

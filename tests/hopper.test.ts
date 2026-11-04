@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { CLAIM_GRANT, HopperSignInService, isHopperPage, REGISTER_URL, SLOW_DOWN_MS, TOKEN_URL, type Fetch } from "../src/main/hopper"
+import { CLAIM_GRANT, hopperPage, HopperSignInService, isHopperPage, REGISTER_URL, SLOW_DOWN_MS, TOKEN_URL, type Fetch } from "../src/main/hopper"
 
 /* Signing in to Hopper through its agent registration (specs/specialist-providers R3). */
 
@@ -95,6 +95,9 @@ describe("the Hopper sign-in", () => {
     await odd.settled()
     expect(odd.saved).toEqual([])
     expect(isHopperPage("https://withhopper.com/claim")).toBe(true)
+    // what is opened is the address as it was checked
+    expect(hopperPage("https://withhopper.com\\claim?x=1")).toBe("https://withhopper.com/claim?x=1")
+    expect(hopperPage("https://with\thopper.com/claim")).toBe("https://withhopper.com/claim")
     for (const u of ["http://withhopper.com/claim", "https://withhopper.com.evil.example/", "https://u:p@withhopper.com/", "nope"])
       expect(isHopperPage(u)).toBe(false)
   })

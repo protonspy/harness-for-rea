@@ -410,6 +410,7 @@ export async function delegate(
   const sp = settings.specialistProvider
   if (sp !== "claude" && needsKey(sp) && !deps.apiKey?.(sp)) refuse(`Set your ${PROVIDERS[sp].label} API key: the specialist runs on it.`)
   if (sp !== "claude" && !settings.specialistModel.trim()) refuse(`Choose the specialist's model on ${PROVIDERS[sp].label} in Settings.`)
+  if (sp !== "claude" && !baseUrlFor(sp, settings)) refuse(`Set the base URL of your ${PROVIDERS[sp].label} in Settings: the specialist runs on it.`)
 
   let ws: Workspace
   let held: { box: Box; release: () => Promise<void> } | null = null
@@ -495,20 +496,21 @@ export async function delegate(
             { ...events, onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id) },
           )
         : await startAgent(deps, settings, { ws, mode: o.pkg.mode, box: held?.box.name, integrations: integrationIds, effort, system, events })
-    const stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
     const task = o.integrations?.task
     const calls = limited(CALLS_IN_FLIGHT)
-    const stopWatching =
-      task && offered.length
-        ? watchAskChannel(askDir(ws.runDir), (c) => calls.run(() => task.fromSpecialist(c, offered, step.id)), 100, TOOL_CALLS)
-        : () => undefined
+    let stopAsking = () => undefined as void
+    let stopWatching = () => undefined as void
     const stopCalls = () => {
       stopWatching()
       calls.end()
     }
     let result
     let check: ReturnType<typeof readContract>
+    // From here on the session is closed whatever happens, so a run's container and servers never outlive it.
     try {
+      stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
+      if (task && offered.length)
+        stopWatching = watchAskChannel(askDir(ws.runDir), (c) => calls.run(() => task.fromSpecialist(c, offered, step.id)), 100, TOOL_CALLS)
       result = await session.send(renderPrompt(pkg, open))
       check = readContract(result.text)
       // A contract that fails goes back to the specialist in the same session, a bounded number of times (R1.3).

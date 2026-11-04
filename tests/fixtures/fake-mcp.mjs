@@ -8,7 +8,7 @@ const pages = [
     tools: [{ name: "echo", description: "Echo the text", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }],
     nextCursor: "2",
   },
-  { tools: [{ name: "fail" }, { name: "picture" }, { name: "hang" }] },
+  { tools: [{ name: "fail" }, { name: "picture" }, { name: "hang" }, { name: "ask-first" }, { name: "bad name!" }, { name: "echo" }] },
 ]
 process.stdout.write("not json\n")
 for await (const raw of createInterface({ input: process.stdin })) {
@@ -33,6 +33,11 @@ for await (const raw of createInterface({ input: process.stdin })) {
         },
       })
     else if (name === "hang") continue
-    else send({ id, error: { code: -32602, message: `Unknown tool ${name}` } })
+    else if (name === "ask-first") {
+      // a request of the server's own, with the id of the client's call, before it answers that call
+      send({ id, method: "ping" })
+      send({ id: id + 1000, method: "roots/list" })
+      send({ id, result: { content: [{ type: "text", text: "answered after asking" }] } })
+    } else send({ id, error: { code: -32602, message: `Unknown tool ${name}` } })
   } else send({ id, error: { code: -32601, message: `Method not found: ${method}` } })
 }

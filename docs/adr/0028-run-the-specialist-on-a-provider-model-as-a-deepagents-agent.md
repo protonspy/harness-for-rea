@@ -51,8 +51,12 @@ of a line protocol are all the servers need.
 - adr:0003-authenticate-the-specialist-with-the-users-claude-plan's rule that the specialist runs
   only on the plan no longer holds: on a provider, source code and the target's data go to that
   provider under its terms, as they already do for the orchestrator.
-- No credential enters the container on a provider; the login volume is not mounted in a
-  delegation's own container.
+- No credential enters the container on a provider: the login volume is mounted neither in a
+  delegation's own container nor in a sandbox the orchestrator creates while the specialist runs on
+  a provider. A sandbox created while it ran on the plan keeps the volume until it is brought up
+  again, which recreates it without.
+- An existing install moves to Hopper too, since its stored settings never chose a specialist;
+  the setup then asks for Hopper's key, and choosing the Claude plan again restores the old path.
 - Two specialist loops exist: Claude Code's, read from its stream-json, and DeepAgents', read from
   its callbacks. Both end in the same events and the same result, and a change to either must keep
   them alike.

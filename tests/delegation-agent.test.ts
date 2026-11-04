@@ -146,6 +146,12 @@ describe("a delegation on a provider", () => {
     expect(containers).toEqual([])
   })
 
+  it("refuses an OpenAI-compatible specialist with no base URL", async () => {
+    settings = { ...settings, baseUrls: {} }
+    await expect(delegate(deps(), { taskId, sourceRoot: root, pkg: pkg() })).rejects.toThrow(/Set the base URL of your OpenAI-compatible/)
+    expect(containers).toEqual([])
+  })
+
   it("refuses when no model is chosen for the specialist", async () => {
     settings = { ...settings, specialistModel: " " }
     await expect(delegate(deps(), { taskId, sourceRoot: root, pkg: pkg() })).rejects.toThrow(/Choose the specialist's model/)

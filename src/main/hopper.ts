@@ -13,14 +13,21 @@ export const TOKEN_URL = `${HOPPER_ORIGIN}/oauth2/token`
 export const CLAIM_GRANT = "urn:workos:agent-auth:grant-type:claim"
 /** How long to wait after Hopper says to slow down. */
 export const SLOW_DOWN_MS = 60_000
+/** How long one request to Hopper may take before it counts as unanswered. */
+export const REQUEST_TIMEOUT_MS = 30_000
 
 /** Whether an address is a page of Hopper's own site, the only kind the sign-in opens (R3.4). */
 export function isHopperPage(url: string): boolean {
+  return hopperPage(url) !== null
+}
+
+/** The page as the browser will read it, or null when it is not one of Hopper's: what is opened is what was checked. */
+export function hopperPage(url: string): string | null {
   try {
     const u = new URL(url)
-    return u.origin === HOPPER_ORIGIN && !u.username && !u.password
+    return u.origin === HOPPER_ORIGIN && !u.username && !u.password ? u.href : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -64,6 +71,7 @@ export class HopperSignInService {
     try {
       const r = await this.d.fetch(REGISTER_URL, {
         method: "POST",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         headers: { "content-type": "application/json", "X-Hopper-Client": "harness-for-rea" },
         body: JSON.stringify({ type: "service_auth", login_hint: email }),
       })
@@ -76,10 +84,10 @@ export class HopperSignInService {
     } catch (e) {
       return this.fail(run, `Hopper could not be reached: ${(e as Error).message}`)
     }
-    const url = String(reg.claim?.verification_uri ?? "")
+    const url = hopperPage(String(reg.claim?.verification_uri ?? "")) ?? ""
     const code = String(reg.claim?.user_code ?? "")
     const token = String(reg.claim_token ?? "")
-    if (!token || !code || !isHopperPage(url)) return this.fail(run, "Hopper answered the sign-in with no code or with a page outside withhopper.com.")
+    if (!token || !code || !url) return this.fail(run, "Hopper answered the sign-in with no code or with a page outside withhopper.com.")
     if (run !== this.run) return this.state
     this.state = { ...this.state, code, url }
     await this.d.open(url).catch(() => false)
@@ -115,6 +123,7 @@ export class HopperSignInService {
       try {
         r = await this.d.fetch(TOKEN_URL, {
           method: "POST",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ grant_type: CLAIM_GRANT, claim_token: claimToken }).toString(),
         })

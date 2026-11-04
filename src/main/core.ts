@@ -9,7 +9,7 @@ import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
-import { HopperSignInService, isHopperPage } from "./hopper"
+import { hopperPage, HopperSignInService } from "./hopper"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
@@ -156,7 +156,17 @@ export async function startCore(host: CoreHost): Promise<Core> {
   const freeTask = (taskId: string) => free(log.getTask(taskId).projectId)
   // One set of sandboxes per project while any of its tasks is open (specs/projects R2.3).
   const registry = new SandboxRegistry(
-    (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
+    (p, after) =>
+      new SpecialistBoxes({
+        exec: dockerExecBuffer,
+        log,
+        dir: p.folder,
+        sourceRoot: p.sourceRoot,
+        projectId: p.id,
+        after,
+        // The plan's token only where Claude Code may run (specs/specialist-providers R2.3).
+        login: () => getSettings().specialistProvider === "claude",
+      }),
   )
   // The MCP integrations the app carries, Cheat Engine and IDA Pro, and the gate every call passes (specs/mcp-integrations R1.1).
   const integrationRegistry = new IntegrationRegistry([
@@ -232,8 +242,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
   // Hopper's key without pasting it: its page opened in the browser, the key kept as a saved one is (specs/specialist-providers R3).
   const hopper = new HopperSignInService({
     open: async (url) => {
-      if (!isHopperPage(url) || !host.openExternal) return false
-      await host.openExternal(url)
+      const page = hopperPage(url)
+      if (!page || !host.openExternal) return false
+      await host.openExternal(page)
       return true
     },
     save: async (key) => void (await saveKey(key, "hopper")),

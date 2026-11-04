@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { createInterface } from "node:readline"
 import { DynamicStructuredTool, type StructuredToolInterface } from "@langchain/core/tools"
 
 /*
@@ -14,6 +13,10 @@ export const PROTOCOL_VERSION = "2025-06-18"
 export const LIST_TIMEOUT_MS = 60_000
 /** Largest tool output handed to the model; the rest is cut and said so. */
 export const OUTPUT_CAP = 100_000
+/** Largest message a server may write on one line; past it the server is stopped, so the app's memory stays bounded. */
+export const LINE_CAP = 16 * 1024 * 1024
+/** A tool name a provider's function calling takes, once prefixed. */
+const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/
 
 export interface McpTool {
   name: string
@@ -45,11 +48,18 @@ export function mcpToolName(server: string, tool: string): string {
 
 /** A tool's result as the text the model reads: its text parts, an image named rather than inlined, cut at the cap. */
 export function resultText(r: McpCallResult): string {
-  const parts = (r.content ?? []).map((c) =>
-    c.type === "text" ? String(c.text ?? "") : c.type === "image" ? `[image ${c.mimeType ?? ""} omitted]` : `[${c.type ?? "content"} omitted]`,
-  )
-  let text = parts.join("\n")
-  if (text.length > OUTPUT_CAP) text = `${text.slice(0, OUTPUT_CAP)}\n[output cut at ${OUTPUT_CAP} characters]`
+  // Cut while joining, so a result of many parts is never held whole twice.
+  let text = ""
+  let cut = false
+  for (const c of Array.isArray(r.content) ? r.content : []) {
+    const part = c?.type === "text" ? String(c.text ?? "") : c?.type === "image" ? `[image ${c.mimeType ?? ""} omitted]` : `[${c?.type ?? "content"} omitted]`
+    text += (text ? "\n" : "") + part.slice(0, OUTPUT_CAP + 1 - text.length)
+    if (text.length > OUTPUT_CAP) {
+      cut = true
+      break
+    }
+  }
+  if (cut) text = `${text.slice(0, OUTPUT_CAP)}\n[output cut at ${OUTPUT_CAP} characters]`
   return r.isError ? `ERROR: ${text || "the tool failed"}` : text
 }
 
@@ -69,7 +79,21 @@ export class McpClient {
     child.stderr?.on("data", (c: Buffer) => {
       this.stderr = (this.stderr + c.toString("utf8")).slice(-2000)
     })
-    createInterface({ input: child.stdout! }).on("line", (line) => this.line(line))
+    // Lines split by hand with a cap: a server that writes without end is stopped rather than held in memory.
+    let buffer = ""
+    child.stdout?.on("data", (c: Buffer) => {
+      buffer += c.toString("utf8")
+      let at: number
+      while ((at = buffer.indexOf("\n")) >= 0) {
+        this.line(buffer.slice(0, at))
+        buffer = buffer.slice(at + 1)
+      }
+      if (buffer.length > LINE_CAP) {
+        buffer = ""
+        this.stderr += `\nwrote a message over ${LINE_CAP / 1024 / 1024} MB`
+        child.kill()
+      }
+    })
     const end = (why: string) => {
       this.ended ??= new Error(`MCP server ${server} ${why}${this.stderr.trim() ? `: ${this.stderr.trim().split("\n").pop()}` : ""}`)
       for (const [id, p] of this.pending) {
@@ -102,10 +126,17 @@ export class McpClient {
   private line(raw: string) {
     const line = raw.replace(/^\uFEFF/, "").trim()
     if (!line) return
-    let msg: { id?: unknown; result?: unknown; error?: { message?: unknown } }
+    let msg: { id?: unknown; method?: unknown; result?: unknown; error?: { message?: unknown } }
     try {
       msg = JSON.parse(line)
     } catch {
+      return
+    }
+    // A request from the server is never taken for an answer to one of ours: a ping is answered, anything else refused.
+    if (typeof msg?.method === "string") {
+      if (msg.id === undefined || msg.id === null) return
+      if (msg.method === "ping") this.write({ id: msg.id, result: {} })
+      else this.write({ id: msg.id, error: { code: -32601, message: `Method not found: ${msg.method}` } })
       return
     }
     if (typeof msg?.id !== "number") return
@@ -161,7 +192,15 @@ export class McpClient {
 
   /** The server's tools as LangChain tools; a failed call reads as an `ERROR:` result, never a thrown error. */
   async tools(timeoutMs = 0): Promise<StructuredToolInterface[]> {
-    return (await this.listTools()).map(
+    // A name a provider would refuse fails every model call, and a second tool of one name shadows the first: both are left out.
+    const seen = new Set<string>()
+    const usable = (await this.listTools()).filter((t) => {
+      const name = mcpToolName(this.server, t.name)
+      if (!TOOL_NAME.test(name) || seen.has(name)) return false
+      seen.add(name)
+      return true
+    })
+    return usable.map(
       (t) =>
         new DynamicStructuredTool({
           name: mcpToolName(this.server, t.name),

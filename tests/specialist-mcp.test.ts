@@ -18,12 +18,12 @@ afterEach(() => {
 describe("specialist MCP client", () => {
   it("lists every page of a server's tools after the handshake", async () => {
     const c = await start()
-    expect((await c.listTools()).map((t) => t.name)).toEqual(["echo", "fail", "picture", "hang"])
+    expect((await c.listTools()).map((t) => t.name)).toEqual(["echo", "fail", "picture", "hang", "ask-first", "bad name!", "echo"])
   })
 
-  it("names each tool as Claude Code does, and calls it with the model's arguments", async () => {
+  it("names each tool as Claude Code does, leaving out a name a provider refuses and a second tool of one name, and calls it with the model's arguments", async () => {
     const tools = await (await start("hfr")).tools()
-    expect(tools.map((t) => t.name)).toEqual(["mcp__hfr__echo", "mcp__hfr__fail", "mcp__hfr__picture", "mcp__hfr__hang"])
+    expect(tools.map((t) => t.name)).toEqual(["mcp__hfr__echo", "mcp__hfr__fail", "mcp__hfr__picture", "mcp__hfr__hang", "mcp__hfr__ask-first"])
     expect(await tools[0].invoke({ text: "hi" })).toBe("echo: hi")
     expect(mcpToolName("cheat-engine", "read_memory")).toBe("mcp__cheat-engine__read_memory")
   })
@@ -41,6 +41,11 @@ describe("specialist MCP client", () => {
     const waiting = c.call("hang", {})
     c.close()
     await expect(waiting).rejects.toThrow(/MCP server rea exited/)
+  })
+
+  it("never takes a request of the server's own, with the same id, for the answer to a call", async () => {
+    const c = await start()
+    expect(await c.call("ask-first", {})).toEqual({ content: [{ type: "text", text: "answered after asking" }] })
   })
 
   it("refuses a server that does not start", async () => {
