@@ -245,7 +245,8 @@ export interface ReadinessStep {
 
 export interface Readiness {
   sandbox: ReadinessStep & { building: boolean }
-  claude: ReadinessStep & { plan?: string; email?: string }
+  /** the specialist: Claude Code's sign-in on the plan, or its provider's key, endpoint and model (specs/specialist-providers R1.3) */
+  claude: ReadinessStep & { plan?: string; email?: string; provider?: ProviderId; model?: string }
   model: ReadinessStep & { provider: ProviderId; model: string }
   /** all three steps are ready */
   ready: boolean

@@ -7,9 +7,9 @@
   _Depends 1.2, 1.3_
 - [x] 1.5 (Unit) Choose the specialist in a delegation from Settings and run it through the same flow — R1.2, R2.1, R2.3, R2.4
   _Depends 1.1, 1.4_
-- [ ] 1.6 (Unit) Check the specialist's provider in readiness instead of the sign-in — R1.3
+- [x] 1.6 (Unit) Check the specialist's provider in readiness instead of the sign-in — R1.3
   _Depends 1.1_
-- [ ] 1.7 (Unit) Choose the specialist's provider and model in the desktop and TUI settings — R1.1
+- [x] 1.7 (Unit) Choose the specialist's provider and model in the desktop and TUI settings — R1.1
   _Depends 1.1_
 - [ ] 1.8 (Unit) Fold the specialist-lifecycle delta, the glossary and the specialist's docs — R1.1, R2.1
   _Depends 1.5_

@@ -86,7 +86,11 @@ export class McpClient {
   static async start(server: string, command: string, args: string[], start: StartServer = spawnServer): Promise<McpClient> {
     const c = new McpClient(server, start(command, args))
     try {
-      await c.request("initialize", { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "harness-for-rea", version: "1" } }, LIST_TIMEOUT_MS)
+      await c.request(
+        "initialize",
+        { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "harness-for-rea", version: "1" } },
+        LIST_TIMEOUT_MS,
+      )
       c.notify("notifications/initialized")
       return c
     } catch (e) {

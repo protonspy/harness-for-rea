@@ -2,7 +2,7 @@ import { ArrowRight, Bot, CheckCircle2, Circle, Container, Loader2, Sparkles } f
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import type { Readiness, ReadinessStep } from "@shared/types"
 import { ErrorText } from "@/components/common"
-import { ClaudePanel, message, ModelPanel, SandboxPanel } from "@/components/setup/panels"
+import { ClaudePanel, message, ModelPanel, SandboxPanel, SpecialistPanel } from "@/components/setup/panels"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -53,7 +53,7 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{again ? "Setup" : "Welcome to Harness for REA"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Three things before your first project: the sandbox the specialist works in, Claude Code on your own plan, and the model that plans the work.
+            Three things before your first project: the sandbox the specialist works in, the model the specialist runs on, and the model that plans the work.
           </p>
         </div>
       </header>
@@ -67,8 +67,14 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
       >
         <SandboxPanel onChange={check} />
       </Step>
-      <Step n={2} icon={<Sparkles size={16} />} title="Claude Code" step={r?.claude} what="The specialist signs in with your Claude plan and uses its limits.">
-        <ClaudePanel onChange={check} />
+      <Step
+        n={2}
+        icon={<Sparkles size={16} />}
+        title="Specialist"
+        step={r?.claude}
+        what="The model that does the deep analysis: a provider's, Hopper by default, or Claude Code on your Claude plan."
+      >
+        <SpecialistPanel onChange={check} claude={<ClaudePanel onChange={check} />} />
       </Step>
       <Step
         n={3}

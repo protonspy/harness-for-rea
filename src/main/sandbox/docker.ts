@@ -269,7 +269,10 @@ export function mcpServers(integrations: string[] = []): Record<string, McpServe
     hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] },
     rea: { type: "stdio", command: "node", args: [REA_ENTRY, "mcp"], env: reaEnv() },
     ...Object.fromEntries(
-      integrations.map((id): [string, McpServer] => [id, { type: "stdio", command: "node", args: [`${INTEGRATIONS_DIR}/server.mjs`, id, INTEGRATIONS_DIR, ASK_CHANNEL] }]),
+      integrations.map((id): [string, McpServer] => [
+        id,
+        { type: "stdio", command: "node", args: [`${INTEGRATIONS_DIR}/server.mjs`, id, INTEGRATIONS_DIR, ASK_CHANNEL] },
+      ]),
     ),
   }
 }

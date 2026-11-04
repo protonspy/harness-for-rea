@@ -19,9 +19,19 @@ for await (const raw of createInterface({ input: process.stdin })) {
   else if (method === "tools/list") send({ id, result: pages[params?.cursor === "2" ? 1 : 0] })
   else if (method === "tools/call") {
     const { name, arguments: args } = params
-    if (name === "echo") process.stdout.write(`﻿${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${args.text}` }] } })}\n`)
-    else if (name === "fail") send({ id, result: { content: [{ type: "text", text: "no such address" }], isError: true }})
-    else if (name === "picture") send({ id, result: { content: [{ type: "text", text: "a shot" }, { type: "image", mimeType: "image/png", data: "AAAA" }] } })
+    if (name === "echo")
+      process.stdout.write(`﻿${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${args.text}` }] } })}\n`)
+    else if (name === "fail") send({ id, result: { content: [{ type: "text", text: "no such address" }], isError: true } })
+    else if (name === "picture")
+      send({
+        id,
+        result: {
+          content: [
+            { type: "text", text: "a shot" },
+            { type: "image", mimeType: "image/png", data: "AAAA" },
+          ],
+        },
+      })
     else if (name === "hang") continue
     else send({ id, error: { code: -32602, message: `Unknown tool ${name}` } })
   } else send({ id, error: { code: -32601, message: `Method not found: ${method}` } })

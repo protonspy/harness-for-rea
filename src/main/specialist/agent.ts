@@ -59,7 +59,8 @@ export function classifyAgentFailure(e: unknown, provider: string): SpecialistEr
     return new SpecialistError("auth", `${provider} refused the specialist's API key. Set a valid key in Settings.`)
   if (status === 402 || /insufficient[_ ]quota|insufficient credits/i.test(text))
     return new SpecialistError("limit", `${provider} has no credit left for the specialist. Add credit to your ${provider} account.`)
-  if (status === 429 || /rate.?limit/i.test(text)) return new SpecialistError("limit", `${provider} is limiting the specialist's requests for now. Try again shortly.`)
+  if (status === 429 || /rate.?limit/i.test(text))
+    return new SpecialistError("limit", `${provider} is limiting the specialist's requests for now. Try again shortly.`)
   return new SpecialistError("failed", `${provider}: ${text || "the specialist's model failed."}`)
 }
 
@@ -144,7 +145,8 @@ export async function startAgentSpecialist(
     const label = PROVIDERS[run.provider].label
     const s = new AgentSpecialist({
       ...o,
-      model: (onUsage) => makeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: run.apiKey, model: run.model, effort: agentEffort(run.effort), onUsage }),
+      model: (onUsage) =>
+        makeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: run.apiKey, model: run.model, effort: agentEffort(run.effort), onUsage }),
       provider: label,
       modelName: run.model,
       backend: new ContainerBackend(run.exec, run.container.name),
@@ -219,7 +221,10 @@ export class AgentSpecialist implements Specialist {
       const { tool, callId } = calls.get(runId) ?? { tool: "tool", callId: runId }
       calls.delete(runId)
       this.open.delete(runId)
-      const raw = error !== undefined ? clean((error as Error)?.message ?? error) : clean(typeof output === "string" ? output : ((output as { content?: unknown })?.content ?? ""))
+      const raw =
+        error !== undefined
+          ? clean((error as Error)?.message ?? error)
+          : clean(typeof output === "string" ? output : ((output as { content?: unknown })?.content ?? ""))
       const failed = error !== undefined || raw.startsWith("ERROR:")
       const t = cut(raw, RESULT_CAP)
       this.emit({
@@ -318,7 +323,14 @@ export class AgentSpecialist implements Specialist {
       this.emit({
         kind: "result",
         summary: `Specialist failed: ${failure.message.split("\n")[0]}`,
-        payload: { error: failure.message, model: this.usage.model || this.o.modelName, tokensIn: this.usage.tokensIn, tokensOut: this.usage.tokensOut, cacheTokens: 0, costUsd: this.usage.costUsd },
+        payload: {
+          error: failure.message,
+          model: this.usage.model || this.o.modelName,
+          tokensIn: this.usage.tokensIn,
+          tokensOut: this.usage.tokensOut,
+          cacheTokens: 0,
+          costUsd: this.usage.costUsd,
+        },
       })
       throw failure
     } finally {

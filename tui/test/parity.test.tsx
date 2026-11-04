@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import type { ApiMethod } from "../../src/shared/api"
+import { DEFAULT_SETTINGS } from "../../src/shared/defaults"
 import { conversation, event, history, project, render, scriptedApi, task, type Screen } from "./support"
 
 /*
@@ -114,7 +115,11 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
 
   test("runs every step of the setup", async () => {
     await flow(
-      { loginStatus: () => ({ loggedIn: false, method: "none", inProgress: true, url: "https://claude.ai/x", text: "", error: "" }) },
+      {
+        loginStatus: () => ({ loggedIn: false, method: "none", inProgress: true, url: "https://claude.ai/x", text: "", error: "" }),
+        // On the default provider, Hopper, whose account page /signup opens.
+        getSettings: () => ({ ...DEFAULT_SETTINGS, setupCompleted: true }),
+      },
       { kind: "setup" },
       async (s) => {
         await s.until("3 · Orchestrator's model")
@@ -127,6 +132,7 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
           "/logout",
           "/key sk-or-v1-000000000",
           "/remove-key",
+          "/signup",
           "/base-url https://x.dev/v1",
           "/done",
         ])

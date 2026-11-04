@@ -80,7 +80,11 @@ describe("the agent's backend (R2.2)", () => {
 
   it("reads a file, and names a missing file or a folder", async () => {
     const r = recorder((args) =>
-      args.at(-1) === "/work/a.c" ? { stdout: Buffer.from("int x;") } : args.at(-1) === "/work" ? { code: 1, stderr: "cat: /work: Is a directory" } : { code: 1, stderr: "No such file" },
+      args.at(-1) === "/work/a.c"
+        ? { stdout: Buffer.from("int x;") }
+        : args.at(-1) === "/work"
+          ? { code: 1, stderr: "cat: /work: Is a directory" }
+          : { code: 1, stderr: "No such file" },
     )
     const out = await new ContainerBackend(r.exec, "hfr-1234").downloadFiles(["/work/a.c", "/work", "/work/nope"])
     expect(new TextDecoder().decode(out[0].content!)).toBe("int x;")

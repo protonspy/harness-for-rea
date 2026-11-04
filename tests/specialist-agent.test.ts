@@ -23,14 +23,27 @@ beforeAll(() => {
     if (!r) throw new Error("The script ran out of replies")
     if (r === "hang")
       return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))))
-    if ("status" in r) return new Response(JSON.stringify({ error: { message: "nope" } }), { status: r.status, headers: { "content-type": "application/json" } })
+    if ("status" in r)
+      return new Response(JSON.stringify({ error: { message: "nope" } }), { status: r.status, headers: { "content-type": "application/json" } })
     let n = 0
-    const tool_calls = r.tool_calls?.map((t) => ({ id: `call_${requests.length}_${n++}`, type: "function", function: { name: t.name, arguments: JSON.stringify(t.args) } }))
+    const tool_calls = r.tool_calls?.map((t) => ({
+      id: `call_${requests.length}_${n++}`,
+      type: "function",
+      function: { name: t.name, arguments: JSON.stringify(t.args) },
+    }))
     const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }
     if (body.stream) {
       const chunk = (o: object) => `data: ${JSON.stringify({ id: "g", object: "chat.completion.chunk", created: 0, model: body.model, ...o })}\n\n`
       return new Response(
-        chunk({ choices: [{ index: 0, delta: { role: "assistant", content: r.content ?? null, ...(tool_calls ? { tool_calls: tool_calls.map((t, index) => ({ index, ...t })) } : {}) }, finish_reason: null }] }) +
+        chunk({
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", content: r.content ?? null, ...(tool_calls ? { tool_calls: tool_calls.map((t, index) => ({ index, ...t })) } : {}) },
+              finish_reason: null,
+            },
+          ],
+        }) +
           chunk({ choices: [{ index: 0, delta: {}, finish_reason: tool_calls ? "tool_calls" : "stop" }] }) +
           chunk({ choices: [], usage }) +
           "data: [DONE]\n\n",
@@ -38,7 +51,12 @@ beforeAll(() => {
       )
     }
     return new Response(
-      JSON.stringify({ id: "g", model: body.model, choices: [{ message: { role: "assistant", content: r.content ?? null, tool_calls }, finish_reason: tool_calls ? "tool_calls" : "stop" }], usage }),
+      JSON.stringify({
+        id: "g",
+        model: body.model,
+        choices: [{ message: { role: "assistant", content: r.content ?? null, tool_calls }, finish_reason: tool_calls ? "tool_calls" : "stop" }],
+        usage,
+      }),
       { headers: { "content-type": "application/json" } },
     )
   }) as typeof fetch
@@ -95,7 +113,11 @@ describe("the DeepAgents specialist", () => {
     expect(events.map((e) => e.kind)).toEqual(["init", "tool.call", "tool.result", "text", "result"])
     const call = events.find((e) => e.kind === "tool.call")!
     expect(call.payload).toMatchObject({ tool: "execute", callId: expect.stringMatching(/^call_/) })
-    expect(events.find((e) => e.kind === "tool.result")!.payload).toMatchObject({ tool: "execute", callId: call.payload.callId, output: expect.stringContaining("ELF") })
+    expect(events.find((e) => e.kind === "tool.result")!.payload).toMatchObject({
+      tool: "execute",
+      callId: call.payload.callId,
+      output: expect.stringContaining("ELF"),
+    })
     expect(events.at(-1)!.payload).toMatchObject({ tokensIn: 200, tokensOut: 40, output: "The file is an ELF executable." })
     // the prompt Claude Code gets, and how this run's tools are named
     const system = requests[0].messages.find((m) => m.role === "system")
@@ -126,7 +148,10 @@ describe("the DeepAgents specialist", () => {
   it("names the provider when it refuses the key or limits the rate (R2.8)", async () => {
     script = [{ status: 401 }]
     await expect(specialist().s.send("x")).rejects.toMatchObject({ kind: "auth", message: expect.stringMatching(/^Hopper refused the specialist's API key/) })
-    expect(classifyAgentFailure(Object.assign(new Error("Too many"), { status: 429 }), "Hopper")).toMatchObject({ kind: "limit", message: expect.stringMatching(/^Hopper/) })
+    expect(classifyAgentFailure(Object.assign(new Error("Too many"), { status: 429 }), "Hopper")).toMatchObject({
+      kind: "limit",
+      message: expect.stringMatching(/^Hopper/),
+    })
     expect(classifyAgentFailure(Object.assign(new Error("quota"), { status: 402 }), "Hopper").kind).toBe("limit")
   })
 

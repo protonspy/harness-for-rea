@@ -26,7 +26,10 @@ export class ContainerBackend extends BaseSandbox {
 
   async execute(command: string) {
     // The command's own limit inside the container, under the client's, so it never outlives the call.
-    const r = await this.exec(["exec", "-w", "/work", this.id, "timeout", "-s", "KILL", String(this.timeoutS), "sh", "-c", command], (this.timeoutS + 15) * 1000)
+    const r = await this.exec(
+      ["exec", "-w", "/work", this.id, "timeout", "-s", "KILL", String(this.timeoutS), "sh", "-c", command],
+      (this.timeoutS + 15) * 1000,
+    )
     let output = r.stdout.toString("utf8") + r.stderr
     const truncated = r.overflow === true || output.length > OUTPUT_CAP
     if (truncated) output = output.slice(0, OUTPUT_CAP)

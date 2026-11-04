@@ -135,11 +135,21 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "saveSettings", [{ specialistProvider: "anthropic" }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ specialistModel: "a\u001b]0;x\u0007b" }])).rejects.toThrow(/invalid arguments/)
     expect(ran).toEqual([])
-    expect(DEFAULT_SETTINGS).toMatchObject({ provider: "hopper", model: "deepseek-v4.1-flash-1017-abliterated", specialistProvider: "hopper", specialistModel: "deepseek-v4.1-flash-1017-abliterated" })
+    expect(DEFAULT_SETTINGS).toMatchObject({
+      provider: "hopper",
+      model: "deepseek-v4.1-flash-1017-abliterated",
+      specialistProvider: "hopper",
+      specialistModel: "deepseek-v4.1-flash-1017-abliterated",
+    })
   })
 
   it("starts both agents on Hopper, at its fixed endpoint, with its account link and offer (specs/specialist-providers R1.4, R1.5)", async () => {
-    expect(PROVIDERS.hopper).toMatchObject({ kind: "openai", baseUrl: "https://api.withhopper.com/v1", keyRequired: true, signupUrl: "https://withhopper.com/cyber" })
+    expect(PROVIDERS.hopper).toMatchObject({
+      kind: "openai",
+      baseUrl: "https://api.withhopper.com/v1",
+      keyRequired: true,
+      signupUrl: "https://withhopper.com/cyber",
+    })
     expect(PROVIDERS.hopper.offer).toMatch(/20% off/)
     // Not editable: a base URL saved for it never redirects its key elsewhere.
     expect(resolveBaseUrl("hopper", "https://attacker.example/v1")).toBe("https://api.withhopper.com/v1")

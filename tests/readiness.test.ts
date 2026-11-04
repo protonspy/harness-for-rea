@@ -27,6 +27,27 @@ function deps(o: Partial<Omit<ReadinessDeps, "settings">> & { settings?: Partial
   return d
 }
 
+describe("the specialist on a provider (specs/specialist-providers R1.3)", () => {
+  const onHopper = { specialistProvider: "hopper" as const, specialistModel: "deepseek-v4.1-flash-1017-abliterated" }
+
+  it("is ready with the provider's key and a model, without reading the Claude sign-in", async () => {
+    const d = deps({ settings: onHopper })
+    const r = await readiness(d)
+    expect(r.claude).toMatchObject({ ready: true, provider: "hopper", model: onHopper.specialistModel })
+    expect(d.logins).toBe(0)
+  })
+
+  it("asks for that provider's key, its base URL and the specialist's model", async () => {
+    const keys = (p: string) => p !== "hopper"
+    expect((await readiness(deps({ settings: onHopper, keySet: keys }))).claude.reason).toBe("Set your Hopper API key: the specialist runs on it.")
+    expect((await readiness(deps({ settings: { ...onHopper, specialistModel: " " } }))).claude.reason).toBe("Choose the specialist's model on Hopper.")
+    const custom = { specialistProvider: "custom" as const, specialistModel: "m", baseUrls: {} }
+    expect((await readiness(deps({ settings: custom }))).claude.reason).toMatch(/^Set the base URL of your OpenAI-compatible/)
+    // A local server takes no key.
+    expect((await readiness(deps({ settings: { ...custom, baseUrls: { custom: "http://localhost:8000/v1" } }, keySet: () => false }))).claude.ready).toBe(true)
+  })
+})
+
 describe("a provider with no model list (specs/onboarding R1.6)", () => {
   const custom = { provider: "custom" as const, baseUrl: "https://llm.example/v1", model: "my-model" }
   const noList = async () => Promise.reject(new Error("OpenAI-compatible answered 404 to the model list."))

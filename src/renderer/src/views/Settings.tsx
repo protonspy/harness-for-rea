@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "@shared/types"
 import { ErrorText, Field, PanelHeader } from "@/components/common"
 import { IntegrationsPanel } from "@/components/setup/IntegrationsPanel"
-import { ClaudePanel, EffortSelect, message, ModelPanel, SandboxPanel } from "@/components/setup/panels"
+import { ClaudePanel, EffortSelect, message, ModelPanel, SandboxPanel, SpecialistPanel } from "@/components/setup/panels"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,7 +12,7 @@ import { FIRST_SECTION, SETTINGS_SECTIONS, type SettingsSection } from "@/lib/se
 
 /*
   Settings, one tab per section (specs/desktop-ui R1.4): the orchestrator's provider, key, endpoint, model and effort;
-  the sandbox images and the delegation's inactivity timeout; the Claude sign-in and the specialist's effort; the MCP integrations
+  the sandbox images and the delegation's inactivity timeout; what the specialist runs on and its effort; the MCP integrations
   (specs/mcp-integrations R1, R2); and the waits on the user (specs/desktop-ui R1). The first-run setup is reachable
   again from here (specs/onboarding R2.2).
 */
@@ -100,16 +100,16 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
 
         <TabsContent value="specialist">
           <Card>
-            <PanelHeader title="Specialist (Claude Code)" />
+            <PanelHeader title="Specialist" />
             <div className="p-4">
-              <ClaudePanel>
+              <SpecialistPanel claude={<ClaudePanel />}>
                 <Field
                   label="Effort"
-                  hint="Claude Code's --effort for every delegation. Higher effort thinks longer and uses more of your plan. Default passes nothing."
+                  hint="For every delegation: Claude Code's --effort on the plan, the reasoning effort on a provider (max as xhigh). Higher effort thinks longer and costs more. Default passes nothing."
                 >
                   <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
                 </Field>
-              </ClaudePanel>
+              </SpecialistPanel>
             </div>
           </Card>
         </TabsContent>

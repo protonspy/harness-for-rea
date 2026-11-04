@@ -224,7 +224,8 @@ export function dockerLauncher(exec: Exec = dockerExec): Launcher {
       // The sandbox outlives the delegation (specs/specialist-sandbox R4.4).
       if (box) return { name: box, stop: async () => undefined }
       const r = await exec(agentRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, out: ws.out, mode }))
-      if (r.code !== 0) throw new SpecialistError("failed", `The specialist's container did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
+      if (r.code !== 0)
+        throw new SpecialistError("failed", `The specialist's container did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
       return { name: containerName(ws.id), stop: () => killContainer(exec, ws.id) }
     },
     preflight: () => preflight(exec),

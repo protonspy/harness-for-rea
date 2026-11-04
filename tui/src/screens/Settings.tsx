@@ -4,7 +4,7 @@ import { PROVIDERS } from "../../../src/shared/providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "../../../src/shared/types"
 import { useApp, useKeys, useScreen } from "../app/context"
 import { Choice, Field } from "../components/ui"
-import { providerCommands } from "./Setup"
+import { providerCommands, specialistCommands, specialistLabel } from "./Setup"
 
 /*
   The settings editor (specs/tui-panels R4): the provider, model and key through the setup's commands, the
@@ -40,6 +40,7 @@ export function SettingsScreen() {
     typing: true,
     commands: [
       ...providerCommands(app, s, refresh),
+      ...specialistCommands(app, s, refresh),
       { name: "setup", title: "Open the first-run setup again", run: () => app.go({ kind: "setup", then: { kind: "settings" } }) },
     ],
   })
@@ -77,6 +78,12 @@ export function SettingsScreen() {
       <text fg={theme.foreground}>
         <span attributes={TextAttributes.BOLD}>{`${PROVIDERS[s.provider].label} · ${s.model}`}</span>
         <span fg={theme.mutedForeground}>{"   /provider · /model · /key · /base-url in the prompt (Ctrl+T)"}</span>
+      </text>
+      <text fg={theme.foreground}>
+        <span
+          attributes={TextAttributes.BOLD}
+        >{`Specialist: ${specialistLabel(s.specialistProvider)}${s.specialistProvider === "claude" ? "" : ` · ${s.specialistModel || "no model"}`}`}</span>
+        <span fg={theme.mutedForeground}>{"   /specialist · /specialist-model · /specialist-key"}</span>
       </text>
       <Choice<(typeof ORCHESTRATOR_EFFORTS)[number]>
         label="Orchestrator's effort"

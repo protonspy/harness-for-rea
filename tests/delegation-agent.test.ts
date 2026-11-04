@@ -16,14 +16,23 @@ import type { ExecBuffer } from "../src/main/sandbox/taskbox"
 const FAKE_MCP = join(import.meta.dirname, "fixtures", "fake-mcp.mjs")
 const realFetch = globalThis.fetch
 let fetched: { url: string; auth: string; model: string; tools: string[] }[] = []
-let replies: ({ content?: string; tool_calls?: { name: string; args: unknown }[] })[] = []
+let replies: { content?: string; tool_calls?: { name: string; args: unknown }[] }[] = []
 
 beforeAll(() => {
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as { model: string; tools?: { function: { name: string } }[] }
-    fetched.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") ?? "", model: body.model, tools: (body.tools ?? []).map((t) => t.function.name) })
+    fetched.push({
+      url: String(url),
+      auth: new Headers(init?.headers).get("authorization") ?? "",
+      model: body.model,
+      tools: (body.tools ?? []).map((t) => t.function.name),
+    })
     const r = replies.shift() ?? { content: "The file exports a constant." }
-    const tool_calls = r.tool_calls?.map((t, i) => ({ id: `call_${fetched.length}_${i}`, type: "function", function: { name: t.name, arguments: JSON.stringify(t.args) } }))
+    const tool_calls = r.tool_calls?.map((t, i) => ({
+      id: `call_${fetched.length}_${i}`,
+      type: "function",
+      function: { name: t.name, arguments: JSON.stringify(t.args) },
+    }))
     return new Response(
       JSON.stringify({
         id: "g",
@@ -59,7 +68,13 @@ beforeEach(() => {
   openDb(join(data, "hfr.db"))
   log = new EventLog(data)
   taskId = log.createTask({ request: "r", sourceRoot: root, model: "m" }).id
-  settings = { ...DEFAULT_SETTINGS, specialistProvider: "custom", specialistModel: "my-model", baseUrls: { custom: "https://llm.example/v1" }, timeoutMinutes: 1 }
+  settings = {
+    ...DEFAULT_SETTINGS,
+    specialistProvider: "custom",
+    specialistModel: "my-model",
+    baseUrls: { custom: "https://llm.example/v1" },
+    timeoutMinutes: 1,
+  }
   containers = []
   stops = 0
   servers = []
