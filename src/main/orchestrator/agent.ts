@@ -156,14 +156,18 @@ export const ORCHESTRATOR_TOOLS = new Set([
 */
 export function toolPolicyMiddleware(extra: string[] = []) {
   // The fixed set plus the integration tools the user checked for the orchestrator (specs/mcp-integrations R5.1).
-  const allowed = new Set([...ORCHESTRATOR_TOOLS, ...extra])
+  return toolPolicy(new Set([...ORCHESTRATOR_TOOLS, ...extra]), "the orchestrator")
+}
+
+/** Holds an agent to `allowed`: the model sees no other tool, and a call to one is refused. */
+export function toolPolicy(allowed: Set<string>, who: string) {
   return createMiddleware({
     name: "ToolPolicy",
     wrapModelCall: (request, handler) => handler({ ...request, tools: request.tools?.filter((t) => allowed.has(String((t as { name?: unknown }).name))) }),
     wrapToolCall: (request, handler) => {
       const { name, id } = request.toolCall
       if (allowed.has(name)) return handler(request)
-      return new ToolMessage({ content: `ERROR: ${name} is not available to the orchestrator.`, tool_call_id: id ?? "", name, status: "error" })
+      return new ToolMessage({ content: `ERROR: ${name} is not available to ${who}.`, tool_call_id: id ?? "", name, status: "error" })
     },
   })
 }

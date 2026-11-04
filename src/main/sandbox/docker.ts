@@ -150,8 +150,45 @@ export function mountSource(path: string): string {
   (specs/chat R5.2, adr:0008-ask-the-user-from-the-specialist-over-the-run-channel).
 */
 export function dockerRunArgs(spec: RunSpec): string[] {
+  return [...confined(containerName(spec.id), {}, true), ...runMounts(spec), "-w", "/work", SPECIALIST_IMAGE]
+}
+
+/**
+  The DeepAgents specialist's own container (specs/specialist-providers R2.3,
+  adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent): a delegation's mounts and identity, detached
+  and idle so the agent's tools run in it with `docker exec`, removed when it is killed. No login volume and none of
+  Claude Code's environment: nothing in it is Claude Code's.
+*/
+export function agentRunArgs(spec: RunSpec): string[] {
   return [
-    ...confined(containerName(spec.id), {}, true),
+    "run",
+    "-d",
+    "--rm",
+    "--name",
+    containerName(spec.id),
+    "--hostname",
+    "sandbox",
+    // a PID 1 that reaps what `docker exec` and `timeout` leave behind
+    "--init",
+    ...identity(true),
+    ...runMounts(spec),
+    "-w",
+    "/work",
+    "--entrypoint",
+    "sleep",
+    SPECIALIST_IMAGE,
+    "infinity",
+  ]
+}
+
+/** `docker exec` of one of the specialist's MCP servers in its container, its environment as `mcpServers` declares it (R2.4). */
+export function mcpExecArgs(container: string, server: McpServer): string[] {
+  return ["exec", "-i", "-w", "/work", ...Object.entries(server.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]), container, server.command, ...server.args]
+}
+
+/** A delegation's mounts: the workspace, the run directory read-only, its ask channel and the output folder. */
+function runMounts(spec: RunSpec): string[] {
+  return [
     "--mount",
     `type=bind,source=${mountSource(spec.workspace)},target=/work${spec.mode === "read" ? ",readonly" : ""}`,
     "--mount",
@@ -160,9 +197,6 @@ export function dockerRunArgs(spec: RunSpec): string[] {
     `type=bind,source=${mountSource(askDir(spec.runDir))},target=${ASK_CHANNEL}`,
     "--mount",
     `type=bind,source=${mountSource(spec.out)},target=/root/out`,
-    "-w",
-    "/work",
-    SPECIALIST_IMAGE,
   ]
 }
 
@@ -218,15 +252,26 @@ export function integrationSkillPath(id: string): string {
   and one per integration the delegation offers, from its run directory (adr:0026-proxy-host-engines-to-the-agents-as-mcp-integrations).
 */
 export function mcpConfig(integrations: string[] = []): string {
-  return JSON.stringify({
-    mcpServers: {
-      hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] },
-      rea: { type: "stdio", command: "node", args: [REA_ENTRY, "mcp"], env: reaEnv() },
-      ...Object.fromEntries(
-        integrations.map((id) => [id, { type: "stdio", command: "node", args: [`${INTEGRATIONS_DIR}/server.mjs`, id, INTEGRATIONS_DIR, ASK_CHANNEL] }]),
-      ),
-    },
-  })
+  return JSON.stringify({ mcpServers: mcpServers(integrations) })
+}
+
+/** One stdio MCP server in the specialist's container. */
+export interface McpServer {
+  type: "stdio"
+  command: string
+  args: string[]
+  env?: Record<string, string>
+}
+
+/** The servers both specialists get, by the name their tools carry (`mcp__<name>__…`). */
+export function mcpServers(integrations: string[] = []): Record<string, McpServer> {
+  return {
+    hfr: { type: "stdio", command: "node", args: ["/opt/hfr/ask-user.mjs", ASK_CHANNEL] },
+    rea: { type: "stdio", command: "node", args: [REA_ENTRY, "mcp"], env: reaEnv() },
+    ...Object.fromEntries(
+      integrations.map((id): [string, McpServer] => [id, { type: "stdio", command: "node", args: [`${INTEGRATIONS_DIR}/server.mjs`, id, INTEGRATIONS_DIR, ASK_CHANNEL] }]),
+    ),
+  }
 }
 
 /** The Claude Code command inside the container: no setting source, the ask-user MCP server alone, file tools and a shell. */
