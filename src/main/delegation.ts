@@ -18,18 +18,38 @@ import { join } from "node:path"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
 import { readContract, type Contract } from "@shared/contract"
+import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
 import type { IntegrationGate } from "./integrations/gate"
 import type { IntegrationRegistry } from "./integrations/registry"
 import { mcpListing, type OfferedIntegration, type TaskIntegrations } from "./integrations/task"
-import { claudeArgs, dockerExec, dockerRunArgs, execArgs, killContainer, preflight, specialistCommand, stopArgs, type Exec, type Mode } from "./sandbox/docker"
+import { baseUrlFor, needsKey } from "./readiness"
+import {
+  agentRunArgs,
+  claudeArgs,
+  containerName,
+  dockerExec,
+  dockerRunArgs,
+  execArgs,
+  killContainer,
+  mcpServers,
+  preflight,
+  specialistCommand,
+  stopArgs,
+  type Exec,
+  type Mode,
+} from "./sandbox/docker"
 import { applyPatch, makePatch, PatchConflict } from "./sandbox/patch"
 import { PathRejected } from "./sandbox/paths"
 import { renderPrompt, renderSystemPrompt, scrubPaths } from "./sandbox/prompt"
 import { SandboxError, type Box, type TaskSandboxes } from "./sandbox/specialistbox"
 import { askDir, prepareWorkspace, rebaseSnapshot, writeSystemPrompt, type PreparedFile, type Workspace } from "./sandbox/workspace"
-import { SpecialistError, SpecialistSession, type Launch } from "./specialist/executor"
+import { dockerExecBuffer, type ExecBuffer } from "./sandbox/taskbox"
+import { startAgentSpecialist } from "./specialist/agent"
+import { SpecialistError, SpecialistSession, type Launch, type Specialist } from "./specialist/executor"
+import type { StartServer } from "./specialist/mcp"
+import type { StreamEvent } from "./specialist/stream"
 import { UnknownsLedger } from "./unknowns"
 
 /*
@@ -191,10 +211,23 @@ export interface Launcher {
   preflight(): Promise<string | null>
   /** `box` names the orchestrator's sandbox to run in; without it the run gets a container of its own */
   launch(ws: Workspace, mode: Mode, o: { specialistEffort?: SpecialistEffort; integrations?: string[] }, box?: string): Launch
+  /**
+    The container the DeepAgents specialist's tools run in (specs/specialist-providers R2.3): the orchestrator's sandbox
+    when `box` names it, otherwise one of the delegation's own, started now and removed by `stop`.
+  */
+  container?(ws: Workspace, mode: Mode, box?: string): Promise<{ name: string; stop(): Promise<void> }>
 }
 
 export function dockerLauncher(exec: Exec = dockerExec): Launcher {
   return {
+    container: async (ws, mode, box) => {
+      // The sandbox outlives the delegation (specs/specialist-sandbox R4.4).
+      if (box) return { name: box, stop: async () => undefined }
+      const r = await exec(agentRunArgs({ id: ws.id, workspace: ws.workspace, runDir: ws.runDir, out: ws.out, mode }))
+      if (r.code !== 0)
+        throw new SpecialistError("failed", `The specialist's container did not start: ${r.stderr.trim().split("\n").pop() || `exit ${r.code}`}`)
+      return { name: containerName(ws.id), stop: () => killContainer(exec, ws.id) }
+    },
     preflight: () => preflight(exec),
     launch: (ws, mode, o, box) => {
       const cli = claudeArgs(mode, undefined, o.specialistEffort, o.integrations)
@@ -216,6 +249,10 @@ export interface DelegationDeps {
   settings: () => Settings
   /** the MCP integrations the app carries, the gate every call passes, and the container's server script (specs/mcp-integrations) */
   integrations?: { gate: IntegrationGate; registry: IntegrationRegistry; serverScript: string }
+  /** a provider's key, for the specialist on a provider (specs/specialist-providers R1.2) */
+  apiKey?(provider: ProviderId): string | null
+  /** how the DeepAgents specialist reaches its container: `docker` for its tools, and its MCP servers' start; Docker's own by default */
+  agent?: { exec?: ExecBuffer; startServer?: StartServer }
 }
 
 export class DelegationRefused extends Error {
@@ -291,6 +328,43 @@ function clearAskChannel(ws: Workspace) {
   for (const name of existsSync(dir) ? readdirSync(dir) : []) rmSync(join(dir, name), { recursive: true, force: true })
 }
 
+/**
+  The DeepAgents specialist for one delegation (specs/specialist-providers R2.1–R2.4): its container — its own, or the
+  orchestrator's sandbox — the MCP servers Claude Code would get started inside it, and the agent on the provider's
+  model with the provider's key and base URL.
+*/
+async function startAgent(
+  deps: DelegationDeps,
+  settings: Settings,
+  o: {
+    ws: Workspace
+    mode: Mode
+    box?: string
+    integrations: string[]
+    effort: SpecialistEffort
+    system: string
+    events: { idleMs: number; signal?: AbortSignal; onEvent(e: StreamEvent): void }
+  },
+): Promise<Specialist> {
+  const provider = settings.specialistProvider as ProviderId
+  if (!deps.launcher.container) throw new SpecialistError("failed", "This launcher cannot run the specialist on a provider.")
+  const container = await deps.launcher.container(o.ws, o.mode, o.box)
+  return startAgentSpecialist(
+    {
+      container,
+      exec: deps.agent?.exec ?? dockerExecBuffer,
+      servers: mcpServers(o.integrations),
+      startServer: deps.agent?.startServer,
+      provider,
+      baseUrl: baseUrlFor(provider, settings),
+      apiKey: deps.apiKey?.(provider) ?? "",
+      model: settings.specialistModel.trim(),
+      effort: o.effort,
+    },
+    { ...o.events, systemPrompt: o.system },
+  )
+}
+
 export async function delegate(
   deps: DelegationDeps,
   o: {
@@ -332,6 +406,11 @@ export async function delegate(
 
   const blocked = await deps.launcher.preflight()
   if (blocked) refuse(blocked)
+  // The specialist on a provider runs on its key; without one nothing is started (specs/specialist-providers R1.2).
+  const sp = settings.specialistProvider
+  if (sp !== "claude" && needsKey(sp) && !deps.apiKey?.(sp)) refuse(`Set your ${PROVIDERS[sp].label} API key: the specialist runs on it.`)
+  if (sp !== "claude" && !settings.specialistModel.trim()) refuse(`Choose the specialist's model on ${PROVIDERS[sp].label} in Settings.`)
+  if (sp !== "claude" && !baseUrlFor(sp, settings)) refuse(`Set the base URL of your ${PROVIDERS[sp].label} in Settings: the specialist runs on it.`)
 
   let ws: Workspace
   let held: { box: Box; release: () => Promise<void> } | null = null
@@ -390,44 +469,48 @@ export async function delegate(
 
   try {
     const pkg = scrubPaths(o.pkg, o.sourceRoot)
-    writeSystemPrompt(ws, renderSystemPrompt(pkg, held !== null, offered))
+    const system = renderSystemPrompt(pkg, held !== null, offered)
+    writeSystemPrompt(ws, system)
     // What earlier analyses of the project left open goes into this one's package (specs/analysis-contract R2.4).
     const open = o.projectId ? ledger.open(o.projectId) : []
     if (open.length) log.updateStep(step.id, { data: { unknowns: open.map((u) => u.id) } })
-    const session = new SpecialistSession(
-      deps.launcher.launch(
-        ws,
-        o.pkg.mode,
-        { specialistEffort: o.specialistEffort ?? settings.specialistEffort, ...(offered.length ? { integrations: offered.map((i) => i.id) } : {}) },
-        held?.box.name,
-      ),
-      {
-        idleMs: settings.timeoutMinutes * 60_000,
-        signal: o.signal,
-        onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id),
-        onEvent: (e) => {
-          log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload })
-          // Every turn's result carries what it spent, a failed one's too.
-          const u = e.payload
-          if (e.kind === "result")
-            log.addUsage(o.taskId, { tokensIn: (u.tokensIn ?? 0) + (u.cacheTokens ?? 0), tokensOut: u.tokensOut ?? 0, specialistCostUsd: u.costUsd ?? 0 })
-        },
+    const effort = o.specialistEffort ?? settings.specialistEffort
+    const integrationIds = offered.map((i) => i.id)
+    const events = {
+      idleMs: settings.timeoutMinutes * 60_000,
+      signal: o.signal,
+      onEvent: (e: StreamEvent) => {
+        log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload })
+        // Every turn's result carries what it spent, a failed one's too.
+        const u = e.payload
+        if (e.kind === "result")
+          log.addUsage(o.taskId, { tokensIn: (u.tokensIn ?? 0) + (u.cacheTokens ?? 0), tokensOut: u.tokensOut ?? 0, specialistCostUsd: u.costUsd ?? 0 })
       },
-    )
-    const stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
+    }
+    // Claude Code in its container on the plan, or a DeepAgents agent here on a provider's model whose every tool runs in
+    // the container (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent).
+    const session: Specialist =
+      settings.specialistProvider === "claude"
+        ? new SpecialistSession(
+            deps.launcher.launch(ws, o.pkg.mode, { specialistEffort: effort, ...(offered.length ? { integrations: integrationIds } : {}) }, held?.box.name),
+            { ...events, onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id) },
+          )
+        : await startAgent(deps, settings, { ws, mode: o.pkg.mode, box: held?.box.name, integrations: integrationIds, effort, system, events })
     const task = o.integrations?.task
     const calls = limited(CALLS_IN_FLIGHT)
-    const stopWatching =
-      task && offered.length
-        ? watchAskChannel(askDir(ws.runDir), (c) => calls.run(() => task.fromSpecialist(c, offered, step.id)), 100, TOOL_CALLS)
-        : () => undefined
+    let stopAsking = () => undefined as void
+    let stopWatching = () => undefined as void
     const stopCalls = () => {
       stopWatching()
       calls.end()
     }
     let result
     let check: ReturnType<typeof readContract>
+    // From here on the session is closed whatever happens, so a run's container and servers never outlive it.
     try {
+      stopAsking = watchAskChannel(askDir(ws.runDir), (q) => askFromSandbox(q, o.ask, step.id))
+      if (task && offered.length)
+        stopWatching = watchAskChannel(askDir(ws.runDir), (c) => calls.run(() => task.fromSpecialist(c, offered, step.id)), 100, TOOL_CALLS)
       result = await session.send(renderPrompt(pkg, open))
       check = readContract(result.text)
       // A contract that fails goes back to the specialist in the same session, a bounded number of times (R1.3).

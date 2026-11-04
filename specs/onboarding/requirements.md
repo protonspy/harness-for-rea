@@ -18,9 +18,9 @@ are changed later.
 ## R1 · The setup
 
 - **R1.1** While the setup has never been completed, the desktop UI shall open on the setup instead of the projects.
-- **R1.2** The setup shall show three steps in order — the sandbox, Claude Code and the orchestrator's model — each with its state, what it needs and the action that readies it.
+- **R1.2** The setup shall show three steps in order — the sandbox, the specialist and the orchestrator's model — each with its state, what it needs and the action that readies it.
 - **R1.3** The sandbox step shall be ready when Docker answers and the sandbox images are prepared, and shall offer to prepare them, showing the build's progress.
-- **R1.4** The Claude Code step shall be ready when Claude Code is signed in, and shall offer the sign-in with the Anthropic page to open and the field for its code, showing the plan signed in.
+- **R1.4** While the specialist runs on the Claude plan, the specialist step shall be ready when Claude Code is signed in, and shall offer the sign-in with the Anthropic page to open and the field for its code, showing the plan signed in.
 - **R1.5** The model step shall start on OpenRouter and let the user pick another OpenAI-compatible provider, set its key and base URL where it takes one, and choose a model from the provider's list or by name.
 - **R1.6** (MODIFIED) The model step shall be ready when the provider has a key where it needs one and a model is chosen, and the provider answered with its list of models or, when the list fails other than by refusing the key, a one-token test request to the chosen model answered.
 - **R1.7** If a step's check fails, then the setup shall say why and how to fix it, and keep the step not ready.

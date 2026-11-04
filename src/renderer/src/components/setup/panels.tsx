@@ -1,7 +1,7 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
-import type { KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
+import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "@shared/providers"
+import type { HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Badge } from "@/components/ui/badge"
@@ -163,7 +163,6 @@ export function ModelPanel({
   const api = window.hfr.api
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
-  const [keyInput, setKeyInput] = useState("")
   const [models, setModels] = useState<string[]>([])
   const [modelsNote, setModelsNote] = useState("")
   const { error, run } = useRun(onChange)
@@ -209,7 +208,6 @@ export function ModelPanel({
       setModels([])
       setSettings(await api.saveSettings({ provider: id, model: PROVIDERS[id].defaultModel || settings?.model }))
       setKey(await api.keyStatus(id))
-      setKeyInput("")
     })
 
   if (!settings) return null
@@ -217,7 +215,7 @@ export function ModelPanel({
   return (
     <div className="flex flex-col gap-4">
       {key && !key.encryption && <ErrorText>The OS keychain is unavailable, so a key cannot be stored. It is never kept in plain text.</ErrorText>}
-      <Field label="Provider" hint="OpenRouter, the default gateway, DeepSeek, or any service that speaks the OpenAI chat API. Each keeps its own key.">
+      <Field label="Provider" hint="Hopper, the default, OpenRouter, DeepSeek, or any service that speaks the OpenAI chat API. Each keeps its own key.">
         <div className="flex flex-wrap gap-2">
           {PROVIDER_IDS.map((id) => (
             <Button key={id} variant={settings.provider === id ? "default" : "outline"} onClick={() => switchProvider(id)}>
@@ -237,34 +235,7 @@ export function ModelPanel({
           {settings.provider === "custom" && !resolveBaseUrl("custom", settings.baseUrl) && <ErrorText>Set a base URL.</ErrorText>}
         </Field>
       )}
-      <Field
-        label="API key"
-        hint={
-          key?.set
-            ? `Saved (${key.hint}), encrypted with the OS keychain. It is never shown again.`
-            : "Encrypted with the OS keychain. It is never shown again."
-        }
-      >
-        <div className="flex gap-2">
-          <Input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder={provider.keyPlaceholder} autoComplete="off" />
-          <Button
-            disabled={keyInput.trim().length < 8}
-            onClick={() =>
-              run(async () => {
-                setKey(await api.saveKey(keyInput, settings.provider))
-                setKeyInput("")
-              })
-            }
-          >
-            <KeyRound size={14} /> Save
-          </Button>
-          {key?.set && (
-            <Button variant="destructive" onClick={() => run(async () => setKey(await api.clearKey(settings.provider)))}>
-              Clear
-            </Button>
-          )}
-        </div>
-      </Field>
+      <ProviderKeyField provider={settings.provider} status={key} onStatus={setKey} run={run} />
       <Field
         label="Model"
         hint={
@@ -311,5 +282,187 @@ export function EffortSelect<T extends string>({ value, options, onChange }: { v
         </option>
       ))}
     </select>
+  )
+}
+
+/**
+  A provider's API key: saved to the OS keychain, cleared, and — for a provider with an account page — the link to
+  make one and what the provider gives this app's users (specs/specialist-providers R1.5).
+*/
+export function ProviderKeyField({
+  provider,
+  status,
+  onStatus,
+  run,
+  label = "API key",
+}: {
+  provider: ProviderId
+  status: KeyStatus | null
+  onStatus(s: KeyStatus): void
+  run(fn: () => Promise<unknown>): Promise<void>
+  label?: string
+}) {
+  const api = window.hfr.api
+  const [input, setInput] = useState("")
+  const p = PROVIDERS[provider]
+  return (
+    <Field
+      label={label}
+      hint={
+        status?.set
+          ? `Saved (${status.hint}), encrypted with the OS keychain. It is never shown again.`
+          : "Encrypted with the OS keychain. It is never shown again."
+      }
+    >
+      <div className="flex gap-2">
+        <Input type="password" value={input} onChange={(e) => setInput(e.target.value)} placeholder={p.keyPlaceholder} autoComplete="off" />
+        <Button
+          disabled={input.trim().length < 8}
+          onClick={() =>
+            run(async () => {
+              onStatus(await api.saveKey(input, provider))
+              setInput("")
+            })
+          }
+        >
+          <KeyRound size={14} /> Save
+        </Button>
+        {status?.set && (
+          <Button variant="destructive" onClick={() => run(async () => onStatus(await api.clearKey(provider)))}>
+            Clear
+          </Button>
+        )}
+      </div>
+      {p.signupUrl && (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          No account yet?{" "}
+          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => run(() => api.openProviderSignup(provider))}>
+            Create one at {p.signupUrl.replace(/^https:\/\//, "")}
+          </button>
+          {p.offer ? ` ${p.offer}` : ""}
+        </p>
+      )}
+      {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} />}
+    </Field>
+  )
+}
+
+/** What the specialist runs on, by name in the provider choice. */
+export const specialistLabel = (p: SpecialistProvider) => (p === "claude" ? "Claude Code (your plan)" : PROVIDERS[p].label)
+
+/**
+  Who the specialist runs on (specs/specialist-providers R1.1): one of the orchestrator's providers with a model of it —
+  its key shared with the orchestrator's — or Claude Code on the user's plan, whose sign-in `claude` shows.
+*/
+export function SpecialistPanel({ onChange, claude, children }: { onChange?(): void; claude?: ReactNode; children?: ReactNode }) {
+  const api = window.hfr.api
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [key, setKey] = useState<KeyStatus | null>(null)
+  const { error, run } = useRun(onChange)
+  const sp = settings?.specialistProvider
+  useEffect(() => {
+    void api.getSettings().then(setSettings)
+  }, [api])
+  useEffect(() => {
+    if (sp && sp !== "claude") void api.keyStatus(sp).then(setKey)
+  }, [api, sp])
+  if (!settings || !sp) return null
+  const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
+  const choose = (p: SpecialistProvider) =>
+    p !== sp && save({ specialistProvider: p, ...(p === "claude" ? {} : { specialistModel: PROVIDERS[p].defaultModel || settings.specialistModel }) })
+  return (
+    <div className="flex flex-col gap-4">
+      <Field
+        label="Runs on"
+        hint="A provider's model runs the specialist here as a DeepAgents agent, every command and tool inside the sandbox. Claude Code runs in the sandbox on your Claude plan."
+      >
+        <div className="flex flex-wrap gap-2">
+          {SPECIALIST_PROVIDERS.map((p) => (
+            <Button key={p} variant={sp === p ? "default" : "outline"} onClick={() => choose(p)}>
+              {specialistLabel(p)}
+            </Button>
+          ))}
+        </div>
+      </Field>
+      {sp === "claude" ? (
+        claude
+      ) : (
+        <>
+          <ProviderKeyField provider={sp} status={key} onStatus={setKey} run={run} label={`${PROVIDERS[sp].label} API key, shared with the orchestrator`} />
+          {PROVIDERS[sp].editableBaseUrl && (
+            <p className="text-xs text-muted-foreground">
+              Uses the base URL set for {PROVIDERS[sp].label} under the orchestrator's model:{" "}
+              {resolveBaseUrl(sp, settings.baseUrls[sp] ?? "") || "none set yet"}.
+            </p>
+          )}
+          <Field label="Model" hint="Any model of this provider with tool calling.">
+            <ModelPicker
+              key={`${sp}:${settings.specialistModel}`}
+              provider={sp}
+              value={settings.specialistModel}
+              listed={[]}
+              onChange={(m) => save({ specialistModel: m })}
+            />
+          </Field>
+        </>
+      )}
+      {children}
+      <ErrorText>{error}</ErrorText>
+    </div>
+  )
+}
+
+/**
+  Hopper's key without pasting it (specs/specialist-providers R3): the user's email goes to Hopper's registration, Hopper's
+  page opens with a code to confirm, and the key comes back into the OS keychain.
+*/
+export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
+  const api = window.hfr.api
+  const [email, setEmail] = useState("")
+  const [state, setState] = useState<HopperSignIn | null>(null)
+  const { error, run } = useRun()
+  const waiting = state?.inProgress ?? false
+  useEffect(() => {
+    void api.hopperSignInStatus().then(setState)
+  }, [api])
+  useEffect(() => {
+    if (!waiting) return
+    const timer = setInterval(() => {
+      void api.hopperSignInStatus().then(async (s) => {
+        setState(s)
+        if (s.done) onKey(await api.keyStatus("hopper"))
+      })
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [api, waiting, onKey])
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-md border border-border p-3">
+      {waiting && state ? (
+        <>
+          <p className="text-sm">
+            Confirm the code <Mono className="text-base font-semibold">{state.code}</Mono> on the Hopper page that opened in your browser.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Not open? <Mono>{state.url}</Mono>
+          </p>
+          <Button className="self-start" variant="ghost" onClick={() => run(async () => setState(await api.cancelHopperSignIn()))}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">Or sign in with your Hopper account, or make one, and the key is saved for you.</p>
+          <div className="flex gap-2">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" />
+            <Button disabled={!/^\S+@\S+\.\S+$/.test(email.trim())} onClick={() => run(async () => setState(await api.startHopperSignIn(email.trim())))}>
+              <LogIn size={14} /> Sign in with Hopper
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Your email goes to Hopper, which sends you to its page to sign in or sign up.</p>
+        </>
+      )}
+      {state?.done && <p className="text-xs text-muted-foreground">Signed in: the key is saved in the OS keychain.</p>}
+      <ErrorText>{state?.error || error}</ErrorText>
+    </div>
   )
 }

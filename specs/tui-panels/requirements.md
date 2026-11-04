@@ -30,7 +30,7 @@ call (plans/tui-revamp 1.6). Fixes the setup and settings defects and the parity
 
 ## R3 · Setup
 
-- **R3.1** The setup shall show its three steps with their state — the sandbox images, the Claude sign-in and the orchestrator's provider — and let the user complete it once every step is ready.
+- **R3.1** The setup shall show its three steps with their state — the sandbox images, the specialist and the orchestrator's provider — and let the user complete it once every step is ready.
 - **R3.2** The sandbox step shall show the image preparation's log as it runs and let the user prepare the images again.
 - **R3.3** The sign-in step shall open the sign-in page in the browser, take the code pasted back, and let the user cancel the sign-in or sign out.
 - **R3.4** The provider step shall let the user pick the provider, set its base URL where it takes one, set or remove its key, and pick the model from the provider's list or by name.

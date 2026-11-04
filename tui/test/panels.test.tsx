@@ -23,7 +23,7 @@ describe("the setup (specs/tui-panels R3)", () => {
     const { api, called } = scriptedApi({ readiness: () => notReady })
     const s = await show({ api, bus: bus.bus, start: { kind: "setup" } })
     await s.until("1 · Sandbox images")
-    for (const part of ["Docker is not running.", "2 · Claude sign-in", "Sign Claude in.", "3 · Orchestrator's model", "Set your OpenRouter API key."])
+    for (const part of ["Docker is not running.", "2 · Specialist", "Sign Claude in.", "3 · Orchestrator's model", "Set your OpenRouter API key."])
       expect(s.frame()).toContain(part)
     bus.push({
       type: "sandbox",
@@ -82,6 +82,22 @@ describe("the setup (specs/tui-panels R3)", () => {
     await s.press("down")
     await s.enter()
     await s.until(() => called("saveSettings").some((c) => JSON.stringify(c.args).includes('"provider":"deepseek"')))
+  })
+
+  test("picks what the specialist runs on, its model and its provider's key (specs/specialist-providers R1.1)", async () => {
+    const { api, called } = scriptedApi()
+    const s = await show({ api, start: { kind: "setup" } })
+    await s.until("2 · Specialist")
+    await s.type("/specialist")
+    await s.enter()
+    await s.until("Claude Code (your plan)")
+    await s.press("down")
+    await s.enter()
+    await s.until(() => called("saveSettings").some((c) => JSON.stringify(c.args).includes('"specialistProvider":"hopper"')))
+    expect(JSON.stringify(called("saveSettings").at(-1)!.args)).toContain('"specialistModel":"deepseek-v4.1-flash-1017-abliterated"')
+    await s.type("/specialist-model gemma-4-31b")
+    await s.enter()
+    await s.until(() => called("saveSettings").some((c) => JSON.stringify(c.args).includes('"specialistModel":"gemma-4-31b"')))
   })
 
   test("finishes with /done and goes on (R3.1)", async () => {

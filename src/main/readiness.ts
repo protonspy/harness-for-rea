@@ -63,7 +63,20 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
 
   // The sign-in is read through the sandbox image, so it waits for the sandbox.
   let claude: Readiness["claude"] = { ready: false, reason: "Ready the sandbox first: Claude Code runs inside it." }
-  if (sandbox.ready) {
+  const sp = settings.specialistProvider
+  if (sp !== "claude") {
+    // On a provider the specialist needs its key, endpoint and model, and no Claude sign-in (specs/specialist-providers R1.3).
+    const label = PROVIDERS[sp].label
+    const reason =
+      needsKey(sp) && !d.keySet(sp)
+        ? `Set your ${label} API key: the specialist runs on it.`
+        : !baseUrlFor(sp, settings)
+          ? `Set the base URL of your ${label} in Settings: the specialist runs on it.`
+          : !settings.specialistModel.trim()
+            ? `Choose the specialist's model on ${label}.`
+            : ""
+    claude = { ready: !reason, reason, provider: sp, model: settings.specialistModel }
+  } else if (sandbox.ready) {
     const l = await d.login().catch((e: unknown): LoginStatus | null => {
       claude = { ready: false, reason: `The sign-in could not be read: ${(e as Error).message}` }
       return null

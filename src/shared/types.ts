@@ -1,7 +1,7 @@
 import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
-import type { ProviderId } from "./providers"
+import type { ProviderId, SpecialistProvider } from "./providers"
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
@@ -211,6 +211,10 @@ export interface Settings {
   orchestratorEffort: OrchestratorEffort
   /** Claude Code's `--effort` for the specialist; "default" passes none */
   specialistEffort: SpecialistEffort
+  /** the Claude plan, or the orchestrator's provider the specialist runs on (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent) */
+  specialistProvider: SpecialistProvider
+  /** the specialist's model on that provider; ignored on the Claude plan */
+  specialistModel: string
   /** how long a gated tool call waits for a decision before it is rejected (specs/chat R4.5) */
   approvalTimeoutMinutes: number
   /** how long a question waits for an answer before its default is used (specs/chat R5.4) */
@@ -241,7 +245,8 @@ export interface ReadinessStep {
 
 export interface Readiness {
   sandbox: ReadinessStep & { building: boolean }
-  claude: ReadinessStep & { plan?: string; email?: string }
+  /** the specialist: Claude Code's sign-in on the plan, or its provider's key, endpoint and model (specs/specialist-providers R1.3) */
+  claude: ReadinessStep & { plan?: string; email?: string; provider?: ProviderId; model?: string }
   model: ReadinessStep & { provider: ProviderId; model: string }
   /** all three steps are ready */
   ready: boolean
@@ -256,6 +261,19 @@ export interface SandboxStatus {
   building: boolean
   buildLog: string
   claudeVersion: string
+}
+
+/** Signing in to Hopper through its agent registration (specs/specialist-providers R3). */
+export interface HopperSignIn {
+  /** waiting on the user to confirm the code on Hopper's page */
+  inProgress: boolean
+  /** the key came and is in the OS keychain */
+  done: boolean
+  /** the six-digit code the user confirms on Hopper's page */
+  code: string
+  /** Hopper's page, always on withhopper.com */
+  url: string
+  error: string
 }
 
 export interface LoginStatus {

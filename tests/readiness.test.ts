@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import { DEFAULT_MODEL, DEFAULT_SETTINGS } from "../src/shared/defaults"
 import type { LoginStatus, SandboxStatus, Settings } from "../src/shared/types"
 import { blocking, needsKey, readiness, type ReadinessDeps } from "../src/main/readiness"
 import { groupModels, PROVIDERS } from "../src/shared/providers"
@@ -21,10 +21,32 @@ function deps(o: Partial<Omit<ReadinessDeps, "settings">> & { settings?: Partial
     listModels: async () => ["deepseek/deepseek-v4.1-flash-1017"],
     probeModel: async () => undefined,
     ...o,
-    settings: () => ({ ...DEFAULT_SETTINGS, ...o.settings }),
+    // OpenRouter and the Claude plan, the steps these tests were written for.
+    settings: () => ({ ...DEFAULT_SETTINGS, provider: "openrouter" as const, model: DEFAULT_MODEL, specialistProvider: "claude" as const, ...o.settings }),
   }
   return d
 }
+
+describe("the specialist on a provider (specs/specialist-providers R1.3)", () => {
+  const onHopper = { specialistProvider: "hopper" as const, specialistModel: "deepseek-v4.1-flash-1017-abliterated" }
+
+  it("is ready with the provider's key and a model, without reading the Claude sign-in", async () => {
+    const d = deps({ settings: onHopper })
+    const r = await readiness(d)
+    expect(r.claude).toMatchObject({ ready: true, provider: "hopper", model: onHopper.specialistModel })
+    expect(d.logins).toBe(0)
+  })
+
+  it("asks for that provider's key, its base URL and the specialist's model", async () => {
+    const keys = (p: string) => p !== "hopper"
+    expect((await readiness(deps({ settings: onHopper, keySet: keys }))).claude.reason).toBe("Set your Hopper API key: the specialist runs on it.")
+    expect((await readiness(deps({ settings: { ...onHopper, specialistModel: " " } }))).claude.reason).toBe("Choose the specialist's model on Hopper.")
+    const custom = { specialistProvider: "custom" as const, specialistModel: "m", baseUrls: {} }
+    expect((await readiness(deps({ settings: custom }))).claude.reason).toMatch(/^Set the base URL of your OpenAI-compatible/)
+    // A local server takes no key.
+    expect((await readiness(deps({ settings: { ...custom, baseUrls: { custom: "http://localhost:8000/v1" } }, keySet: () => false }))).claude.ready).toBe(true)
+  })
+})
 
 describe("a provider with no model list (specs/onboarding R1.6)", () => {
   const custom = { provider: "custom" as const, baseUrl: "https://llm.example/v1", model: "my-model" }

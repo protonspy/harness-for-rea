@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: 0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent
 ---
 
 # 0003 · Authenticate the specialist with the user's Claude plan

@@ -307,7 +307,7 @@ export function App(props: AppProps) {
       ? !readiness.sandbox.ready
         ? "the sandbox images"
         : !readiness.claude.ready
-          ? "the Claude sign-in"
+          ? "the specialist"
           : "the orchestrator's model"
       : null
 

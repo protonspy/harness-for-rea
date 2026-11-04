@@ -4,7 +4,7 @@
   is a base URL, a key and a model name. Adding one is one entry here.
 */
 
-export const PROVIDER_IDS = ["openrouter", "deepseek", "custom"] as const
+export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "custom"] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
 export interface ProviderPreset {
@@ -21,9 +21,28 @@ export interface ProviderPreset {
   defaultModel: string
   models: readonly string[]
   keyPlaceholder: string
+  /** where an account and its key are made, offered beside the key; the app opens no other address for a provider */
+  signupUrl?: string
+  /** what the provider gives the app's users, said beside that link */
+  offer?: string
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
+  // The default of both agents (specs/specialist-providers R1.4): an OpenAI-compatible endpoint serving a security model.
+  hopper: {
+    id: "hopper",
+    label: "Hopper",
+    kind: "openai",
+    baseUrl: "https://api.withhopper.com/v1",
+    editableBaseUrl: false,
+    keyRequired: true,
+    defaultModel: "deepseek-v4.1-flash-1017-abliterated",
+    models: ["deepseek-v4.1-flash-1017-abliterated", "gemma-4-31b"],
+    keyPlaceholder: "sk_hopper_…",
+    signupUrl: "https://withhopper.com/cyber",
+    // Requests carry Hopper's client header (attribution.ts), which is what the discount is applied by.
+    offer: "20% off for Harness for REA users.",
+  },
   openrouter: {
     id: "openrouter",
     label: "OpenRouter",
@@ -67,6 +86,13 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     keyPlaceholder: "API key",
   },
 }
+
+/**
+  Who the specialist runs on (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent): `claude` is Claude
+  Code on the user's plan; any other is a DeepAgents agent on that orchestrator provider's model, with its key and base URL.
+*/
+export const SPECIALIST_PROVIDERS = ["claude", ...PROVIDER_IDS] as const
+export type SpecialistProvider = (typeof SPECIALIST_PROVIDERS)[number]
 
 export function isProviderId(v: unknown): v is ProviderId {
   return typeof v === "string" && (PROVIDER_IDS as readonly string[]).includes(v)

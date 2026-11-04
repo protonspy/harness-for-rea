@@ -36,7 +36,7 @@ running tasks and for the orchestrator that reads each delegation's outcome.
 ## R3 · Container and model
 
 - **R3.1** When a delegation's run ends in an answer, a failure, a cancellation, a timeout or a refusal, the delegation shall leave no specialist container of its own behind.
-- **R3.2** The delegation shall run the specialist on the pinned Opus model, by its full model id.
+- **R3.2** While the specialist runs on the Claude plan, the delegation shall run the specialist on the pinned Opus model, by its full model id (specs/specialist-providers R1.1).
 
 ## Out of scope
 

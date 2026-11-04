@@ -23,8 +23,9 @@ anyone in the domain.
 <!-- Entries go below this line. Delete the guidance above once they read for
 themselves. -->
 
-- **orchestrator** — the DeepAgents agent on a model from OpenRouter, DeepSeek or another OpenAI-compatible provider that plans a task, delegates steps and consolidates the results. Avoid: coordinator, planner agent
-- **specialist** — the Claude Opus agent run through the pinned Claude Code CLI for steps that need deep analysis. Avoid: expert agent, worker agent
+- **orchestrator** — the DeepAgents agent on a model from Hopper, OpenRouter, DeepSeek or another OpenAI-compatible provider that plans a task, delegates steps and consolidates the results. Avoid: coordinator, planner agent
+- **specialist** — the agent that does a step's deep analysis: by default a DeepAgents agent on the host on a provider's model whose every tool runs in its sandbox, or Claude Opus through the pinned Claude Code CLI on the user's plan (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent). Avoid: expert agent, worker agent
+- **specialist provider** — what the specialist runs on: one of the orchestrator's providers, Hopper by default, its key shared with the orchestrator, or the Claude plan. Avoid: specialist backend, specialist vendor
 - **delegation** — handing one step from the orchestrator to the specialist with a context package. Avoid: handoff
 - **context package** — what a delegation carries: the orchestrator's brief, objective, files and excerpts, environment facts, questions, constraints, and the expected report format. Avoid: context bundle
 - **brief** — the orchestrator's own technical prompt to the specialist inside a context package: what the artifact is, what is known about it and what one step must discover, never the user's request or purpose (adr:0019-keep-the-specialists-brief-technical). Avoid: narrative, pretext

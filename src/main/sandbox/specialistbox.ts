@@ -77,9 +77,10 @@ export function sandboxName(id: string): string {
   `docker run` for a sandbox (R1.1–R1.3): root with the install capabilities and a writable root, Docker's default
   network, the login volume, and only its workspace, run directory, ask channel and output folder bound; never
   privileged, never the Docker socket. `/tmp` is no tmpfs, so what is written there counts toward the disk. Kept
-  when stopped (specs/task-persistence R3.4).
+  when stopped (specs/task-persistence R3.4). The login volume only while the specialist runs on the Claude plan: a
+  provider's model in the sandbox never reaches the plan's token (specs/specialist-providers R2.3).
 */
-export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits, outDir: string): string[] {
+export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits, outDir: string, login = true): string[] {
   return [
     "run",
     "-d",
@@ -91,7 +92,7 @@ export function sandboxArgs(name: string, ws: Workspace, limits: BoxLimits, outD
     "--init",
     ...identity(true),
     ...limitArgs(limits),
-    ...loginVolume(),
+    ...(login ? loginVolume() : []),
     "--mount",
     `type=bind,source=${mountSource(ws.workspace)},target=/work`,
     "--mount",
@@ -163,6 +164,8 @@ export interface BoxesDeps {
   actor?: string
   /** an earlier instance of the project's sandboxes still stopping: no Docker call is made before it settles */
   after?: Promise<void>
+  /** whether a sandbox gets the Claude login volume: while the specialist runs on the plan, the default */
+  login?(): boolean
 }
 
 /** A project's sandboxes as one of its tasks uses them: every call is recorded against that task. */
@@ -260,7 +263,7 @@ export class SpecialistBoxes {
     const forget = () => discardWorkspace(this.d.dir, id)
     let args: string[]
     try {
-      args = sandboxArgs(box.name, ws, limits, box.outDir)
+      args = sandboxArgs(box.name, ws, limits, box.outDir, this.d.login?.() ?? true)
     } catch (e) {
       forget()
       throw new SandboxError((e as Error).message)
@@ -300,7 +303,11 @@ export class SpecialistBoxes {
     let created: boolean
     try {
       mkdirSync(box.outDir, { recursive: true })
-      ;({ created } = await bringUp((args, t, input) => this.exec(args, t, input), box.name, sandboxArgs(box.name, box.ws, box.limits, box.outDir)))
+      ;({ created } = await bringUp(
+        (args, t, input) => this.exec(args, t, input),
+        box.name,
+        sandboxArgs(box.name, box.ws, box.limits, box.outDir, this.d.login?.() ?? true),
+      ))
     } catch (e) {
       throw new SandboxError(`Sandbox ${id} could not be brought up again: ${(e as Error).message}`)
     }

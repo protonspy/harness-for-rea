@@ -7,6 +7,8 @@ import { isAppPage, makeDispatcher } from "../src/main/ipc"
 import { contentSecurityPolicy } from "../src/main/csp"
 import { lockNavigation, webPreferences } from "../src/main/window"
 import { API_METHODS, API_SCHEMAS, type Handlers } from "../src/shared/api"
+import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 
 /* specs/app-shell: the window's hardening, the validated IPC contract and the credential store. */
 
@@ -122,6 +124,39 @@ describe("IPC (R2.1–R2.3)", () => {
     await expect(dispatch(PAGE, "answerQuestion", [t, c, { evil: 1 }])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "sendMessage", [t, "   "])).rejects.toThrow(/invalid arguments/)
     await expect(dispatch(PAGE, "saveSettings", [{ approvalTimeoutMinutes: 0 }])).rejects.toThrow(/invalid arguments/)
+  })
+
+  it("takes the specialist's provider and model, the Claude plan or an orchestrator provider (specs/specialist-providers R1.1)", async () => {
+    await dispatch(PAGE, "saveSettings", [{ specialistProvider: "openrouter", specialistModel: " qwen/qwen3.8-flash " }])
+    expect(ran.at(-1)).toEqual(["saveSettings", { specialistProvider: "openrouter", specialistModel: "qwen/qwen3.8-flash" }])
+    await dispatch(PAGE, "saveSettings", [{ specialistProvider: "claude", specialistModel: "" }])
+    expect(ran.at(-1)).toEqual(["saveSettings", { specialistProvider: "claude", specialistModel: "" }])
+    ran.length = 0
+    await expect(dispatch(PAGE, "saveSettings", [{ specialistProvider: "anthropic" }])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "saveSettings", [{ specialistModel: "a\u001b]0;x\u0007b" }])).rejects.toThrow(/invalid arguments/)
+    expect(ran).toEqual([])
+    expect(DEFAULT_SETTINGS).toMatchObject({
+      provider: "hopper",
+      model: "deepseek-v4.1-flash-1017-abliterated",
+      specialistProvider: "hopper",
+      specialistModel: "deepseek-v4.1-flash-1017-abliterated",
+    })
+  })
+
+  it("starts both agents on Hopper, at its fixed endpoint, with its account link and offer (specs/specialist-providers R1.4, R1.5)", async () => {
+    expect(PROVIDERS.hopper).toMatchObject({
+      kind: "openai",
+      baseUrl: "https://api.withhopper.com/v1",
+      keyRequired: true,
+      signupUrl: "https://withhopper.com/cyber",
+    })
+    expect(PROVIDERS.hopper.offer).toMatch(/20% off/)
+    // Not editable: a base URL saved for it never redirects its key elsewhere.
+    expect(resolveBaseUrl("hopper", "https://attacker.example/v1")).toBe("https://api.withhopper.com/v1")
+    // The renderer names the provider; the address opened is the preset's alone.
+    await expect(dispatch(PAGE, "openProviderSignup", ["https://evil.example"])).rejects.toThrow(/invalid arguments/)
+    await expect(dispatch(PAGE, "openProviderSignup", ["hopper"])).resolves.toBe("ok")
+    ran.length = 0
   })
 
   it("has a schema for every method the bridge exposes", () => {

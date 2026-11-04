@@ -65,7 +65,8 @@ const runner = new TaskRunner({
       env: { HFR_FAKE: "answer", HFR_RUN: ws.runDir, PATH: process.env.PATH ?? "", SYSTEMROOT: process.env.SYSTEMROOT ?? "" },
     }),
   },
-  settings: () => ({ ...DEFAULT_SETTINGS, provider: "openrouter", model: "deepseek/deepseek-v4" }),
+  // The Claude Code specialist the fake CLI scripts.
+  settings: () => ({ ...DEFAULT_SETTINGS, provider: "openrouter" as const, model: "deepseek/deepseek-v4", specialistProvider: "claude" as const }),
   apiKey: () => "sk-or-v1-testkey000000",
   workspace: async () => ({ backend: new FilesystemBackend({ rootDir: root, virtualMode: true }), root: "/", dispose: async () => undefined }),
 })

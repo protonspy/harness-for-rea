@@ -1,11 +1,12 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
 import { IntegrationIdSchema, IntegrationSettingsSchema, type IntegrationActionResult, type IntegrationStatus, type IntegrationView } from "./integrations"
-import { PROVIDER_IDS } from "./providers"
+import { PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
 import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
   KeyStatus,
+  HopperSignIn,
   LoginStatus,
   PatchView,
   ProjectRow,
@@ -60,6 +61,9 @@ const SettingsPatch = z
     timeoutMinutes: z.number().int().min(1).max(240),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
+    specialistProvider: z.enum(SPECIALIST_PROVIDERS),
+    // Empty until one is chosen; the readiness check asks for it (specs/specialist-providers R1.3).
+    specialistModel: z.union([z.literal(""), ModelName]),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
     questionTimeoutMinutes: z.number().int().min(1).max(1440),
     // Each integration's whole settings; the main process holds them to the integration the app carries (specs/mcp-integrations R1.5).
@@ -84,7 +88,13 @@ export const API_SCHEMAS = {
   sendLoginCode: z.tuple([z.string().trim().min(8).max(512)]),
   cancelLogin: z.tuple([]),
   openLoginUrl: z.tuple([]),
+  // Only the address the provider's preset names is opened (specs/specialist-providers R1.5).
+  openProviderSignup: z.tuple([Provider]),
   logout: z.tuple([]),
+  // The email Hopper's registration is sent with, the account the user signs in or up with (specs/specialist-providers R3.1).
+  startHopperSignIn: z.tuple([z.string().trim().email().max(254)]),
+  hopperSignInStatus: z.tuple([]),
+  cancelHopperSignIn: z.tuple([]),
   pickFolder: z.tuple([]),
   startTask: z.tuple([
     z
@@ -178,7 +188,11 @@ export interface ApiResults {
   sendLoginCode: LoginStatus
   cancelLogin: LoginStatus
   openLoginUrl: boolean
+  openProviderSignup: boolean
   logout: LoginStatus
+  startHopperSignIn: HopperSignIn
+  hopperSignInStatus: HopperSignIn
+  cancelHopperSignIn: HopperSignIn
   pickFolder: string | null
   startTask: TaskRow
   listProjects: ProjectRow[]

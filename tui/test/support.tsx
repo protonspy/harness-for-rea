@@ -1,7 +1,7 @@
 import { testRender } from "@opentui/react/test-utils"
 import type { Api, ApiMethod } from "../../src/shared/api"
 import type { EventRow, ProjectRow, Push, Readiness, Settings, StepRow, TaskHistory, TaskRow } from "../../src/shared/types"
-import { DEFAULT_SETTINGS } from "../../src/shared/defaults"
+import { DEFAULT_MODEL, DEFAULT_SETTINGS } from "../../src/shared/defaults"
 import { App } from "../src/app/App"
 import type { Bus, Route } from "../src/app/context"
 import { DARK } from "../src/app/theme"
@@ -145,7 +145,8 @@ export const history = (o: Partial<TaskHistory> = {}): TaskHistory => ({
 /** A scripted API: each method answers from `script`, or with a harmless default; every call is recorded. */
 export function scriptedApi(script: Partial<Record<ApiMethod, (...args: never[]) => unknown>> = {}) {
   const calls: { method: ApiMethod; args: unknown[] }[] = []
-  const settings: Settings = { ...DEFAULT_SETTINGS, setupCompleted: true }
+  // The OpenRouter orchestrator and Claude Code specialist these screens were scripted on, whatever the defaults are.
+  const settings: Settings = { ...DEFAULT_SETTINGS, provider: "openrouter", model: DEFAULT_MODEL, specialistProvider: "claude", setupCompleted: true }
   const defaults: Partial<Record<ApiMethod, (...args: never[]) => unknown>> = {
     getSettings: () => settings,
     readiness: () => READY,

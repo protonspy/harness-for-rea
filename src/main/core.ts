@@ -3,11 +3,13 @@ import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
+import { PROVIDERS } from "@shared/providers"
 import type { ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
+import { hopperPage, HopperSignInService } from "./hopper"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
@@ -154,7 +156,17 @@ export async function startCore(host: CoreHost): Promise<Core> {
   const freeTask = (taskId: string) => free(log.getTask(taskId).projectId)
   // One set of sandboxes per project while any of its tasks is open (specs/projects R2.3).
   const registry = new SandboxRegistry(
-    (p, after) => new SpecialistBoxes({ exec: dockerExecBuffer, log, dir: p.folder, sourceRoot: p.sourceRoot, projectId: p.id, after }),
+    (p, after) =>
+      new SpecialistBoxes({
+        exec: dockerExecBuffer,
+        log,
+        dir: p.folder,
+        sourceRoot: p.sourceRoot,
+        projectId: p.id,
+        after,
+        // The plan's token only where Claude Code may run (specs/specialist-providers R2.3).
+        login: () => getSettings().specialistProvider === "claude",
+      }),
   )
   // The MCP integrations the app carries, Cheat Engine and IDA Pro, and the gate every call passes (specs/mcp-integrations R1.1).
   const integrationRegistry = new IntegrationRegistry([
@@ -227,6 +239,16 @@ export async function startCore(host: CoreHost): Promise<Core> {
     (status) => push({ type: "login", status }),
     once("login"),
   )
+  // Hopper's key without pasting it: its page opened in the browser, the key kept as a saved one is (specs/specialist-providers R3).
+  const hopper = new HopperSignInService({
+    open: async (url) => {
+      const page = hopperPage(url)
+      if (!page || !host.openExternal) return false
+      await host.openExternal(page)
+      return true
+    },
+    save: async (key) => void (await saveKey(key, "hopper")),
+  })
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
@@ -284,7 +306,16 @@ export async function startCore(host: CoreHost): Promise<Core> {
       await host.openExternal(url)
       return true
     },
+    openProviderSignup: async (provider) => {
+      const url = PROVIDERS[provider].signupUrl
+      if (!url?.startsWith("https://") || !host.openExternal) return false
+      await host.openExternal(url)
+      return true
+    },
     logout: () => login.logout(),
+    startHopperSignIn: (email) => hopper.start(email),
+    hopperSignInStatus: () => hopper.status(),
+    cancelHopperSignIn: () => hopper.cancel(),
     pickFolder: async () => (host.pickFolder ? host.pickFolder() : null),
     // Every project, one another app is running a task of shown as taken by it (specs/shared-data-folder R1.3).
     listProjects: () => projects.list().map(withHolder),

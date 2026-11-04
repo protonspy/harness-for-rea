@@ -102,6 +102,13 @@ describe("a sandbox's docker run arguments (R1.1–R1.3)", () => {
     expect(args).not.toContain("--network")
   })
 
+  it("leaves the Claude login volume out while the specialist runs on a provider (specs/specialist-providers R2.3)", () => {
+    const own = sandboxArgs(sandboxName("x"), ws, limits, "C:\\d\\outputs\\x", false)
+    expect(after(own, "--mount").some((m) => m.startsWith("type=volume"))).toBe(false)
+    expect(own.some((a) => a.startsWith("CLAUDE_CONFIG_DIR="))).toBe(false)
+    expect(after(own, "--mount")).toEqual(after(args, "--mount").slice(1))
+  })
+
   it("binds only its workspace, run directory, ask channel and output folder, besides the login volume (specs/task-persistence R3.3)", () => {
     expect(after(args, "--mount")).toEqual([
       "type=volume,source=hfr-claude-config,target=/home/agent/.claude-config",

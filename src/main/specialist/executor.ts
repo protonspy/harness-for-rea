@@ -78,7 +78,18 @@ const SUBAGENT_TOOLS = new Set(["Agent", "Task"])
 
 const minutes = (ms: number) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`)
 
-export class SpecialistSession {
+/**
+  What a delegation drives, whichever specialist it is: Claude Code's CLI in its container, or the DeepAgents agent on
+  the host (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent). Turns go in one at a time.
+*/
+export interface Specialist {
+  send(text: string): Promise<StreamResult>
+  close(): Promise<void>
+  kill(kind: "cancelled" | "timeout"): Promise<void>
+  readonly outcome: FailureKind | null
+}
+
+export class SpecialistSession implements Specialist {
   readonly reader = new StreamReader()
   private readonly child: ChildProcess
   private readonly launch: Launch
