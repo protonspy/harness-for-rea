@@ -15,7 +15,7 @@ import { safe } from "../components/ui"
 */
 
 /** What the specialist runs on, by name. */
-export const specialistLabel = (p: SpecialistProvider) => (p === "claude" ? "Claude Code (your plan)" : PROVIDERS[p].label)
+export const specialistLabel = (p: SpecialistProvider) => (p === "claude" ? "Claude Code (your plan)" : (PROVIDERS[p]?.label ?? String(p)))
 
 /**
   The specialist's provider, model and key (specs/specialist-providers R1.1): one of the orchestrator's providers, its
@@ -252,6 +252,9 @@ export function SetupScreen({ then }: { then?: Route }) {
   )
   const why = (s: string | undefined) => (s ? <text fg={theme.mutedForeground}>{safe(s)}</text> : null)
   const provider = settings ? PROVIDERS[settings.provider] : null
+  // The specialist's provider, when it runs on one; settings from an older app may name none (specs/specialist-providers R1.1).
+  const sp = settings?.specialistProvider
+  const specialist = sp && sp !== "claude" ? (PROVIDERS[sp] ?? null) : null
   const log = (sandbox?.buildLog ?? "").split("\n").filter(Boolean).slice(-8)
   return (
     <box flexDirection="column" gap={1}>
@@ -278,14 +281,14 @@ export function SetupScreen({ then }: { then?: Route }) {
       <box flexDirection="column">
         {head("2 · Specialist", r?.claude.ready)}
         {why(r?.claude.reason)}
-        {settings && settings.specialistProvider !== "claude" ? (
+        {specialist ? (
           <>
-            <text fg={theme.foreground}>{safe(`${specialistLabel(settings.specialistProvider)} · ${settings.specialistModel || "no model"}`)}</text>
-            {PROVIDERS[settings.specialistProvider].signupUrl ? (
+            <text fg={theme.foreground}>{safe(`${specialist.label} · ${settings?.specialistModel || "no model"}`)}</text>
+            {specialist.signupUrl ? (
               <text fg={theme.mutedForeground}>
                 {"No account yet? Create one at "}
-                <span fg={theme.primary}>{PROVIDERS[settings.specialistProvider].signupUrl}</span>
-                {PROVIDERS[settings.specialistProvider].offer ? ` · ${PROVIDERS[settings.specialistProvider].offer}` : ""}
+                <span fg={theme.primary}>{specialist.signupUrl}</span>
+                {specialist.offer ? ` · ${specialist.offer}` : ""}
               </text>
             ) : null}
             <text fg={theme.primary}>
