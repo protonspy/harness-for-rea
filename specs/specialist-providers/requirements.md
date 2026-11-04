@@ -2,7 +2,8 @@
 autonomy: auto
 ci: wait
 branch: feat/specialist-providers
-delivery: in-progress
+delivery: in-review
+pr: 33
 ---
 
 # Specialist providers — requirements
