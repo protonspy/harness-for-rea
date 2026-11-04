@@ -17,7 +17,7 @@ import { safe } from "../components/ui"
 /** Provider, key and model commands, shared with the settings editor (R3.4, R4.1). */
 export function providerCommands(app: AppState, settings: Settings | null, refresh: () => void): Command[] {
   const { api } = app
-  const provider = settings?.provider ?? "openrouter"
+  const provider = settings?.provider ?? "hopper"
   const pickProvider = async () => {
     const id = await app.dialog<string>((done) => (
       <SelectDialog
@@ -206,6 +206,13 @@ export function SetupScreen({ then }: { then?: Route }) {
             <span
               fg={theme.mutedForeground}
             >{` · ${settings.baseUrl || provider.baseUrl || "no base URL"} · key ${key?.set ? `set ${key.hint}` : "not set"}`}</span>
+          </text>
+        ) : null}
+        {provider?.signupUrl && !key?.set ? (
+          <text fg={theme.mutedForeground}>
+            {"No account yet? Create one at "}
+            <span fg={theme.primary}>{provider.signupUrl}</span>
+            {provider.offer ? ` · ${provider.offer}` : ""}
           </text>
         ) : null}
         {key && !key.encryption ? (

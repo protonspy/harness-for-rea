@@ -217,7 +217,7 @@ export function ModelPanel({
   return (
     <div className="flex flex-col gap-4">
       {key && !key.encryption && <ErrorText>The OS keychain is unavailable, so a key cannot be stored. It is never kept in plain text.</ErrorText>}
-      <Field label="Provider" hint="OpenRouter, the default gateway, DeepSeek, or any service that speaks the OpenAI chat API. Each keeps its own key.">
+      <Field label="Provider" hint="Hopper, the default, OpenRouter, DeepSeek, or any service that speaks the OpenAI chat API. Each keeps its own key.">
         <div className="flex flex-wrap gap-2">
           {PROVIDER_IDS.map((id) => (
             <Button key={id} variant={settings.provider === id ? "default" : "outline"} onClick={() => switchProvider(id)}>
@@ -264,6 +264,15 @@ export function ModelPanel({
             </Button>
           )}
         </div>
+        {provider.signupUrl && (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            No account yet?{" "}
+            <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => run(() => api.openProviderSignup(settings.provider))}>
+              Create one at {provider.signupUrl.replace(/^https:\/\//, "")}
+            </button>
+            {provider.offer ? ` ${provider.offer}` : ""}
+          </p>
+        )}
       </Field>
       <Field
         label="Model"

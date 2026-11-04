@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { QUESTION_CAP } from "../src/shared/chat"
 import { ContextPackageSchema } from "../src/shared/context"
-import { DEFAULT_SETTINGS, PRESET_MODEL } from "../src/shared/defaults"
+import { DEFAULT_MODEL, DEFAULT_SETTINGS, PRESET_MODEL } from "../src/shared/defaults"
 import type { Push, Settings } from "../src/shared/types"
 import { closeDb, getDb, openDb } from "../src/main/db"
 import { EventLog } from "../src/main/events/log"
@@ -181,7 +181,8 @@ beforeEach(() => {
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2\n")
   openDb(join(data, "hfr.db"))
   log = new EventLog(data)
-  settings = { ...DEFAULT_SETTINGS, timeoutMinutes: 1 }
+  // The OpenRouter orchestrator and the Claude Code specialist these tests script, whatever the defaults are.
+  settings = { ...DEFAULT_SETTINGS, provider: "openrouter", model: DEFAULT_MODEL, specialistProvider: "claude", timeoutMinutes: 1 }
   script = []
   requests = []
   seen = []

@@ -3,6 +3,7 @@ import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
+import { PROVIDERS } from "@shared/providers"
 import type { ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
@@ -281,6 +282,12 @@ export async function startCore(host: CoreHost): Promise<Core> {
     openLoginUrl: async () => {
       const url = login.url()
       if (!url || !isAnthropicUrl(url) || !host.openExternal) return false
+      await host.openExternal(url)
+      return true
+    },
+    openProviderSignup: async (provider) => {
+      const url = PROVIDERS[provider].signupUrl
+      if (!url?.startsWith("https://") || !host.openExternal) return false
       await host.openExternal(url)
       return true
     },

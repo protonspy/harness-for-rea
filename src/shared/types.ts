@@ -1,7 +1,7 @@
 import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
-import type { ProviderId } from "./providers"
+import type { ProviderId, SpecialistProvider } from "./providers"
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
@@ -211,6 +211,10 @@ export interface Settings {
   orchestratorEffort: OrchestratorEffort
   /** Claude Code's `--effort` for the specialist; "default" passes none */
   specialistEffort: SpecialistEffort
+  /** the Claude plan, or the orchestrator's provider the specialist runs on (adr:0028-run-the-specialist-on-a-provider-model-as-a-deepagents-agent) */
+  specialistProvider: SpecialistProvider
+  /** the specialist's model on that provider; ignored on the Claude plan */
+  specialistModel: string
   /** how long a gated tool call waits for a decision before it is rejected (specs/chat R4.5) */
   approvalTimeoutMinutes: number
   /** how long a question waits for an answer before its default is used (specs/chat R5.4) */

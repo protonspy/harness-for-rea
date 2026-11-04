@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import { DEFAULT_MODEL, DEFAULT_SETTINGS } from "../src/shared/defaults"
 import type { LoginStatus, SandboxStatus, Settings } from "../src/shared/types"
 import { blocking, needsKey, readiness, type ReadinessDeps } from "../src/main/readiness"
 import { groupModels, PROVIDERS } from "../src/shared/providers"
@@ -21,7 +21,8 @@ function deps(o: Partial<Omit<ReadinessDeps, "settings">> & { settings?: Partial
     listModels: async () => ["deepseek/deepseek-v4.1-flash-1017"],
     probeModel: async () => undefined,
     ...o,
-    settings: () => ({ ...DEFAULT_SETTINGS, ...o.settings }),
+    // OpenRouter and the Claude plan, the steps these tests were written for.
+    settings: () => ({ ...DEFAULT_SETTINGS, provider: "openrouter" as const, model: DEFAULT_MODEL, specialistProvider: "claude" as const, ...o.settings }),
   }
   return d
 }
