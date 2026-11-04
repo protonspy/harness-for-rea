@@ -12,7 +12,7 @@ const pages = [
 ]
 process.stdout.write("not json\n")
 for await (const raw of createInterface({ input: process.stdin })) {
-  const msg = JSON.parse(raw.replace(/^﻿/, ""))
+  const msg = JSON.parse(raw.replace(/^\uFEFF/, ""))
   const { id, method, params } = msg
   if (method === "initialize") send({ id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "fake" } } })
   else if (method === "notifications/initialized") process.stderr.write("initialized\n")
@@ -20,7 +20,7 @@ for await (const raw of createInterface({ input: process.stdin })) {
   else if (method === "tools/call") {
     const { name, arguments: args } = params
     if (name === "echo")
-      process.stdout.write(`﻿${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${args.text}` }] } })}\n`)
+      process.stdout.write(`\uFEFF${JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: `echo: ${args.text}` }] } })}\n`)
     else if (name === "fail") send({ id, result: { content: [{ type: "text", text: "no such address" }], isError: true } })
     else if (name === "picture")
       send({

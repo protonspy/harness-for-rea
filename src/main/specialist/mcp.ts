@@ -100,7 +100,7 @@ export class McpClient {
   }
 
   private line(raw: string) {
-    const line = raw.replace(/^﻿/, "").trim()
+    const line = raw.replace(/^\uFEFF/, "").trim()
     if (!line) return
     let msg: { id?: unknown; result?: unknown; error?: { message?: unknown } }
     try {
