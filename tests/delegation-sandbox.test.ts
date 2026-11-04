@@ -80,7 +80,8 @@ const deps = (mode = "answer") => ({
   log,
   dataDir: data,
   launcher: launcher(mode),
-  settings: () => ({ ...DEFAULT_SETTINGS, timeoutMinutes: 1 }),
+  // The Claude Code specialist these tests script with the fake CLI.
+  settings: () => ({ ...DEFAULT_SETTINGS, specialistProvider: "claude" as const, timeoutMinutes: 1 }),
 })
 const boxes = () => new SpecialistBoxes({ exec, log, dir: log.taskDir(taskId), sourceRoot: root, projectId, everyMs: 60_000 })
 const pkg = (o: Record<string, unknown> = {}) => ContextPackageSchema.parse({ brief: "b", objective: "Look at /work/src/a.ts", files: ["src/a.ts"], ...o })

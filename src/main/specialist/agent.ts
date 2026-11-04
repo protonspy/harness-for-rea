@@ -5,11 +5,15 @@ import type { StructuredToolInterface } from "@langchain/core/tools"
 import { MemorySaver } from "@langchain/langgraph"
 import { createDeepAgent, type BaseSandbox } from "deepagents"
 import { todoListMiddleware } from "langchain"
-import type { FileTouch } from "@shared/types"
+import { PROVIDERS, type ProviderId } from "@shared/providers"
+import type { FileTouch, OrchestratorEffort, SpecialistEffort } from "@shared/types"
 import { toolPolicy } from "../orchestrator/agent"
-import type { ModelUsage } from "../orchestrator/model"
-import { MCP_TOOL_TIMEOUT_MS } from "../sandbox/docker"
+import { makeModel, type ModelUsage } from "../orchestrator/model"
+import { MCP_TOOL_TIMEOUT_MS, mcpExecArgs, type McpServer } from "../sandbox/docker"
+import type { ExecBuffer } from "../sandbox/taskbox"
+import { ContainerBackend } from "./container"
 import { SpecialistError, type FailureKind, type Specialist } from "./executor"
+import { McpClient, type StartServer } from "./mcp"
 import { ARGS_CAP, clean, filesOf, fromWork, RESULT_CAP, TEXT_CAP, type StreamEvent, type StreamResult } from "./stream"
 
 /*
@@ -87,6 +91,72 @@ export interface AgentSpecialistOptions {
   onEvent?(e: StreamEvent): void
   /** stops what the run holds — its MCP servers and its own container — once */
   dispose?(): Promise<void>
+  /** what the init event says went wrong starting the run, such as a server that did not start */
+  notice?: string
+}
+
+/** The specialist's effort as the orchestrator's reasoning effort, which the provider's model takes (R1.2). */
+export function agentEffort(effort: SpecialistEffort): OrchestratorEffort {
+  return effort === "max" ? "xhigh" : effort
+}
+
+/** Where the agent runs and on what: the container its tools use, and the provider's endpoint, key and model. */
+export interface AgentRun {
+  container: { name: string; stop(): Promise<void> }
+  /** `docker` with its arguments, for the backend's calls */
+  exec: ExecBuffer
+  servers: Record<string, McpServer>
+  /** starts one MCP server's `docker exec -i`; spawns `docker` in the app */
+  startServer?: StartServer
+  provider: ProviderId
+  baseUrl: string
+  apiKey: string
+  model: string
+  effort: SpecialistEffort
+}
+
+/**
+  Start the agent for one delegation (R2.1–R2.4): each MCP server inside the container — one that does not start is
+  left out and named in the init event, as Claude Code goes on without it — and the agent on the provider's model. What
+  it holds is let go when it closes: the servers, then the container.
+*/
+export async function startAgentSpecialist(
+  run: AgentRun,
+  o: Omit<AgentSpecialistOptions, "model" | "provider" | "modelName" | "backend" | "tools" | "dispose">,
+): Promise<AgentSpecialist> {
+  const clients: McpClient[] = []
+  const failed: string[] = []
+  const tools: StructuredToolInterface[] = []
+  const stop = async () => {
+    for (const c of clients) c.close()
+    await run.container.stop()
+  }
+  try {
+    for (const [name, server] of Object.entries(run.servers)) {
+      try {
+        const c = await McpClient.start(name, "docker", mcpExecArgs(run.container.name, server), run.startServer)
+        clients.push(c)
+        tools.push(...(await c.tools(MCP_TOOL_TIMEOUT_MS)))
+      } catch (e) {
+        failed.push(`${name}: ${(e as Error).message}`)
+      }
+    }
+    const label = PROVIDERS[run.provider].label
+    const s = new AgentSpecialist({
+      ...o,
+      model: (onUsage) => makeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: run.apiKey, model: run.model, effort: agentEffort(run.effort), onUsage }),
+      provider: label,
+      modelName: run.model,
+      backend: new ContainerBackend(run.exec, run.container.name),
+      tools,
+      dispose: stop,
+      ...(failed.length ? { notice: `MCP servers that did not start: ${failed.join("; ")}` } : {}),
+    })
+    return s
+  } catch (e) {
+    await stop().catch(() => undefined)
+    throw e
+  }
 }
 
 export class AgentSpecialist implements Specialist {
@@ -205,7 +275,11 @@ export class AgentSpecialist implements Specialist {
     if (this.turn) throw new SpecialistError("failed", "A turn is already in progress.")
     if (!this.started) {
       this.started = true
-      this.emit({ kind: "init", summary: `Specialist on ${this.o.provider} · ${this.o.modelName}`, payload: { model: this.o.modelName } })
+      this.emit({
+        kind: "init",
+        summary: `Specialist on ${this.o.provider} · ${this.o.modelName}`,
+        payload: { model: this.o.modelName, ...(this.o.notice ? { error: this.o.notice } : {}) },
+      })
     }
     const at = Date.now()
     this.usage = { tokensIn: 0, tokensOut: 0, costUsd: 0, model: this.o.modelName }

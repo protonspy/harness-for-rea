@@ -76,7 +76,7 @@ beforeEach(() => {
   openDb(join(data, "hfr.db"))
   log = new EventLog(data)
   taskId = log.createTask({ request: "r", sourceRoot: root, model: "m" }).id
-  settings = { ...DEFAULT_SETTINGS, timeoutMinutes: 1, integrations: { fake: { enabled: true, config: {}, tools: {} } } }
+  settings = { ...DEFAULT_SETTINGS, specialistProvider: "claude", timeoutMinutes: 1, integrations: { fake: { enabled: true, config: {}, tools: {} } } }
   asked = []
   launched = []
   skills = []

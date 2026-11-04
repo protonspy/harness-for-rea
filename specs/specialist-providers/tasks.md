@@ -5,7 +5,7 @@
 - [x] 1.3 (Unit) Run DeepAgents' file tools and shell in the delegation's container, and start one of its own without the login volume — R2.2, R2.3
 - [x] 1.4 (Unit) Drive the specialist as a DeepAgents agent with Claude Code's events, usage, timeout and failures — R1.2, R2.1, R2.5, R2.6, R2.7, R2.8
   _Depends 1.2, 1.3_
-- [ ] 1.5 (Unit) Choose the specialist in a delegation from Settings and run it through the same flow — R1.2, R2.1, R2.3, R2.4
+- [x] 1.5 (Unit) Choose the specialist in a delegation from Settings and run it through the same flow — R1.2, R2.1, R2.3, R2.4
   _Depends 1.1, 1.4_
 - [ ] 1.6 (Unit) Check the specialist's provider in readiness instead of the sign-in — R1.3
   _Depends 1.1_
