@@ -1,7 +1,7 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "@shared/providers"
-import type { KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
+import type { HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Badge } from "@/components/ui/badge"
@@ -342,6 +342,7 @@ export function ProviderKeyField({
           {p.offer ? ` ${p.offer}` : ""}
         </p>
       )}
+      {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} />}
     </Field>
   )
 }
@@ -407,6 +408,61 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
       )}
       {children}
       <ErrorText>{error}</ErrorText>
+    </div>
+  )
+}
+
+/**
+  Hopper's key without pasting it (specs/specialist-providers R3): the user's email goes to Hopper's registration, Hopper's
+  page opens with a code to confirm, and the key comes back into the OS keychain.
+*/
+export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
+  const api = window.hfr.api
+  const [email, setEmail] = useState("")
+  const [state, setState] = useState<HopperSignIn | null>(null)
+  const { error, run } = useRun()
+  const waiting = state?.inProgress ?? false
+  useEffect(() => {
+    void api.hopperSignInStatus().then(setState)
+  }, [api])
+  useEffect(() => {
+    if (!waiting) return
+    const timer = setInterval(() => {
+      void api.hopperSignInStatus().then(async (s) => {
+        setState(s)
+        if (s.done) onKey(await api.keyStatus("hopper"))
+      })
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [api, waiting, onKey])
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-md border border-border p-3">
+      {waiting && state ? (
+        <>
+          <p className="text-sm">
+            Confirm the code <Mono className="text-base font-semibold">{state.code}</Mono> on the Hopper page that opened in your browser.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Not open? <Mono>{state.url}</Mono>
+          </p>
+          <Button className="self-start" variant="ghost" onClick={() => run(async () => setState(await api.cancelHopperSignIn()))}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">Or sign in with your Hopper account, or make one, and the key is saved for you.</p>
+          <div className="flex gap-2">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" />
+            <Button disabled={!/^\S+@\S+\.\S+$/.test(email.trim())} onClick={() => run(async () => setState(await api.startHopperSignIn(email.trim())))}>
+              <LogIn size={14} /> Sign in with Hopper
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Your email goes to Hopper, which sends you to its page to sign in or sign up.</p>
+        </>
+      )}
+      {state?.done && <p className="text-xs text-muted-foreground">Signed in: the key is saved in the OS keychain.</p>}
+      <ErrorText>{state?.error || error}</ErrorText>
     </div>
   )
 }

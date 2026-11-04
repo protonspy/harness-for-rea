@@ -137,6 +137,30 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     },
     { name: "model", title: "Pick the model from the provider's list, or name it", args: "[id]", run: pickModel },
     {
+      name: "hopper-login",
+      title: "Sign in to Hopper with your email; its page opens with a code to confirm, and the key is saved for you",
+      args: "<email>",
+      run: async (email) => {
+        const s = await app.attempt(() => api.startHopperSignIn(email.trim()))
+        if (!s) return
+        if (!s.inProgress) return app.toast(s.error || "The sign-in did not start.", "error")
+        app.toast(`Confirm the code ${s.code} on Hopper's page: ${s.url}`, "info")
+        // Hopper's page is confirmed in the browser; the key comes back on its own (specs/specialist-providers R3.2).
+        for (;;) {
+          const now = await api.hopperSignInStatus().catch(() => null)
+          if (!now) return
+          if (now.inProgress) {
+            await new Promise((r) => setTimeout(r, 2000))
+            continue
+          }
+          if (now.done) app.toast("Signed in to Hopper: the key is saved in the OS keychain.", "info")
+          else if (now.error) app.toast(now.error, "error")
+          return refresh()
+        }
+      },
+    },
+    { name: "hopper-cancel", title: "Cancel the Hopper sign-in", run: () => void app.attempt(() => api.cancelHopperSignIn(), "Hopper sign-in cancelled.") },
+    {
       name: "signup",
       title: "Open the provider's account page in your browser",
       run: async () => {
@@ -307,6 +331,7 @@ export function SetupScreen({ then }: { then?: Route }) {
         ) : null}
         <text fg={theme.primary}>
           /provider · /base-url {"<url>"} · /key {"<key>"} · /remove-key · /model{provider?.signupUrl ? " · /signup" : ""}
+          {settings?.provider === "hopper" ? " · /hopper-login <email>" : ""}
         </text>
       </box>
       <text fg={r?.ready ? theme.success : theme.mutedForeground} attributes={TextAttributes.BOLD}>

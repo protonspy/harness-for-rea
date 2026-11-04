@@ -9,6 +9,7 @@ import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
+import { HopperSignInService, isHopperPage } from "./hopper"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
@@ -228,6 +229,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     (status) => push({ type: "login", status }),
     once("login"),
   )
+  // Hopper's key without pasting it: its page opened in the browser, the key kept as a saved one is (specs/specialist-providers R3).
+  const hopper = new HopperSignInService({
+    open: async (url) => {
+      if (!isHopperPage(url) || !host.openExternal) return false
+      await host.openExternal(url)
+      return true
+    },
+    save: async (key) => void (await saveKey(key, "hopper")),
+  })
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
@@ -292,6 +302,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return true
     },
     logout: () => login.logout(),
+    startHopperSignIn: (email) => hopper.start(email),
+    hopperSignInStatus: () => hopper.status(),
+    cancelHopperSignIn: () => hopper.cancel(),
     pickFolder: async () => (host.pickFolder ? host.pickFolder() : null),
     // Every project, one another app is running a task of shown as taken by it (specs/shared-data-folder R1.3).
     listProjects: () => projects.list().map(withHolder),

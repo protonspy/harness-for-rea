@@ -15,5 +15,5 @@
   _Depends 1.5_
 - [x] 1.9 (Unit) Add Hopper as a provider, the default of both agents, with its account link and offer — R1.4, R1.5
   _Depends 1.1_
-- [ ] 1.10 (Unit) Sign in to Hopper through its agent registration and keep the returned key — R3.1, R3.2, R3.3, R3.4
+- [x] 1.10 (Unit) Sign in to Hopper through its agent registration and keep the returned key — R3.1, R3.2, R3.3, R3.4
   _Depends 1.9_

@@ -263,6 +263,19 @@ export interface SandboxStatus {
   claudeVersion: string
 }
 
+/** Signing in to Hopper through its agent registration (specs/specialist-providers R3). */
+export interface HopperSignIn {
+  /** waiting on the user to confirm the code on Hopper's page */
+  inProgress: boolean
+  /** the key came and is in the OS keychain */
+  done: boolean
+  /** the six-digit code the user confirms on Hopper's page */
+  code: string
+  /** Hopper's page, always on withhopper.com */
+  url: string
+  error: string
+}
+
 export interface LoginStatus {
   loggedIn: boolean
   method: string

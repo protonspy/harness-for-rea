@@ -6,6 +6,7 @@ import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
   KeyStatus,
+  HopperSignIn,
   LoginStatus,
   PatchView,
   ProjectRow,
@@ -90,6 +91,10 @@ export const API_SCHEMAS = {
   // Only the address the provider's preset names is opened (specs/specialist-providers R1.5).
   openProviderSignup: z.tuple([Provider]),
   logout: z.tuple([]),
+  // The email Hopper's registration is sent with, the account the user signs in or up with (specs/specialist-providers R3.1).
+  startHopperSignIn: z.tuple([z.string().trim().email().max(254)]),
+  hopperSignInStatus: z.tuple([]),
+  cancelHopperSignIn: z.tuple([]),
   pickFolder: z.tuple([]),
   startTask: z.tuple([
     z
@@ -185,6 +190,9 @@ export interface ApiResults {
   openLoginUrl: boolean
   openProviderSignup: boolean
   logout: LoginStatus
+  startHopperSignIn: HopperSignIn
+  hopperSignInStatus: HopperSignIn
+  cancelHopperSignIn: HopperSignIn
   pickFolder: string | null
   startTask: TaskRow
   listProjects: ProjectRow[]
