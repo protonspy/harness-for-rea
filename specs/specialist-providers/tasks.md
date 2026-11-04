@@ -11,7 +11,7 @@
   _Depends 1.1_
 - [x] 1.7 (Unit) Choose the specialist's provider and model in the desktop and TUI settings — R1.1
   _Depends 1.1_
-- [ ] 1.8 (Unit) Fold the specialist-lifecycle delta, the glossary and the specialist's docs — R1.1, R2.1
+- [x] 1.8 (Unit) Fold the specialist-lifecycle delta, the glossary and the specialist's docs — R1.1, R2.1
   _Depends 1.5_
 - [x] 1.9 (Unit) Add Hopper as a provider, the default of both agents, with its account link and offer — R1.4, R1.5
   _Depends 1.1_

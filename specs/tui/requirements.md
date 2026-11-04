@@ -24,7 +24,7 @@ specs/tui-launch, specs/tui-conversation and specs/tui-panels.
 
 ## R2 · Setup
 
-- **R2.1** While the first-run setup is not completed, the TUI shall show its three steps — the sandbox images, the Claude sign-in and the orchestrator's provider, key and model — each with its state and the action that readies it.
+- **R2.1** While the first-run setup is not completed, the TUI shall show its three steps — the sandbox images, the specialist and the orchestrator's provider, key and model — each with its state and the action that readies it.
 - **R2.2** When every step is ready, the TUI shall let the user complete the setup and then open the projects.
 
 ## R3 · Projects and tasks

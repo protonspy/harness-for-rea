@@ -29,8 +29,8 @@ You describe what you want in a chat. Two agents do the work:
 
 | Agent                | Runs on                                                                    | Does                                                                                                                                       |
 | -------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **The orchestrator** | a model from OpenRouter, DeepSeek or any OpenAI-compatible provider        | the agent you talk to: plans the task, prepares each step, writes and runs its own code (a decoder, a reimplementation, a probe), answers you |
-| **The specialist**   | Claude Opus running the Claude Code CLI on your own Claude plan, in Docker | the deep analysis, in a container holding only the files a step needs, with [REA](https://github.com/morluto/rea) built in and a root shell |
+| **The orchestrator** | a model from Hopper (the default), OpenRouter, DeepSeek or any OpenAI-compatible provider | the agent you talk to: plans the task, prepares each step, writes and runs its own code (a decoder, a reimplementation, a probe), answers you |
+| **The specialist**   | a provider's model, Hopper by default, as an agent in the app whose every command and tool runs in Docker; or Claude Code on your own Claude plan, in Docker | the deep analysis, in a container holding only the files a step needs, with [REA](https://github.com/morluto/rea) built in and a root shell |
 
 [REA](https://github.com/morluto/rea) is a reverse engineering MCP server for native binaries,
 Android, .NET, Electron and JavaScript targets. The orchestrator does not analyse the target itself.
@@ -288,7 +288,7 @@ harness-for-rea
 
 ```mermaid
 flowchart LR
-    images["1 · Sandbox images<br/>Docker running,<br/>specialist image prepared"] --> login["2 · Claude sign-in<br/>in a container,<br/>with your Claude plan"]
+    images["1 · Sandbox images<br/>Docker running,<br/>specialist image prepared"] --> login["2 · Specialist<br/>a provider's key and model,<br/>or Claude Code on your plan"]
     login --> orch["3 · Orchestrator<br/>provider, API key,<br/>model"]
     orch --> ready(["Ready"])
 ```
@@ -296,13 +296,17 @@ flowchart LR
 Both apps open on a setup of three steps, and nothing else opens until all three are ready:
 
 1. **Sandbox images** — Docker running and the specialist image prepared.
-2. **Claude sign-in** — runs in a container: open the link it shows, sign in with your Claude plan,
-   and paste the code back.
+2. **Specialist** — what the deep analysis runs on. By default a provider's model, Hopper's
+   `deepseek-v4.1-flash-1017-abliterated`: save its key, or sign in with Hopper and the key is saved
+   for you (no account yet? [withhopper.com/cyber](https://withhopper.com/cyber), 20% off for
+   Harness for REA users). Or Claude Code on your Claude plan: the sign-in runs in a container, open
+   the link it shows, sign in, and paste the code back.
 3. **Orchestrator** — the provider, its API key and the model.
 
 In the terminal UI the setup opens inline and each step is a command: `/images` prepares the
 images again, `/login` opens the sign-in in your browser and `/code <code>` sends the code back,
-`/provider`, `/base-url <url>`, `/key <key>` and `/model` (a list to pick from) set the
+`/specialist`, `/specialist-model <id>`, `/specialist-key <key>` and `/hopper-login <email>` set the
+specialist, `/provider`, `/base-url <url>`, `/key <key>` and `/model` (a list to pick from) set the
 orchestrator, and `/done` finishes once every step is ready. A step readied in either app is ready
 in the other.
 
