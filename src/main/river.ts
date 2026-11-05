@@ -1,13 +1,18 @@
+import { redact } from "./events/redact"
+
 /*
   River AI authentication investigation (adr:0029, specs/river-auth R1.1–R2.3).
-  River provides no public external OAuth/OIDC or device authorization flow; authentication
-  is done via an API key created in the River Console (https://console.river.ai/keys).
-  This module records the external blocker, validates River API keys, and prevents any
-  insecure or unverified authentication attempts.
+  Official documentation consulted (https://docs.river.ai/guides/inference/ on 2026-11-04)
+  indicates that River requires an API key generated in the River Console (https://console.river.ai/keys)
+  and passed as an HTTP Bearer token. No official public OAuth 2.0 or device authorization contract
+  was found for external third-party clients.
+  This module records the external blocker, validates River API keys against the official endpoint,
+  and protects secret credentials from leakage.
 */
 
 export const RIVER_API_ORIGIN = "https://api.river.ai"
 export const RIVER_API_BASE_URL = `${RIVER_API_ORIGIN}/v1`
+export const RIVER_MODELS_URL = `${RIVER_API_BASE_URL}/models`
 export const RIVER_CONSOLE_ORIGIN = "https://console.river.ai"
 export const RIVER_CONSOLE_KEYS_URL = `${RIVER_CONSOLE_ORIGIN}/keys`
 export const RIVER_DOCS_INFERENCE_URL = "https://docs.river.ai/guides/inference/"
@@ -24,6 +29,9 @@ export interface RiverKeyValidation {
   valid: boolean
   error?: string
   status?: number
+  modelsCount?: number
+  models?: string[]
+  hasModel?: boolean
 }
 
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>
@@ -36,15 +44,14 @@ export class RiverAuthService {
   }
 
   /**
-   * Reports the capability status for River account authentication (specs/river-auth R1.1, R1.2).
-   * Verifies that browser OAuth/login is not supported officially by River AI.
+   * Reports capability status for River account authentication (specs/river-auth R1.1, R1.2).
+   * Reflects that no official public browser OAuth flow was found.
    */
   capability(): RiverAuthStatus {
     return {
       hasOfficialBrowserLogin: false,
       supportedAuthMethod: "api_key",
-      message:
-        "River does not provide an external browser authorization or OAuth flow for third-party clients. Authenticate using an API key from the River Console.",
+      message: "No public documented browser authorization or OAuth flow was found for River. Authenticate using an API key from the River Console.",
       consoleUrl: RIVER_CONSOLE_KEYS_URL,
       docsUrl: RIVER_DOCS_INFERENCE_URL,
     }
@@ -52,7 +59,7 @@ export class RiverAuthService {
 
   /**
    * Whether River provides an official browser login flow.
-   * Always false based on official River documentation and API verification (adr:0029).
+   * False based on public documentation consulted on 2026-11-04 (adr:0029).
    */
   hasOfficialBrowserLoginFlow(): boolean {
     return false
@@ -74,18 +81,25 @@ export class RiverAuthService {
   }
 
   /**
-   * Validates a River key against River's /v1/models endpoint using Bearer auth (specs/river-auth R2.3).
-   * Distinguishes 401 (invalid key), 403 (forbidden/unauthorized), 429 (rate limit/quota),
-   * without leaking the key in errors or logs.
+   * Validates a River API key against the official /v1/models endpoint using Bearer auth (specs/river-auth R2.3).
+   * - Restricts target exclusively to the fixed official HTTPS endpoint RIVER_MODELS_URL.
+   * - Sanitizes and checks key format to avoid malformed header exceptions.
+   * - Redacts exception details to prevent leaking secrets through transport/header errors.
+   * - Validates response JSON structure (data array of models), distinguishing empty catalogs from invalid responses.
+   * - Optionally checks whether a specific model ID exists in the catalog.
    */
-  async validateKey(key: string, endpoint = `${RIVER_API_BASE_URL}/models`): Promise<RiverKeyValidation> {
+  async validateKey(key: string, requiredModel?: string): Promise<RiverKeyValidation> {
     const sanitized = this.sanitizeKey(key)
     if (!sanitized) {
       return { valid: false, error: "River API key cannot be empty." }
     }
 
+    if (/[\r\n\x00-\x1F\x7F]/.test(sanitized)) {
+      return { valid: false, error: "River API key contains invalid characters." }
+    }
+
     try {
-      const response = await this.fetch(endpoint, {
+      const response = await this.fetch(RIVER_MODELS_URL, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${sanitized}`,
@@ -95,7 +109,60 @@ export class RiverAuthService {
       })
 
       if (response.ok) {
-        return { valid: true, status: response.status }
+        let body: unknown
+        try {
+          body = await response.json()
+        } catch {
+          return {
+            valid: false,
+            status: response.status,
+            error: "River returned invalid or non-JSON response.",
+          }
+        }
+
+        if (!body || typeof body !== "object") {
+          return {
+            valid: false,
+            status: response.status,
+            error: "River returned an unexpected response structure.",
+          }
+        }
+
+        const record = body as Record<string, unknown>
+        if ("error" in record && record.error) {
+          const errObj = record.error as Record<string, unknown>
+          const rawErr = typeof errObj?.message === "string" ? errObj.message : "River returned an error in response body."
+          return {
+            valid: false,
+            status: response.status,
+            error: `River returned error: ${redact(rawErr.split(sanitized).join("[redacted]"))}`,
+          }
+        }
+
+        if (!Array.isArray(record.data)) {
+          return {
+            valid: false,
+            status: response.status,
+            error: "River response missing models data array.",
+          }
+        }
+
+        const models = record.data
+          .map((item) => (item && typeof item === "object" && "id" in item && typeof item.id === "string" ? item.id : null))
+          .filter((id): id is string => id !== null)
+
+        const result: RiverKeyValidation = {
+          valid: true,
+          status: response.status,
+          modelsCount: record.data.length,
+          models,
+        }
+
+        if (requiredModel !== undefined) {
+          result.hasModel = models.includes(requiredModel)
+        }
+
+        return result
       }
 
       if (response.status === 401) {
@@ -116,9 +183,14 @@ export class RiverAuthService {
         error: `River answered with HTTP error (${response.status}).`,
       }
     } catch (err) {
+      let rawMsg = err instanceof Error ? err.message : String(err)
+      if (sanitized) {
+        rawMsg = rawMsg.split(sanitized).join("[redacted]")
+      }
+      const safeMsg = redact(rawMsg)
       return {
         valid: false,
-        error: `River could not be reached: ${(err as Error).message}`,
+        error: `River could not be reached: ${safeMsg}`,
       }
     }
   }
