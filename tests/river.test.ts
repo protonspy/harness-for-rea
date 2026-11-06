@@ -774,6 +774,51 @@ describe("River native provider and model catalog (Issue #3)", () => {
           reason: "Your River account does not have access or permissions for this endpoint or model.",
         })
       })
+
+      it("validates model catalog even when list: false is passed on task start or resume", async () => {
+        // Model absent with list: false -> blocked
+        const dAbsent = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "deepseek-ai/DeepSeek-V4.1-Flash-1017" }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const rAbsent = await readiness(dAbsent, { list: false })
+        expect(rAbsent.model).toMatchObject({
+          ready: false,
+          reason: 'The model "deepseek-ai/DeepSeek-V4.1-Flash-1017" is not available for your River account. Choose a model from the account\'s catalog.',
+        })
+
+        // Model present with list: false -> ready
+        const dPresent = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "GLM-5.3" }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const rPresent = await readiness(dPresent, { list: false })
+        expect(rPresent.model).toMatchObject({ ready: true, provider: "river", model: "GLM-5.3" })
+
+        // Recoverable failure with list: false -> probe fallback preserves manual entry
+        let probeCount = 0
+        const dRecoverable = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "moonshotai/Kimi-K3" }),
+          listModels: async () => Promise.reject(new Error("Network timeout")),
+          probeModel: async () => void probeCount++,
+        })
+        const rRecoverable = await readiness(dRecoverable, { list: false })
+        expect(probeCount).toBe(1)
+        expect(rRecoverable.model).toMatchObject({ ready: true, provider: "river", model: "moonshotai/Kimi-K3" })
+      })
+
+      it("blocks startTask or continueTurn when project run model is absent from River catalog with list: false", async () => {
+        const d = makeDeps({
+          listModels: async () => ["GLM-5.3"],
+        })
+        const r = await readiness(d, {
+          run: { provider: "river", model: "deepseek-ai/DeepSeek-V4.1-Flash-1017" },
+          list: false,
+        })
+        expect(r.model.ready).toBe(false)
+        expect(r.ready).toBe(false)
+        expect(r.model.reason).toContain("not available for your River account")
+      })
     })
 
     describe("Specialist role (specialistProvider: 'river')", () => {

@@ -134,7 +134,7 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
     model.reason = `Set the base URL of your ${label} in Settings.`
   } else if (!run.model.trim()) {
     model.reason = `Choose a model from ${label}.`
-  } else if (o.list === false && provider !== "chatgpt") {
+  } else if (o.list === false && provider !== "chatgpt" && provider !== "river") {
     model = { ...model, ready: true }
   } else {
     const res = await checkModelAvailability(d, run, label)
