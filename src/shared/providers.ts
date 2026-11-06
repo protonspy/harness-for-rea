@@ -4,7 +4,7 @@
   is a base URL, a key and a model name. Adding one is one entry here.
 */
 
-export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "custom"] as const
+export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "chatgpt", "custom"] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
 export interface ProviderPreset {
@@ -73,6 +73,19 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: "deepseek-chat",
     models: ["deepseek-chat"],
     keyPlaceholder: "sk-…",
+  },
+  chatgpt: {
+    id: "chatgpt",
+    label: "ChatGPT (Codex)",
+    kind: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    editableBaseUrl: false,
+    keyRequired: true,
+    defaultModel: "gpt-4o",
+    models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    keyPlaceholder: "OAuth session token",
+    signupUrl: "https://chatgpt.com",
+    offer: "Use your ChatGPT Plus or Pro plan via OpenAI token sharing.",
   },
   custom: {
     id: "custom",
