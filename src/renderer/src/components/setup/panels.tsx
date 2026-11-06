@@ -1,7 +1,7 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "@shared/providers"
-import type { HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
+import type { ChatGPTAuthStatus, HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Badge } from "@/components/ui/badge"
@@ -343,6 +343,7 @@ export function ProviderKeyField({
         </p>
       )}
       {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} />}
+      {provider === "chatgpt" && <ChatGPTOAuthBox status={status} onKey={onStatus} />}
     </Field>
   )
 }
@@ -463,6 +464,66 @@ export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
       )}
       {state?.done && <p className="text-xs text-muted-foreground">Signed in: the key is saved in the OS keychain.</p>}
       <ErrorText>{state?.error || error}</ErrorText>
+    </div>
+  )
+}
+
+export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; onKey(s: KeyStatus): void }) {
+  const api = window.hfr.api
+  const [authStatus, setAuthStatus] = useState<ChatGPTAuthStatus | null>(null)
+  const { error, run } = useRun()
+
+  useEffect(() => {
+    void api.chatGPTAuthStatus().then(setAuthStatus)
+  }, [api])
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-md border border-border p-3">
+      {status?.set ? (
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-medium text-emerald-500">Connected with ChatGPT</p>
+            {authStatus?.accountEmail && (
+              <p className="text-xs text-muted-foreground">
+                {authStatus.accountEmail} ({authStatus.planType ?? "subscription plan"})
+              </p>
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              run(async () => {
+                const s = await api.chatGPTLogout()
+                setAuthStatus(s)
+                onKey(await api.keyStatus("chatgpt"))
+              })
+            }
+          >
+            Disconnect
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-muted-foreground">
+            Sign in with your personal ChatGPT Plus or Pro account via official token sharing without requiring an API key.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              onClick={() =>
+                run(async () => {
+                  const s = await api.startChatGPTAuth()
+                  setAuthStatus(s)
+                  onKey(await api.keyStatus("chatgpt"))
+                })
+              }
+            >
+              <LogIn size={14} /> Connect ChatGPT Account
+            </Button>
+          </div>
+        </div>
+      )}
+      <ErrorText>{authStatus?.error || error}</ErrorText>
     </div>
   )
 }

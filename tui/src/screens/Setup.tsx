@@ -161,6 +161,20 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     },
     { name: "hopper-cancel", title: "Cancel the Hopper sign-in", run: () => void app.attempt(() => api.cancelHopperSignIn(), "Hopper sign-in cancelled.") },
     {
+      name: "chatgpt-login",
+      title: "Connect your ChatGPT account via official OAuth token sharing",
+      run: async () => {
+        app.toast("Opening browser for ChatGPT authorization...", "info")
+        const s = await app.attempt(() => api.startChatGPTAuth(), "ChatGPT account connected.")
+        if (s) refresh()
+      },
+    },
+    {
+      name: "chatgpt-cancel",
+      title: "Cancel ChatGPT authorization",
+      run: () => void app.attempt(() => api.cancelChatGPTAuth(), "ChatGPT authorization cancelled."),
+    },
+    {
       name: "signup",
       title: "Open the provider's account page in your browser",
       run: async () => {

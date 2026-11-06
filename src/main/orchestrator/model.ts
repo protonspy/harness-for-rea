@@ -54,6 +54,18 @@ export interface ModelOptions {
   onUsage(u: ModelUsage): void
 }
 
+export function resolveApiKey(provider: ProviderId, apiKey: string): string {
+  if (provider === "chatgpt" && apiKey.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(apiKey) as { accessToken?: string }
+      return parsed.accessToken ?? apiKey
+    } catch {
+      return apiKey
+    }
+  }
+  return apiKey
+}
+
 export function makeModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
     {

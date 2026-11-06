@@ -25,15 +25,22 @@ We adopt **direct OAuth 2.0 Authorization Code with PKCE and Token Sharing** as 
 - Direct OAuth 2.0 PKCE integration adheres to OpenAI's open-source token-sharing specification, fits seamlessly into the desktop and TUI runtime, uses Harness's native OpenAI-compatible chat model abstractions (`ChatOpenAI`), and maintains complete control over sandboxing and security policies.
 
 ### Protocol Implementation
-1. **Client Identity & Host ID:** The application uses `client_id=dynamic_agent_client` and generates a persistent, random machine identifier (`ext_agent_host_id`) stored in settings to maintain session continuity across launches.
-2. **PKCE & State Validation:** Implements RFC 7636 PKCE using S256 (`code_verifier` 43–128 characters, SHA-256 `code_challenge`), along with cryptographically random `state` and `nonce` parameters.
-3. **Loopback Callback Server:** The host spins up an ephemeral HTTP server on `127.0.0.1` to receive the authorization redirect, serves a sanitized completion page to the user's browser, and validates `state` before shutting down.
-4. **Token Management & Storage:** The exchanged `access_token` and `refresh_token` are saved exclusively in the host's protected OS keychain (DPAPI via `safeStorage` in the desktop app, OS keychain in the TUI) under key slot `chatgpt.key`.
-5. **Session Lifecycle:** Automatic token refresh handles token expiration. The user can disconnect or change accounts at any time, which revokes the active session and clears stored tokens.
-6. **Plan & Scope Verification:** Explicitly requests and verifies scopes: `openid`, `profile`, `email`, `chatgpt.tokens.use.direct`, and `resource.invoke`. If an account lacks token-sharing entitlement (e.g. Free plan without Plus/Pro), the system returns clear error diagnostics. Model catalog listings are not assumed to guarantee plan access.
+1. **Official Endpoints:**
+   - Authorize: `https://auth.openai.com/api/accounts/authorize`
+   - Token: `https://auth.openai.com/api/accounts/oauth/token`
+   - Revoke: `https://auth.openai.com/api/accounts/oauth/revoke`
+   - Responses API: `https://api.openai.com/v1/responses`
+2. **Client Identity & Host ID:** The application initiates registration with `client_id=dynamic_agent_client`, retains any issued `client_id` associated with the account, and persists a random machine identifier (`ext_agent_host_id`) stored in settings to maintain session continuity across launches.
+3. **PKCE & State Validation:** Implements RFC 7636 PKCE using S256 (`code_verifier` 43–128 characters, SHA-256 `code_challenge`), along with cryptographically random `state` and `nonce` parameters.
+4. **ID Token Cryptographic & Claims Validation:** Validates OpenID Connect ID token signature, issuer (`https://auth.openai.com`), audience (`client_id`), expiration, and `nonce` matching the authorization request, using `sub` as the unique user identity.
+5. **Loopback Callback Server:** The host spins up an ephemeral HTTP server on `127.0.0.1` to receive the authorization redirect, serves static sanitized completion HTML without reflecting untrusted query parameters, and validates `state` before triggering code exchange.
+6. **Token Management & Storage:** The exchanged `access_token` and `refresh_token` are saved exclusively in the host's protected OS keychain (DPAPI via `safeStorage` in the desktop app, OS keychain in the TUI) under key slot `chatgpt.key`. All token strings are registered in the global secret redactor.
+7. **Generational Session Lifecycle:** Monotonically increasing generation counters prevent out-of-order race conditions between token refreshes and logouts. Automatic token refresh handles expiration. The user can disconnect or change accounts at any time, which revokes the active session on the auth server (`token_type_hint=refresh_token`) and clears stored tokens.
+8. **Plan & Scope Verification:** Explicitly requests and verifies scopes: `openid`, `profile`, `email`, `offline_access`, `chatgpt.tokens.use.direct`, and `resource.invoke` with `resource=https://api.openai.com/v1`. If an account lacks token-sharing entitlement (e.g. Free plan without Plus/Pro), the system returns clear error diagnostics. Model catalog listings are not assumed to guarantee plan access.
+9. **Responses Transport & Streaming:** Model inference and probing for the ChatGPT provider utilize OpenAI's Responses API with `store: false` and `stream: true`, streaming chunks until `response.completed`.
 
 ### Impact on Roles & Sandboxes
-- **Orchestrator:** Can run on ChatGPT models (e.g. `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini`) via `ChatOpenAI` pointing to OpenAI endpoints with the user's authorized bearer token.
+- **Orchestrator:** Can run on ChatGPT models (e.g. `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini`) via bearer token from token sharing.
 - **Specialist:** When configured for ChatGPT, the specialist runs as a DeepAgents agent inside the isolated container sandbox. Tool execution remains strictly governed by Harness container policies and MCP proxies.
 - **Credential Boundary:** Secrets are kept in the main process memory and OS keychain; only bearer tokens needed for API calls are utilized, with complete event and log redaction.
 

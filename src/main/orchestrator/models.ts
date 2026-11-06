@@ -28,13 +28,29 @@ const TIMEOUT_MS = 10_000
 /** A test request waits for one token, which a cold model can take a while to give. */
 const TEST_TIMEOUT_MS = 30_000
 
+function effectiveKey(provider: ProviderId, apiKey: string | null): string | null {
+  if (provider === "chatgpt" && apiKey?.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(apiKey) as { accessToken?: string }
+      return parsed.accessToken ?? apiKey
+    } catch {
+      return apiKey
+    }
+  }
+  return apiKey
+}
+
 export async function listModels(o: { provider: ProviderId; baseUrl: string; apiKey: string | null }): Promise<string[]> {
   const base = resolveBaseUrl(o.provider, o.baseUrl)
   if (!base) throw new Error("Set a base URL first.")
   let res: Response
   try {
     res = await fetch(`${base}/models`, {
-      headers: { ...attributionHeaders(base), accept: "application/json", ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}) },
+      headers: {
+        ...attributionHeaders(base),
+        accept: "application/json",
+        ...(effectiveKey(o.provider, o.apiKey) ? { authorization: `Bearer ${effectiveKey(o.provider, o.apiKey)}` } : {}),
+      },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
   } catch (e) {
