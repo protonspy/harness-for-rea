@@ -250,23 +250,89 @@ describe("keys (R5.1, R5.2)", () => {
     expect(keyringStore("x", null).available()).toBe(false)
   })
 
-  it("chunks large secrets exceeding platform limits across multiple entries", async () => {
+  it("chunks large secrets with generational isolation and rollback on failure (D3)", async () => {
     const entries = new Map<string, number[]>()
+    let failOnChunkName: string | null = null
+
     const make = (service: string, name: string): KeyEntry => ({
       getSecret: async () => entries.get(`${service}/${name}`) ?? null,
-      setSecret: async (b) => void entries.set(`${service}/${name}`, [...b]),
+      setSecret: async (b) => {
+        if (failOnChunkName && name.includes(failOnChunkName)) {
+          throw new Error(`Simulated write failure on ${name}`)
+        }
+        entries.set(`${service}/${name}`, [...b])
+      },
       deleteCredential: async () => entries.delete(`${service}/${name}`),
     })
+
     const store = keyringStore("hfr-test", make)
-    const largeSecret = "A".repeat(4500)
-    await store.write("chatgpt.key", largeSecret)
-    expect(entries.has("hfr-test/chatgpt.key#0")).toBe(true)
-    expect(entries.has("hfr-test/chatgpt.key#1")).toBe(true)
-    expect(entries.has("hfr-test/chatgpt.key#2")).toBe(true)
-    expect(await store.read("chatgpt.key")).toBe(largeSecret)
+    const initial4500A = "A".repeat(4500)
+    await store.write("chatgpt.key", initial4500A)
+
+    // Verify manifest points to 3 chunks of generation
+    const rootVal = Buffer.from(entries.get("hfr-test/chatgpt.key")!).toString("utf8")
+    expect(rootVal).toMatch(/^__HFR_CHUNKED__:[a-z0-9]+:3$/)
+    expect(await store.read("chatgpt.key")).toBe(initial4500A)
+
+    // Simulate failure during update: writing 4500 B fails on chunk #1
+    failOnChunkName = "#1"
+    const next4500B = "B".repeat(4500)
+    await expect(store.write("chatgpt.key", next4500B)).rejects.toThrow("Simulated write failure")
+    failOnChunkName = null
+
+    // Crucial D3 invariant: previous credential is preserved intact; failed generation chunks rolled back
+    expect(await store.read("chatgpt.key")).toBe(initial4500A)
+
+    // Reduction in size: write 2200 C (2 chunks)
+    const reduced2200C = "C".repeat(2200)
+    await store.write("chatgpt.key", reduced2200C)
+    expect(await store.read("chatgpt.key")).toBe(reduced2200C)
+
+    // Verify old generation chunks were completely removed
+    const allKeys = Array.from(entries.keys())
+    const chunkKeys = allKeys.filter((k) => k.startsWith("hfr-test/chatgpt.key#"))
+    expect(chunkKeys.length).toBe(2)
+
+    // Logout / write null: all chunks and root must be cleaned
     await store.write("chatgpt.key", null)
     expect(await store.read("chatgpt.key")).toBeNull()
-    expect(entries.has("hfr-test/chatgpt.key#0")).toBe(false)
+    const remainingKeys = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remainingKeys.length).toBe(0)
+  })
+
+  it("respects byte limits and guarantees Unicode multi-byte integrity across chunk boundaries (D4)", async () => {
+    const entries = new Map<string, number[]>()
+    const maxPlatformBytes = 2560
+
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        if (b.byteLength > maxPlatformBytes) {
+          throw new Error(`Value of 'secret' is longer than the platform limit of ${maxPlatformBytes} chars/bytes`)
+        }
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const store = keyringStore("hfr-test", make)
+
+    // 1500 'é' characters = 3000 UTF-8 bytes (must be chunked; each chunk <= 2000 bytes)
+    const multiByte3000 = "é".repeat(1500)
+    await store.write("chatgpt.key", multiByte3000)
+    expect(await store.read("chatgpt.key")).toBe(multiByte3000)
+
+    // Verify every stored entry is strictly below platform byte limit
+    for (const [, v] of entries.entries()) {
+      expect(v.length).toBeLessThanOrEqual(2000)
+    }
+
+    // Boundary spanning: 1999 ASCII chars + 4-byte emoji 🚀 (U+1F680) + 100 ASCII chars
+    const spanningSecret = "X".repeat(1999) + "🚀" + "Y".repeat(100)
+    await store.write("chatgpt.key", spanningSecret)
+    const retrieved = await store.read("chatgpt.key")
+    expect(retrieved).toBe(spanningSecret)
+    expect(retrieved?.includes("🚀")).toBe(true)
   })
 
   it("moves the keys of a former store into the shared one, keeping one already there, and removes them", async () => {

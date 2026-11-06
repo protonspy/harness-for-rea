@@ -10,7 +10,7 @@ import type { KeyStore } from "./credentials"
 
 export const SERVICE = "harness-for-rea"
 const CHUNK_PREFIX = "__HFR_CHUNKED__:"
-const CHUNK_SIZE = 2000
+const CHUNK_BYTE_LIMIT = 2000
 
 /** The part of `@napi-rs/keyring`'s `AsyncEntry` the store uses. */
 export interface KeyEntry {
@@ -23,6 +23,28 @@ type MakeEntry = (service: string, name: string) => KeyEntry
 
 const keyring: MakeEntry = (s, n) => new AsyncEntry(s, n)
 
+interface ChunkManifest {
+  gen?: string
+  count: number
+}
+
+function parseManifest(raw: string): ChunkManifest | null {
+  if (!raw.startsWith(CHUNK_PREFIX)) return null
+  const rest = raw.slice(CHUNK_PREFIX.length)
+  const parts = rest.split(":")
+  if (parts.length === 2) {
+    return { gen: parts[0], count: parseInt(parts[1], 10) }
+  }
+  if (parts.length === 1) {
+    return { count: parseInt(parts[0], 10) }
+  }
+  return null
+}
+
+function chunkSlotName(slot: string, gen: string | undefined, index: number): string {
+  return gen ? `${slot}#${gen}#${index}` : `${slot}#${index}`
+}
+
 export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring): KeyStore {
   return {
     available: () => make !== null,
@@ -31,29 +53,40 @@ export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring
       const bytes = await make(service, slot).getSecret()
       if (!bytes || !bytes.length) return null
       const raw = Buffer.from(bytes).toString("utf8")
-      if (raw.startsWith(CHUNK_PREFIX)) {
-        const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
-        let full = ""
-        for (let i = 0; i < count; i++) {
-          const chunkBytes = await make(service, `${slot}#${i}`).getSecret()
+      const manifest = parseManifest(raw)
+      if (manifest) {
+        const chunks: Uint8Array[] = []
+        let totalLen = 0
+        for (let i = 0; i < manifest.count; i++) {
+          const chunkName = chunkSlotName(slot, manifest.gen, i)
+          const chunkBytes = await make(service, chunkName).getSecret()
           if (!chunkBytes) return null
-          full += Buffer.from(chunkBytes).toString("utf8")
+          const u8 = new Uint8Array(chunkBytes)
+          chunks.push(u8)
+          totalLen += u8.length
         }
-        return full
+        const combined = new Uint8Array(totalLen)
+        let offset = 0
+        for (const c of chunks) {
+          combined.set(c, offset)
+          offset += c.length
+        }
+        return new TextDecoder().decode(combined)
       }
       return raw
     },
     write: async (slot, key) => {
       if (!make) throw new Error("The OS keychain is not available.")
       const entry = make(service, slot)
+
+      // Handle deletion
       if (key === null) {
         const existing = await entry.getSecret().catch(() => null)
         if (existing) {
-          const raw = Buffer.from(existing).toString("utf8")
-          if (raw.startsWith(CHUNK_PREFIX)) {
-            const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
-            for (let i = 0; i < count; i++) {
-              await make(service, `${slot}#${i}`)
+          const manifest = parseManifest(Buffer.from(existing).toString("utf8"))
+          if (manifest) {
+            for (let i = 0; i < manifest.count; i++) {
+              await make(service, chunkSlotName(slot, manifest.gen, i))
                 .deleteCredential()
                 .catch(() => false)
             }
@@ -63,29 +96,58 @@ export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring
         return
       }
 
-      if (key.length > CHUNK_SIZE) {
-        const chunks: string[] = []
-        for (let i = 0; i < key.length; i += CHUNK_SIZE) {
-          chunks.push(key.slice(i, i + CHUNK_SIZE))
+      // Encode UTF-8 bytes once
+      const allBytes = new TextEncoder().encode(key)
+      const existing = await entry.getSecret().catch(() => null)
+      const oldManifest = existing ? parseManifest(Buffer.from(existing).toString("utf8")) : null
+
+      if (allBytes.byteLength > CHUNK_BYTE_LIMIT) {
+        const chunks: Uint8Array[] = []
+        for (let i = 0; i < allBytes.byteLength; i += CHUNK_BYTE_LIMIT) {
+          chunks.push(allBytes.subarray(i, i + CHUNK_BYTE_LIMIT))
         }
-        for (let i = 0; i < chunks.length; i++) {
-          await make(service, `${slot}#${i}`).setSecret(new TextEncoder().encode(chunks[i]))
+
+        const gen = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+        const written: number[] = []
+
+        try {
+          for (let i = 0; i < chunks.length; i++) {
+            await make(service, chunkSlotName(slot, gen, i)).setSecret(chunks[i])
+            written.push(i)
+          }
+
+          // Atomically publish new manifest to root slot
+          const manifestStr = `${CHUNK_PREFIX}${gen}:${chunks.length}`
+          await entry.setSecret(new TextEncoder().encode(manifestStr))
+        } catch (err) {
+          // Rollback newly written chunks on failure; preserve existing slot and prior chunks
+          for (const i of written) {
+            await make(service, chunkSlotName(slot, gen, i))
+              .deleteCredential()
+              .catch(() => false)
+          }
+          throw err
         }
-        await entry.setSecret(new TextEncoder().encode(`${CHUNK_PREFIX}${chunks.length}`))
-      } else {
-        const existing = await entry.getSecret().catch(() => null)
-        if (existing) {
-          const raw = Buffer.from(existing).toString("utf8")
-          if (raw.startsWith(CHUNK_PREFIX)) {
-            const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
-            for (let i = 0; i < count; i++) {
-              await make(service, `${slot}#${i}`)
-                .deleteCredential()
-                .catch(() => false)
-            }
+
+        // Clean up prior generation chunks after successful commit
+        if (oldManifest) {
+          for (let i = 0; i < oldManifest.count; i++) {
+            await make(service, chunkSlotName(slot, oldManifest.gen, i))
+              .deleteCredential()
+              .catch(() => false)
           }
         }
-        await entry.setSecret(new TextEncoder().encode(key))
+      } else {
+        await entry.setSecret(allBytes)
+
+        // Clean up prior chunks if reducing from chunked to single entry
+        if (oldManifest) {
+          for (let i = 0; i < oldManifest.count; i++) {
+            await make(service, chunkSlotName(slot, oldManifest.gen, i))
+              .deleteCredential()
+              .catch(() => false)
+          }
+        }
       }
     },
   }

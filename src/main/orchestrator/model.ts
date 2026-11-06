@@ -77,10 +77,62 @@ export function resolveApiKey(provider: ProviderId, apiKey: string): string {
   return apiKey
 }
 
-/**
- * Creates a ChatGPT model client speaking the official Responses API protocol
- * with native SDK Responses support (`useResponsesApi: true`, `streaming: true`, `store: false`) (C2, C3).
- */
+function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let completed = false
+  let terminalError: Error | null = null
+
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith("data:")) continue
+          const dataStr = trimmed.slice(5).trim()
+          if (!dataStr || dataStr === "[DONE]") continue
+
+          try {
+            const parsed = JSON.parse(dataStr)
+            if (parsed.type === "response.completed") {
+              completed = true
+            } else if (parsed.type === "response.failed") {
+              const reason = parsed.response?.error?.message ?? parsed.error?.message ?? "response.failed"
+              terminalError = new Error(`ChatGPT Responses stream failed: ${reason}`)
+              controller.error(terminalError)
+              return
+            } else if (parsed.type === "response.incomplete") {
+              const reason = parsed.response?.incomplete_details?.reason ?? "response.incomplete"
+              terminalError = new Error(`ChatGPT Responses stream incomplete: ${reason}`)
+              controller.error(terminalError)
+              return
+            }
+          } catch {
+            // Non-JSON SSE event line, ignore
+          }
+        }
+
+        if (!terminalError) {
+          controller.enqueue(chunk)
+        }
+      },
+      flush(controller) {
+        if (terminalError) {
+          controller.error(terminalError)
+          return
+        }
+        if (!completed) {
+          controller.error(new Error("ChatGPT Responses stream terminated prematurely without response.completed."))
+        }
+      },
+    }),
+  )
+}
+
 function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
     {
@@ -116,17 +168,66 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
             bodyObj = {}
           }
         }
+
         bodyObj.store = false
         bodyObj.stream = true
 
-        return globalThis.fetch(url, {
+        // SIWC parameter restrictions: omit temperature, top_p, and unsupported metadata fields (D1)
+        delete bodyObj.temperature
+        delete bodyObj.top_p
+        delete bodyObj.user
+        delete bodyObj.background
+        delete bodyObj.conversation
+        delete bodyObj.max_output_tokens
+        delete bodyObj.max_tool_calls
+        delete bodyObj.metadata
+        delete bodyObj.moderation
+        delete bodyObj.multi_agent
+        delete bodyObj.prompt
+        delete bodyObj.prompt_cache_retention
+        delete bodyObj.safety_identifier
+        delete bodyObj.top_logprobs
+        delete bodyObj.truncation
+        delete bodyObj.previous_response_id
+
+        // SIWC message restrictions: use developer role instead of system message (D1)
+        if (Array.isArray(bodyObj.input)) {
+          for (const item of bodyObj.input) {
+            if (item && item.type === "message" && item.role === "system") {
+              item.role = "developer"
+            }
+          }
+        }
+
+        // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
+        if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
+          const tools = bodyObj.tools
+          delete bodyObj.tools
+          bodyObj.input = bodyObj.input || []
+          bodyObj.input.unshift({
+            type: "additional_tools",
+            tools,
+          })
+        }
+
+        const res = await globalThis.fetch(url, {
           ...init,
           headers,
           body: JSON.stringify(bodyObj),
         })
+
+        if (res.ok && res.body) {
+          const wrappedBody = enforceResponsesCompletionStream(res.body)
+          return new Response(wrappedBody, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          })
+        }
+
+        return res
       },
     },
-    temperature: 0.2,
     streamUsage: true,
     ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),
     callbacks,

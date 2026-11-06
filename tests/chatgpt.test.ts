@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { generateKeyPairSync, createSign } from "node:crypto"
-import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages"
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages"
 import {
   buildAuthorizationUrl,
   ChatGPTAuthService,
@@ -438,6 +438,138 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       await expect(service.startSignIn({ timeoutMs: 80 })).rejects.toThrow(/timed out/i)
     })
 
+    it("enforces timeout deadline during the JWKS fetch phase and prevents late session saves (D5)", async () => {
+      let saved = false
+      const fakeFetch: typeof fetch = async (url, init) => {
+        if (String(url).includes("/api/accounts/oauth/token")) {
+          // Token responds immediately with valid ID token signed by simulated key
+          return new Response(
+            JSON.stringify({
+              access_token: "tok_quick",
+              refresh_token: "ref_quick",
+              id_token: "header.payload.signature",
+              scope: "openid chatgpt.tokens.use.direct",
+            }),
+            { status: 200 },
+          )
+        }
+        if (String(url).includes("/.well-known/jwks.json")) {
+          return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              resolve(new Response(JSON.stringify({ keys: [] }), { status: 200 }))
+            }, 500)
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer)
+              reject(init.signal?.reason || new Error("Authentication timed out."))
+            })
+          })
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      const service = new ChatGPTAuthService({
+        fetch: fakeFetch as unknown as typeof globalThis.fetch,
+        openUrl: async (url) => {
+          const u = new URL(url)
+          const redirect = u.searchParams.get("redirect_uri")!
+          const state = u.searchParams.get("state")!
+          setTimeout(async () => {
+            await fetch(`${redirect}?code=auth_code_ok&state=${state}&client_id=issued-client-id`)
+          }, 10)
+          return true
+        },
+        saveSession: async () => {
+          saved = true
+        },
+        loadSession: async () => null,
+      })
+
+      // Timeout at 80ms, JWKS fetch delayed by 500ms
+      await expect(service.startSignIn({ timeoutMs: 80 })).rejects.toThrow(/timed out/i)
+      expect(saved).toBe(false)
+    })
+
+    it("refreshes JWKS automatically on key rotation when token contains an unknown kid (D5)", async () => {
+      const { publicKey: pub1 } = generateKeyPairSync("rsa", { modulusLength: 2048 })
+      const { publicKey: pub2, privateKey: priv2 } = generateKeyPairSync("rsa", { modulusLength: 2048 })
+
+      const pubJwk1 = pub1.export({ format: "jwk" }) as Record<string, unknown>
+      pubJwk1.kid = "key_v1"
+      pubJwk1.alg = "RS256"
+      pubJwk1.use = "sig"
+
+      const pubJwk2 = pub2.export({ format: "jwk" }) as Record<string, unknown>
+      pubJwk2.kid = "key_v2"
+      pubJwk2.alg = "RS256"
+      pubJwk2.use = "sig"
+
+      let jwksFetchCount = 0
+      let rotatedJwt = ""
+      const fakeFetch: typeof fetch = async (url) => {
+        if (String(url).includes("/api/accounts/oauth/token")) {
+          return new Response(
+            JSON.stringify({
+              access_token: "tok_rot",
+              refresh_token: "ref_rot",
+              id_token: rotatedJwt,
+              scope: "openid chatgpt.tokens.use.direct",
+            }),
+            { status: 200 },
+          )
+        }
+        if (String(url).includes("/.well-known/jwks.json")) {
+          jwksFetchCount++
+          // First fetch returns only key_v1. Forced refresh returns key_v2.
+          if (jwksFetchCount === 1) {
+            return new Response(JSON.stringify({ keys: [pubJwk1] }), { status: 200 })
+          } else {
+            return new Response(JSON.stringify({ keys: [pubJwk1, pubJwk2] }), { status: 200 })
+          }
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      const service = new ChatGPTAuthService({
+        fetch: fakeFetch as unknown as typeof globalThis.fetch,
+        openUrl: async () => true,
+        saveSession: async () => {},
+        loadSession: async () => null,
+      })
+
+      // Populate cache with key_v1
+      await service.getJwks()
+      expect(jwksFetchCount).toBe(1)
+
+      // Generate a token signed with key_v2
+      const header = Buffer.from(JSON.stringify({ alg: "RS256", kid: "key_v2" })).toString("base64url")
+      const payload = Buffer.from(
+        JSON.stringify({
+          iss: "https://auth.openai.com",
+          sub: "user-123",
+          aud: "client-abc",
+          nonce: "nonce_ok",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        }),
+      ).toString("base64url")
+      const signer = createSign("RSA-SHA256")
+      signer.update(`${header}.${payload}`)
+      const signature = signer.sign(priv2, "base64url")
+      rotatedJwt = `${header}.${payload}.${signature}`
+
+      // Execute code exchange directly with rotatedJwt
+      const session = await (service as any).exchangeCode({
+        code: "auth_code",
+        codeVerifier: "verifier",
+        redirectUri: "http://127.0.0.1:0/callback",
+        clientId: "client-abc",
+        expectedNonce: "nonce_ok",
+      })
+
+      // Must have triggered a forced refresh and succeeded with 2 fetches
+      expect(jwksFetchCount).toBe(2)
+      expect(session.clientId).toBe("client-abc")
+    })
+
     it("reports revocation warning if remote endpoint returns error (R9)", async () => {
       const currentSession: ChatGPTSession = {
         accessToken: "tok",
@@ -622,6 +754,173 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
 
         const finalContent = typeof turn2Response.content === "string" ? turn2Response.content : (turn2Response.content as any)[0]?.text
         expect(finalContent).toContain("Tool result acknowledged: pong")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("adapts request body to SIWC preview restrictions omitting forbidden fields and presenting tools via additional_tools (D1)", async () => {
+      const sessionJson = JSON.stringify({
+        accessToken: "siwc-policy-token",
+        clientId: "client-123",
+        expiresAt: Date.now() + 3600_000,
+        scopes: ["openid"],
+        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
+      })
+
+      let interceptedBody: any = null
+      const originalFetch = globalThis.fetch
+
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}"))
+        interceptedBody = body
+
+        // Strict transport validation reflecting official SIWC preview limitations
+        if (body.temperature !== undefined) {
+          return new Response(JSON.stringify({ error: { message: "temperature is not supported on SIWC routes" } }), { status: 400 })
+        }
+        if (body.tools !== undefined) {
+          return new Response(JSON.stringify({ error: { message: "tools must be grouped in namespaces or provided via additional_tools" } }), { status: 400 })
+        }
+        if (Array.isArray(body.input)) {
+          const hasSystem = body.input.some((i: any) => i && i.type === "message" && i.role === "system")
+          if (hasSystem) {
+            return new Response(JSON.stringify({ error: { message: "system role is not permitted; use developer or instructions" } }), { status: 400 })
+          }
+        }
+
+        const sse = [
+          'data: {"type":"response.created","response":{"id":"resp_siwc"}}\n\n',
+          'data: {"type":"response.output_text.delta","delta":"SIWC constraints verified"}\n\n',
+          'data: {"type":"response.completed","response":{"id":"resp_siwc","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"SIWC constraints verified"}]}],"usage":{"input_tokens":5,"output_tokens":3}}}\n\n',
+        ].join("")
+
+        return new Response(sse, { headers: { "Content-Type": "text/event-stream" } })
+      }
+
+      try {
+        const model = makeModel({
+          provider: "chatgpt",
+          apiKey: sessionJson,
+          model: "gpt-4o",
+          onUsage: () => {},
+        })
+
+        const toolModel = (model as any).bindTools([
+          {
+            name: "test_tool",
+            description: "A test tool",
+            schema: { type: "object", properties: { q: { type: "string" } } },
+          },
+        ])
+
+        const res = await toolModel.invoke([new SystemMessage("You are a system reviewer"), new HumanMessage("Verify SIWC compliance")])
+
+        // Verify body conformed to SIWC restrictions
+        expect(interceptedBody.temperature).toBeUndefined()
+        expect(interceptedBody.top_p).toBeUndefined()
+        expect(interceptedBody.store).toBe(false)
+        expect(interceptedBody.stream).toBe(true)
+
+        // System message mapped to developer role
+        const devMsg = interceptedBody.input.find((i: any) => i.type === "message" && i.role === "developer")
+        expect(devMsg).toBeDefined()
+        expect(devMsg.content).toContain("You are a system reviewer")
+
+        // Tools passed via additional_tools input item
+        expect(interceptedBody.tools).toBeUndefined()
+        const additionalToolsItem = interceptedBody.input.find((i: any) => i.type === "additional_tools")
+        expect(additionalToolsItem).toBeDefined()
+        expect(additionalToolsItem.tools[0].name).toBe("test_tool")
+
+        const text = typeof res.content === "string" ? res.content : (res.content as any)[0]?.text
+        expect(text).toContain("SIWC constraints verified")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("rejects invoke and stream when stream ends with EOF without response.completed (D2)", async () => {
+      const sessionJson = JSON.stringify({
+        accessToken: "eof-stream-token",
+        clientId: "client-123",
+        expiresAt: Date.now() + 3600_000,
+        scopes: ["openid"],
+        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
+      })
+
+      const originalFetch = globalThis.fetch
+
+      // Stream ending with EOF after output delta without response.completed
+      globalThis.fetch = async () => {
+        const incompleteSse = [
+          'data: {"type":"response.created","response":{"id":"resp_premature"}}\n\n',
+          'data: {"type":"response.output_text.delta","delta":"Partial answer"}\n\n',
+        ].join("")
+        return new Response(incompleteSse, { headers: { "Content-Type": "text/event-stream" } })
+      }
+
+      try {
+        const model = makeModel({
+          provider: "chatgpt",
+          apiKey: sessionJson,
+          model: "gpt-4o",
+          onUsage: () => {},
+        })
+
+        // invoke must reject
+        await expect(model.invoke("test")).rejects.toThrow(/terminated prematurely without response\.completed/i)
+
+        // stream must throw
+        const stream = await model.stream("test")
+        await expect(async () => {
+          for await (const chunk of stream) {
+            void chunk
+          }
+        }).rejects.toThrow(/terminated prematurely without response\.completed/i)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("rejects invoke and stream when stream emits response.failed or response.incomplete (D2)", async () => {
+      const sessionJson = JSON.stringify({
+        accessToken: "failed-stream-token",
+        clientId: "client-123",
+        expiresAt: Date.now() + 3600_000,
+        scopes: ["openid"],
+        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
+      })
+
+      const originalFetch = globalThis.fetch
+
+      try {
+        const model = makeModel({
+          provider: "chatgpt",
+          apiKey: sessionJson,
+          model: "gpt-4o",
+          onUsage: () => {},
+        })
+
+        // 1. response.failed
+        globalThis.fetch = async () => {
+          const failedSse = [
+            'data: {"type":"response.created","response":{"id":"resp_fail"}}\n\n',
+            'data: {"type":"response.failed","response":{"error":{"message":"Safety policy triggered"}}}\n\n',
+          ].join("")
+          return new Response(failedSse, { headers: { "Content-Type": "text/event-stream" } })
+        }
+        await expect(model.invoke("test")).rejects.toThrow(/ChatGPT Responses stream failed: Safety policy triggered/i)
+
+        // 2. response.incomplete
+        globalThis.fetch = async () => {
+          const incompleteSse = [
+            'data: {"type":"response.created","response":{"id":"resp_inc"}}\n\n',
+            'data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+          ].join("")
+          return new Response(incompleteSse, { headers: { "Content-Type": "text/event-stream" } })
+        }
+        await expect(model.invoke("test")).rejects.toThrow(/ChatGPT Responses stream incomplete: max_output_tokens/i)
       } finally {
         globalThis.fetch = originalFetch
       }

@@ -372,20 +372,30 @@ export class ChatGPTAuthService {
   /**
    * Fetches official OpenAI JWKS keys with in-memory caching and freshness management (C1).
    */
-  async getJwks(): Promise<{ keys: Array<Record<string, unknown>> }> {
+  async getJwks(signal?: AbortSignal, forceRefresh = false): Promise<{ keys: Array<Record<string, unknown>> }> {
+    if (signal?.aborted) {
+      throw (signal as any).reason || new Error("Authentication timed out.")
+    }
+
     if (this.jwks) {
       const keys = Array.isArray(this.jwks) ? this.jwks : this.jwks.keys
       return { keys }
     }
 
-    if (this.cachedJwks && Date.now() - this.cachedJwks.fetchedAt < 3600_000) {
+    if (!forceRefresh && this.cachedJwks && Date.now() - this.cachedJwks.fetchedAt < 3600_000) {
       return this.cachedJwks
     }
 
     try {
       const res = await this.fetch(CHATGPT_JWKS_URL, {
         headers: { Accept: "application/json" },
+        signal,
       })
+
+      if (signal?.aborted) {
+        throw (signal as any).reason || new Error("Authentication timed out.")
+      }
+
       if (res.ok) {
         const data = (await res.json()) as { keys?: Array<Record<string, unknown>> }
         if (Array.isArray(data?.keys)) {
@@ -393,11 +403,14 @@ export class ChatGPTAuthService {
           return this.cachedJwks
         }
       }
-    } catch {
-      // Fallback below
+    } catch (err: any) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        throw (signal as any)?.reason || new Error("Authentication timed out.")
+      }
+      // Non-abort fetch failure will fall back to existing cache if present
     }
 
-    if (this.cachedJwks) {
+    if (!forceRefresh && this.cachedJwks) {
       return this.cachedJwks
     }
 
@@ -552,7 +565,10 @@ export class ChatGPTAuthService {
         signal,
       })
 
-      // Strict check against cancel / logout race conditions
+      // Check cancellation/timeout deadline before committing session (D5)
+      if (signal.aborted) {
+        throw (signal as any).reason || new Error("Authentication timed out.")
+      }
       if (attemptGen !== this.signInGeneration || this.currentAttempt === null) {
         throw new Error("Authentication cancelled.")
       }
@@ -639,16 +655,33 @@ export class ChatGPTAuthService {
 
     let jwksToUse = this.jwks
     if (!jwksToUse && !this.publicKey) {
-      jwksToUse = await this.getJwks()
+      jwksToUse = await this.getJwks(params.signal)
     }
 
-    const claims = verifyIdToken({
-      idToken: data.id_token,
-      expectedNonce: params.expectedNonce,
-      expectedAudience: issuedClientId,
-      jwks: jwksToUse,
-      publicKey: this.publicKey,
-    })
+    let claims: ReturnType<typeof verifyIdToken>
+    try {
+      claims = verifyIdToken({
+        idToken: data.id_token,
+        expectedNonce: params.expectedNonce,
+        expectedAudience: issuedClientId,
+        jwks: jwksToUse,
+        publicKey: this.publicKey,
+      })
+    } catch (err: any) {
+      // If error is due to unmatched key / kid, perform one forced refresh with signal to allow key rotation (D5)
+      if (!this.jwks && !this.publicKey && String(err?.message || "").includes("matching key")) {
+        jwksToUse = await this.getJwks(params.signal, true)
+        claims = verifyIdToken({
+          idToken: data.id_token,
+          expectedNonce: params.expectedNonce,
+          expectedAudience: issuedClientId,
+          jwks: jwksToUse,
+          publicKey: this.publicKey,
+        })
+      } else {
+        throw err
+      }
+    }
 
     const scopes = (data.scope ?? "").split(" ").filter(Boolean)
     const hasTokenSharing = scopes.includes("chatgpt.tokens.use.direct")
