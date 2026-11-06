@@ -147,14 +147,30 @@ export class RiverAuthService {
           }
         }
 
-        const models = record.data
-          .map((item) => (item && typeof item === "object" && "id" in item && typeof item.id === "string" ? item.id : null))
-          .filter((id): id is string => id !== null)
+        const models: string[] = []
+        for (const item of record.data) {
+          if (!item || typeof item !== "object" || !("id" in item)) {
+            return {
+              valid: false,
+              status: response.status,
+              error: "River response contains malformed model entries.",
+            }
+          }
+          const rawId = (item as Record<string, unknown>).id
+          if (typeof rawId !== "string" || rawId.trim().length === 0) {
+            return {
+              valid: false,
+              status: response.status,
+              error: "River response contains invalid model ID.",
+            }
+          }
+          models.push(rawId.trim())
+        }
 
         const result: RiverKeyValidation = {
           valid: true,
           status: response.status,
-          modelsCount: record.data.length,
+          modelsCount: models.length,
           models,
         }
 

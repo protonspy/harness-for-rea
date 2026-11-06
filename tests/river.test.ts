@@ -157,6 +157,74 @@ describe("River authentication investigation (specs/river-auth, adr:0029)", () =
     expect(result.error).toBe("River returned error: Internal proxy gateway failure")
   })
 
+  // Finding 3 regression: rejects malformed model entries (null, primitives, objects without id)
+  it("rejects HTTP 200 with malformed model entries such as null, primitives or objects without id (Finding 3)", async () => {
+    const mockFetch: Fetch = async () => {
+      return new Response(JSON.stringify({ data: [null, {}, 7] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    const service = new RiverAuthService(mockFetch)
+    const result = await service.validateKey("rv_valid_format_key", "GLM-5.3")
+
+    expect(result.valid).toBe(false)
+    expect(result.status).toBe(200)
+    expect(result.error).toBe("River response contains malformed model entries.")
+  })
+
+  // Finding 3 regression: rejects numeric or non-string model IDs
+  it("rejects HTTP 200 with non-string model id (Finding 3)", async () => {
+    const mockFetch: Fetch = async () => {
+      return new Response(JSON.stringify({ data: [{ id: 9 }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    const service = new RiverAuthService(mockFetch)
+    const result = await service.validateKey("rv_valid_format_key")
+
+    expect(result.valid).toBe(false)
+    expect(result.status).toBe(200)
+    expect(result.error).toBe("River response contains invalid model ID.")
+  })
+
+  // Finding 3 regression: rejects empty or whitespace-only model IDs
+  it("rejects HTTP 200 with empty or blank model id string (Finding 3)", async () => {
+    const mockFetch: Fetch = async () => {
+      return new Response(JSON.stringify({ data: [{ id: "   " }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    const service = new RiverAuthService(mockFetch)
+    const result = await service.validateKey("rv_valid_format_key")
+
+    expect(result.valid).toBe(false)
+    expect(result.status).toBe(200)
+    expect(result.error).toBe("River response contains invalid model ID.")
+  })
+
+  // Finding 3 regression: rejects array with mixture of valid and invalid entries
+  it("rejects HTTP 200 with mixed valid and invalid model entries (Finding 3)", async () => {
+    const mockFetch: Fetch = async () => {
+      return new Response(JSON.stringify({ data: [{ id: "deepseek-ai/DeepSeek-V4.1-Flash" }, null] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    const service = new RiverAuthService(mockFetch)
+    const result = await service.validateKey("rv_valid_format_key")
+
+    expect(result.valid).toBe(false)
+    expect(result.status).toBe(200)
+    expect(result.error).toBe("River response contains malformed model entries.")
+  })
+
   // Finding 3 regression: valid empty catalog is authenticated and returns modelsCount = 0
   it("distinguishes valid empty catalog as authenticated with modelsCount 0 (Finding 3)", async () => {
     const mockFetch: Fetch = async () => {
