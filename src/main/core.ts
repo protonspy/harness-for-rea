@@ -10,7 +10,8 @@ import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, refreshKeyAvailability, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, getSetting, openDb, setSetting } from "./db"
 import { hopperPage, HopperSignInService } from "./hopper"
-import { ChatGPTAuthService, generateRandomToken, type ChatGPTSession } from "./chatgpt"
+import { ChatGPTAuthService, createHostId, isValidHostId, type ChatGPTSession } from "./chatgpt"
+import { setChatGPTAuthService } from "./orchestrator/model"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
@@ -252,8 +253,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
   })
 
   let chatgptHostId = getSetting<string>("chatgpt.host_id", "")
-  if (!chatgptHostId) {
-    chatgptHostId = generateRandomToken(16)
+  if (!isValidHostId(chatgptHostId)) {
+    chatgptHostId = createHostId()
     setSetting("chatgpt.host_id", chatgptHostId)
   }
 
@@ -282,6 +283,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     hostId: chatgptHostId,
   })
+
+  setChatGPTAuthService(chatgpt)
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
@@ -317,11 +320,17 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     // Saved in the shared keychain; the other apps read it again when they see the bump (specs/shared-data-folder R5.1).
     saveKey: async (key, provider) => {
+      if (provider === "chatgpt" && !key.startsWith("{")) {
+        throw new Error("ChatGPT provider uses OAuth token sharing. Use Sign in with ChatGPT to connect your account.")
+      }
       const s = await saveKey(key, provider)
       setSetting("keys.rev", Date.now())
       return s
     },
     clearKey: async (provider) => {
+      if (provider === "chatgpt") {
+        await chatgpt.signOut()
+      }
       const s = await clearKey(provider)
       setSetting("keys.rev", Date.now())
       return s
@@ -366,8 +375,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return chatgpt.status()
     },
     chatGPTLogout: async () => {
-      await chatgpt.signOut()
-      return chatgpt.status()
+      const res = await chatgpt.signOut()
+      const st = await chatgpt.status()
+      return { ...st, warning: res.warning }
     },
     pickFolder: async () => (host.pickFolder ? host.pickFolder() : null),
     // Every project, one another app is running a task of shown as taken by it (specs/shared-data-folder R1.3).

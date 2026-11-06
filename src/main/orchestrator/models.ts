@@ -1,6 +1,8 @@
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
+import { OPENAI_RESPONSES_URL, resolveChatGPTAccessToken } from "../chatgpt"
+import { getChatGPTAuthService } from "./model"
 
 /*
   The models a provider offers, read from its `GET {baseUrl}/models` (the OpenAI list endpoint that
@@ -28,28 +30,65 @@ const TIMEOUT_MS = 10_000
 /** A test request waits for one token, which a cold model can take a while to give. */
 const TEST_TIMEOUT_MS = 30_000
 
-function effectiveKey(provider: ProviderId, apiKey: string | null): string | null {
-  if (provider === "chatgpt" && apiKey?.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(apiKey) as { accessToken?: string }
-      return parsed.accessToken ?? apiKey
-    } catch {
-      return apiKey
-    }
-  }
-  return apiKey
-}
-
 export async function listModels(o: { provider: ProviderId; baseUrl: string; apiKey: string | null }): Promise<string[]> {
   const base = resolveBaseUrl(o.provider, o.baseUrl)
   if (!base) throw new Error("Set a base URL first.")
+
+  if (o.provider === "chatgpt") {
+    let token: string | null = null
+    try {
+      token = await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService())
+    } catch {
+      token = null
+    }
+
+    let res: Response
+    try {
+      res = await fetch(`${base}/models`, {
+        headers: {
+          ...attributionHeaders(base),
+          accept: "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+    } catch (e) {
+      throw new Error(`Could not reach ${base}/models: ${(e as Error).message}`, { cause: e })
+    }
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, PROVIDERS[o.provider].label)
+      throw new Error(`${PROVIDERS[o.provider].label} answered ${res.status} to the model list.${res.status === 404 ? versionHint(base) : ""}`)
+    }
+
+    const body = (await res.json().catch(() => null)) as {
+      models?: Array<{ slug?: string; id?: string; display_name?: string; visibility?: string }>
+      data?: Array<{ id?: string }>
+    } | null
+
+    if (Array.isArray(body?.models)) {
+      const slugs = body.models
+        .filter((m) => m.visibility === "list" || !m.visibility)
+        .map((m) => m.slug || m.id)
+        .filter((slug): slug is string => typeof slug === "string" && slug.length > 0)
+      return [...new Set(slugs)]
+    }
+
+    if (Array.isArray(body?.data)) {
+      const ids = body.data.map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0)
+      return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+    }
+
+    throw new Error(`${base}/models did not return a model list.`)
+  }
+
   let res: Response
   try {
     res = await fetch(`${base}/models`, {
       headers: {
         ...attributionHeaders(base),
         accept: "application/json",
-        ...(effectiveKey(o.provider, o.apiKey) ? { authorization: `Bearer ${effectiveKey(o.provider, o.apiKey)}` } : {}),
+        ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}),
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
@@ -91,6 +130,56 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
   const base = resolveBaseUrl(o.provider, o.baseUrl)
   if (!base) throw new Error("Set a base URL first.")
   const label = PROVIDERS[o.provider].label
+
+  if (o.provider === "chatgpt") {
+    const token = await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService())
+    let res: Response
+    try {
+      res = await fetch(OPENAI_RESPONSES_URL, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          model: o.model,
+          input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+          store: false,
+          stream: true,
+        }),
+        signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+      })
+    } catch (e) {
+      throw new Error(`Could not reach ${OPENAI_RESPONSES_URL}: ${(e as Error).message}`, { cause: e })
+    }
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, label)
+      throw new Error(`${label} answered ${res.status} to a test request to ${o.model}.${res.status === 404 ? versionHint(base) : ""}`)
+    }
+
+    const streamText = await res.text().catch(() => "")
+    let completed = false
+    for (const line of streamText.split("\n")) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith("data:")) {
+        const payloadStr = trimmed.slice(5).trim()
+        if (payloadStr.includes('"response.failed"') || payloadStr.includes('"error"')) {
+          throw new Error(`${label} test request failed: ${payloadStr}`)
+        }
+        if (payloadStr.includes('"response.completed"')) {
+          completed = true
+        }
+      }
+    }
+
+    if (!completed) {
+      throw new Error(`${label} test stream ended before response.completed was received.`)
+    }
+    return
+  }
+
   let res: Response
   try {
     res = await fetch(`${base}/chat/completions`, {

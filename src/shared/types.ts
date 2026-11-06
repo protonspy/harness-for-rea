@@ -307,4 +307,5 @@ export interface ChatGPTAuthStatus {
   expiresAt?: number
   hasTokenSharingScope: boolean
   error?: string
+  warning?: string
 }

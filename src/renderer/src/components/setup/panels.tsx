@@ -305,6 +305,22 @@ export function ProviderKeyField({
   const api = window.hfr.api
   const [input, setInput] = useState("")
   const p = PROVIDERS[provider]
+
+  if (provider === "chatgpt") {
+    return (
+      <Field
+        label={label}
+        hint={
+          status?.set
+            ? "Connected via Sign in with ChatGPT (Token Sharing). Tokens are protected by the OS keychain."
+            : "Sign in with your personal ChatGPT Plus or Pro account via official Token Sharing without an API key."
+        }
+      >
+        <ChatGPTOAuthBox status={status} onKey={onStatus} />
+      </Field>
+    )
+  }
+
   return (
     <Field
       label={label}
@@ -343,7 +359,6 @@ export function ProviderKeyField({
         </p>
       )}
       {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} />}
-      {provider === "chatgpt" && <ChatGPTOAuthBox status={status} onKey={onStatus} />}
     </Field>
   )
 }
@@ -478,7 +493,7 @@ export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; o
   }, [api])
 
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-md border border-border p-3">
+    <div className="flex flex-col gap-2 rounded-md border border-border p-3">
       {status?.set ? (
         <div className="flex items-center justify-between">
           <div>
@@ -488,6 +503,10 @@ export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; o
                 {authStatus.accountEmail} ({authStatus.planType ?? "subscription plan"})
               </p>
             )}
+            {authStatus?.expiresAt && (
+              <p className="text-[10px] text-muted-foreground">Session active (expires {new Date(authStatus.expiresAt).toLocaleTimeString()})</p>
+            )}
+            {authStatus?.warning && <p className="mt-1 text-xs text-amber-500">{authStatus.warning}</p>}
           </div>
           <Button
             variant="outline"
@@ -521,6 +540,7 @@ export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; o
               <LogIn size={14} /> Connect ChatGPT Account
             </Button>
           </div>
+          {authStatus?.warning && <p className="text-xs text-amber-500">{authStatus.warning}</p>}
         </div>
       )}
       <ErrorText>{authStatus?.error || error}</ErrorText>

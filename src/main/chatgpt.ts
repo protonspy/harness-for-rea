@@ -1,11 +1,10 @@
-import { createHash, randomBytes } from "node:crypto"
+import { createHash, createPublicKey, createVerify, randomBytes, randomUUID, type KeyLike } from "node:crypto"
 import { createServer, type Server } from "node:http"
 import { redact, registerSecret } from "./events/redact"
 
 /*
   ChatGPT / Codex OAuth provider with token sharing (adr:0030, specs/chatgpt-auth R1.1–R5.2).
-  Official documentation consulted (https://developers.openai.com/siwc/token-sharing-open-source
-  on 2026-11-04):
+  Official documentation consulted (https://developers.openai.com/siwc/token-sharing-open-source):
   - Endpoints:
       Authorize: https://auth.openai.com/api/accounts/authorize
       Token:     https://auth.openai.com/api/accounts/oauth/token
@@ -13,7 +12,7 @@ import { redact, registerSecret } from "./events/redact"
       Responses: https://api.openai.com/v1/responses
   - Uses standard OAuth 2.0 Authorization Code flow with PKCE (RFC 7636, S256).
   - Dynamic client identity: `client_id=dynamic_agent_client` (and retains issued client_id).
-  - Persistent host identifier: `ext_agent_host_id`.
+  - Persistent host identifier: URN format `urn:uuid:<uuid>`.
   - Loopback redirect: `http://127.0.0.1:<port>/callback`.
   - Scopes: `openid profile email offline_access chatgpt.tokens.use.direct resource.invoke`.
   - Protected storage in the OS keychain (DPAPI via safeStorage in desktop, OS keychain in TUI).
@@ -52,6 +51,13 @@ export interface ChatGPTAuthStatus {
   expiresAt?: number
   hasTokenSharingScope: boolean
   error?: string
+  warning?: string
+}
+
+export interface SignOutResult {
+  revokedRemotely: boolean
+  warning?: string
+  error?: string
 }
 
 export interface PKCEPair {
@@ -67,7 +73,7 @@ export interface LoopbackHandle {
   close(): Promise<void>
 }
 
-export type Fetch = (url: string, init: RequestInit) => Promise<Response>
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
 
 export interface ChatGPTAuthServiceDeps {
   fetch?: Fetch
@@ -75,6 +81,22 @@ export interface ChatGPTAuthServiceDeps {
   saveSession(session: ChatGPTSession | null): Promise<void>
   loadSession(): Promise<ChatGPTSession | null>
   hostId?: string
+  jwks?: { keys: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+  publicKey?: KeyLike | string
+}
+
+/**
+ * Validates whether a host ID conforms to official URN format.
+ */
+export function isValidHostId(id: string | undefined | null): boolean {
+  return typeof id === "string" && id.startsWith("urn:uuid:") && id.length >= 45
+}
+
+/**
+ * Generates an official URN format host identifier.
+ */
+export function createHostId(): string {
+  return `urn:uuid:${randomUUID()}`
 }
 
 /**
@@ -131,45 +153,103 @@ export function buildAuthorizationUrl(params: {
   return u.toString()
 }
 
+export interface VerifyIdTokenOptions {
+  idToken: string
+  expectedNonce: string
+  expectedAudience: string
+  jwks?: { keys: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+  publicKey?: KeyLike | string
+}
+
 /**
- * Validates claims of an OpenID Connect ID token according to official guidelines.
+ * Validates claims and cryptographic signature of an OpenID Connect ID token according to official guidelines.
  */
-export function verifyIdToken(params: { idToken: string; expectedNonce: string; expectedAudience: string }): { sub: string; email?: string; plan?: string } {
+export function verifyIdToken(params: VerifyIdTokenOptions): { sub: string; email?: string; plan?: string } {
   const parts = params.idToken.split(".")
   if (parts.length !== 3) {
     throw new Error("Invalid ID token structure: token is not a valid 3-part JWT.")
   }
 
+  const [headerB64, payloadB64, signatureB64] = parts
+
+  let header: { alg?: string; kid?: string; typ?: string }
+  try {
+    header = JSON.parse(Buffer.from(headerB64, "base64url").toString("utf8"))
+  } catch {
+    throw new Error("Invalid ID token header: failed to parse JSON header.")
+  }
+
   let payload: Record<string, unknown>
   try {
-    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))
+    payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"))
   } catch {
     throw new Error("Invalid ID token payload: failed to parse JSON claims.")
   }
 
+  // Mandatory expiration check
+  if (typeof payload.exp !== "number") {
+    throw new Error("Invalid ID token: missing required 'exp' expiration claim.")
+  }
+  if (payload.exp * 1000 <= Date.now()) {
+    throw new Error("Invalid ID token: token has expired.")
+  }
+
+  // Issuer check
   if (payload.iss !== CHATGPT_AUTH_ORIGIN && payload.iss !== "https://auth0.openai.com/") {
     throw new Error(`Invalid ID token issuer: expected ${CHATGPT_AUTH_ORIGIN}, got ${String(payload.iss)}.`)
   }
 
-  const aud = payload.aud
-  const audMatches = Array.isArray(aud)
-    ? aud.includes(params.expectedAudience) || aud.includes(DEFAULT_CLIENT_ID)
-    : aud === params.expectedAudience || aud === DEFAULT_CLIENT_ID
+  // Nonce check
+  if (payload.nonce !== params.expectedNonce) {
+    throw new Error("Invalid ID token nonce: nonce mismatch detected.")
+  }
 
+  // Exact audience check (strictly reject dynamic_agent_client if issued client ID is expected)
+  const aud = payload.aud
+  const audMatches = Array.isArray(aud) ? aud.includes(params.expectedAudience) : aud === params.expectedAudience
   if (!audMatches) {
     throw new Error(`Invalid ID token audience: expected ${params.expectedAudience}, got ${String(aud)}.`)
   }
 
-  if (typeof payload.exp === "number" && payload.exp * 1000 <= Date.now()) {
-    throw new Error("Invalid ID token: token has expired.")
-  }
-
-  if (payload.nonce !== params.expectedNonce) {
-    throw new Error(`Invalid ID token nonce: nonce mismatch detected.`)
-  }
-
+  // Subject check
   if (typeof payload.sub !== "string" || !payload.sub.trim()) {
     throw new Error("Invalid ID token: missing required 'sub' subject claim.")
+  }
+
+  // Cryptographic signature check
+  const signingInput = `${headerB64}.${payloadB64}`
+  const sigBuffer = Buffer.from(signatureB64, "base64url")
+
+  let verified = false
+  if (params.publicKey) {
+    try {
+      const verifier = createVerify("RSA-SHA256")
+      verifier.update(signingInput)
+      verified = verifier.verify(params.publicKey, sigBuffer)
+    } catch {
+      verified = false
+    }
+  } else if (params.jwks) {
+    const keys = Array.isArray(params.jwks) ? params.jwks : params.jwks.keys
+    const matchingKey = keys.find((k) => !header.kid || k.kid === header.kid)
+    if (!matchingKey) {
+      throw new Error(`Invalid ID token: no matching key in JWKS for kid '${header.kid}'.`)
+    }
+    try {
+      const keyObj = createPublicKey({ key: matchingKey as any, format: "jwk" })
+      const verifier = createVerify("RSA-SHA256")
+      verifier.update(signingInput)
+      verified = verifier.verify(keyObj, sigBuffer)
+    } catch {
+      verified = false
+    }
+  } else {
+    // If no keys provided for cryptographic validation, require signature validation failure
+    throw new Error("Invalid ID token: cryptographic verification failed (missing public key or JWKS).")
+  }
+
+  if (!verified) {
+    throw new Error("Invalid ID token signature: cryptographic verification failed.")
   }
 
   return {
@@ -263,10 +343,13 @@ export class ChatGPTAuthService {
   private readonly saveSession: (session: ChatGPTSession | null) => Promise<void>
   private readonly loadSession: () => Promise<ChatGPTSession | null>
   private readonly hostId: string
+  private readonly jwks?: { keys: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+  private readonly publicKey?: KeyLike | string
   private activeLoopback: LoopbackHandle | null = null
-  private abortController: AbortController | null = null
   private currentSession: ChatGPTSession | null = null
   private refreshGeneration = 0
+  private signInGeneration = 0
+  private currentAttempt: { generation: number; abortController: AbortController } | null = null
   private pendingRefresh: Promise<ChatGPTSession> | null = null
   private inProgress = false
 
@@ -275,7 +358,9 @@ export class ChatGPTAuthService {
     this.openUrl = deps.openUrl
     this.saveSession = deps.saveSession
     this.loadSession = deps.loadSession
-    this.hostId = deps.hostId ?? generateRandomToken(16)
+    this.hostId = isValidHostId(deps.hostId) ? deps.hostId! : createHostId()
+    this.jwks = deps.jwks
+    this.publicKey = deps.publicKey
   }
 
   getHostId(): string {
@@ -325,7 +410,17 @@ export class ChatGPTAuthService {
    */
   async startSignIn(options?: { preferredPort?: number; timeoutMs?: number }): Promise<ChatGPTSession> {
     this.cancelSignIn()
+    const attemptGen = ++this.signInGeneration
+    const abortController = new AbortController()
+    this.currentAttempt = { generation: attemptGen, abortController }
     this.inProgress = true
+
+    if (!this.currentSession) {
+      this.currentSession = await this.loadSession()
+      if (this.currentSession) {
+        this.registerSessionSecrets(this.currentSession)
+      }
+    }
 
     const verifier = generateCodeVerifier(64)
     registerSecret(verifier)
@@ -334,9 +429,7 @@ export class ChatGPTAuthService {
     const nonce = generateRandomToken(32)
     const timeoutMs = options?.timeoutMs ?? 180_000
 
-    this.abortController = new AbortController()
-    const { signal } = this.abortController
-
+    const { signal } = abortController
     let loopbackHandle: LoopbackHandle | null = null
     let timeoutTimer: NodeJS.Timeout | null = null
 
@@ -347,7 +440,6 @@ export class ChatGPTAuthService {
         resolveCallback = res
         rejectCallback = rej
       })
-      // Avoid unhandled rejection if callbackPromise rejects after early abort
       callbackPromise.catch(() => {})
 
       timeoutTimer = setTimeout(() => {
@@ -365,8 +457,9 @@ export class ChatGPTAuthService {
       })
       this.activeLoopback = loopbackHandle
 
+      const expectedClientId = this.currentSession?.clientId ?? DEFAULT_CLIENT_ID
       const authUrl = buildAuthorizationUrl({
-        clientId: this.currentSession?.clientId ?? DEFAULT_CLIENT_ID,
+        clientId: expectedClientId,
         redirectUri: loopbackHandle.redirectUri,
         state,
         nonce,
@@ -394,6 +487,11 @@ export class ChatGPTAuthService {
         throw new Error("Authorization callback returned no authorization code.")
       }
 
+      // Check re-authorization client_id consistency
+      if (this.currentSession?.clientId && callbackParams.clientId && callbackParams.clientId !== this.currentSession.clientId) {
+        throw new Error(`Client ID mismatch during re-authorization: expected ${this.currentSession.clientId}, got ${callbackParams.clientId}.`)
+      }
+
       // Exchange authorization code for tokens
       const session = await this.exchangeCode({
         code: callbackParams.code,
@@ -401,27 +499,42 @@ export class ChatGPTAuthService {
         redirectUri: loopbackHandle.redirectUri,
         clientId: callbackParams.clientId ?? this.currentSession?.clientId ?? DEFAULT_CLIENT_ID,
         expectedNonce: nonce,
+        signal,
       })
+
+      // Strict check against cancel / logout race conditions
+      if (attemptGen !== this.signInGeneration || this.currentAttempt === null) {
+        throw new Error("Authentication cancelled.")
+      }
 
       this.currentSession = session
       this.registerSessionSecrets(session)
       await this.saveSession(session)
       return session
     } finally {
-      this.inProgress = false
       if (timeoutTimer) clearTimeout(timeoutTimer)
       if (loopbackHandle) {
         await loopbackHandle.close().catch(() => {})
       }
-      this.activeLoopback = null
-      this.abortController = null
+      if (this.currentAttempt?.generation === attemptGen) {
+        this.currentAttempt = null
+        this.inProgress = false
+        this.activeLoopback = null
+      }
     }
   }
 
   /**
    * Exchanges an authorization code and PKCE verifier for access & refresh tokens.
    */
-  async exchangeCode(params: { code: string; codeVerifier: string; redirectUri: string; clientId: string; expectedNonce: string }): Promise<ChatGPTSession> {
+  async exchangeCode(params: {
+    code: string
+    codeVerifier: string
+    redirectUri: string
+    clientId: string
+    expectedNonce: string
+    signal?: AbortSignal
+  }): Promise<ChatGPTSession> {
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: params.clientId,
@@ -436,6 +549,7 @@ export class ChatGPTAuthService {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      signal: params.signal,
     })
 
     const data = (await res.json().catch(() => ({}))) as {
@@ -456,20 +570,18 @@ export class ChatGPTAuthService {
 
     const issuedClientId = data.client_id ?? params.clientId
 
-    // Validate ID token claims if present
-    let accountEmail: string | undefined
-    let planType: string | undefined
-    let accountSub: string | undefined
-    if (data.id_token) {
-      const claims = verifyIdToken({
-        idToken: data.id_token,
-        expectedNonce: params.expectedNonce,
-        expectedAudience: issuedClientId,
-      })
-      accountEmail = claims.email
-      planType = claims.plan
-      accountSub = claims.sub
+    // Validate ID token (mandatory per R3)
+    if (!data.id_token) {
+      throw new Error("Missing required OpenID Connect ID token in ChatGPT token response.")
     }
+
+    const claims = verifyIdToken({
+      idToken: data.id_token,
+      expectedNonce: params.expectedNonce,
+      expectedAudience: issuedClientId,
+      jwks: this.jwks,
+      publicKey: this.publicKey,
+    })
 
     const scopes = (data.scope ?? "").split(" ").filter(Boolean)
     const hasTokenSharing = scopes.includes("chatgpt.tokens.use.direct")
@@ -490,9 +602,9 @@ export class ChatGPTAuthService {
       scopes,
       hostId: this.hostId,
       clientId: issuedClientId,
-      accountEmail,
-      planType,
-      accountSub,
+      accountEmail: claims.email,
+      planType: claims.plan,
+      accountSub: claims.sub,
     }
 
     this.registerSessionSecrets(session)
@@ -527,6 +639,7 @@ export class ChatGPTAuthService {
         client_id: current.clientId,
         refresh_token: current.refreshToken!,
         ext_agent_host_id: this.hostId,
+        resource: OPENAI_API_BASE_URL,
       })
 
       const res = await this.fetch(CHATGPT_TOKEN_URL, {
@@ -606,10 +719,17 @@ export class ChatGPTAuthService {
 
   /**
    * Revokes the active session and clears tokens from keychain and memory.
-   * Advances the refresh generation to prevent any in-flight refresh from restoring the session.
+   * Advances both sign-in and refresh generations to prevent any in-flight requests from restoring the session.
    */
-  async signOut(): Promise<void> {
+  async signOut(): Promise<SignOutResult> {
+    this.signInGeneration++
     this.refreshGeneration++
+    this.inProgress = false
+
+    if (this.currentAttempt) {
+      this.currentAttempt.abortController.abort()
+      this.currentAttempt = null
+    }
     this.pendingRefresh = null
 
     if (!this.currentSession) {
@@ -619,25 +739,34 @@ export class ChatGPTAuthService {
     this.currentSession = null
     await this.saveSession(null)
 
-    if (sessionToRevoke?.refreshToken || sessionToRevoke?.accessToken) {
-      try {
-        const token = sessionToRevoke.refreshToken ?? sessionToRevoke.accessToken
-        const body = new URLSearchParams({
-          token,
-          token_type_hint: sessionToRevoke.refreshToken ? "refresh_token" : "access_token",
-          client_id: sessionToRevoke.clientId,
-        })
-        const res = await this.fetch(CHATGPT_REVOKE_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: body.toString(),
-        })
-        if (!res.ok) {
-          // Warning logged if remote revocation rejected
-          console.warn(`[ChatGPT] Remote revocation returned HTTP ${res.status}. Stored local session cleared.`)
+    if (!sessionToRevoke?.refreshToken && !sessionToRevoke?.accessToken) {
+      return { revokedRemotely: true }
+    }
+
+    try {
+      const token = sessionToRevoke.refreshToken ?? sessionToRevoke.accessToken
+      const body = new URLSearchParams({
+        token,
+        token_type_hint: sessionToRevoke.refreshToken ? "refresh_token" : "access_token",
+        client_id: sessionToRevoke.clientId,
+      })
+      const res = await this.fetch(CHATGPT_REVOKE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      })
+      if (!res.ok) {
+        return {
+          revokedRemotely: false,
+          warning: `Local session cleared, but remote token revocation returned HTTP ${res.status}. You may revoke access in your OpenAI account security settings.`,
         }
-      } catch {
-        // Non-fatal network failure
+      }
+      return { revokedRemotely: true }
+    } catch {
+      return {
+        revokedRemotely: false,
+        warning:
+          "Local session cleared, but a network error prevented remote token revocation. You may revoke access in your OpenAI account security settings.",
       }
     }
   }
@@ -646,10 +775,11 @@ export class ChatGPTAuthService {
    * Aborts an in-flight authorization flow.
    */
   cancelSignIn(): void {
+    this.signInGeneration++
     this.inProgress = false
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
+    if (this.currentAttempt) {
+      this.currentAttempt.abortController.abort()
+      this.currentAttempt = null
     }
     if (this.activeLoopback) {
       void this.activeLoopback.close().catch(() => {})
@@ -664,6 +794,7 @@ export class ChatGPTAuthService {
   async validateModelInference(
     model = "gpt-4o",
     tools?: { type: "function"; name: string; description: string; parameters: Record<string, unknown> }[],
+    toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown,
   ): Promise<{ valid: boolean; error?: string; status?: number; toolCallsCount?: number }> {
     let token: string
     try {
@@ -691,7 +822,7 @@ export class ChatGPTAuthService {
         },
         body: JSON.stringify({
           model,
-          input: "ping",
+          input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
           store: false,
           stream: true,
           tools: tools ?? defaultTools,
@@ -714,26 +845,56 @@ export class ChatGPTAuthService {
         return { valid: false, status: res.status, error: `Inference failed with HTTP ${res.status}.` }
       }
 
-      // Parse SSE stream ensuring response.completed is reached
+      // Parse SSE stream ensuring response.completed is reached and error/failure events are rejected
       const streamText = await res.text().catch(() => "")
+      if (!streamText.trim()) {
+        return { valid: false, status: 200, error: "Inference response stream was empty." }
+      }
+
       let completed = false
+      let failed = false
+      let failureError: string | undefined
       let toolCallsCount = 0
 
       for (const line of streamText.split("\n")) {
         const trimmed = line.trim()
         if (trimmed.startsWith("data:")) {
           const payloadStr = trimmed.slice(5).trim()
-          if (payloadStr === "[DONE]") {
-            completed = true
+          if (!payloadStr || payloadStr === "[DONE]") {
             continue
           }
           try {
-            const parsed = JSON.parse(payloadStr) as { type?: string; event?: string; tool_calls?: unknown[] }
-            if (parsed.type === "response.completed" || parsed.event === "response.completed") {
-              completed = true
+            const parsed = JSON.parse(payloadStr) as {
+              type?: string
+              event?: string
+              tool_calls?: unknown[]
+              error?: { message?: string }
+              response?: { status?: string; error?: { message?: string } }
             }
+            const eventType = parsed.type ?? parsed.event
+            if (eventType === "response.completed") {
+              completed = true
+            } else if (eventType === "response.failed" || eventType === "error") {
+              failed = true
+              failureError = parsed.response?.error?.message ?? parsed.error?.message ?? "Inference response failed."
+            } else if (eventType === "response.incomplete") {
+              failed = true
+              failureError = "Inference response incomplete."
+            }
+
             if (parsed.tool_calls && Array.isArray(parsed.tool_calls)) {
               toolCallsCount += parsed.tool_calls.length
+              if (toolExecutor) {
+                for (const tc of parsed.tool_calls as Array<{ function?: { name?: string; arguments?: string } }>) {
+                  if (tc.function?.name) {
+                    let args = {}
+                    try {
+                      args = JSON.parse(tc.function.arguments ?? "{}")
+                    } catch {}
+                    await toolExecutor(tc.function.name, args)
+                  }
+                }
+              }
             }
           } catch {
             // Ignore non-json lines
@@ -741,14 +902,60 @@ export class ChatGPTAuthService {
         }
       }
 
-      // If stream ended with ok status without SSE syntax error
-      if (!completed && streamText.includes("response.completed")) {
-        completed = true
+      if (failed) {
+        return { valid: false, status: res.status, error: failureError ?? "Inference response failed." }
+      }
+
+      if (!completed) {
+        return { valid: false, status: res.status, error: "Stream closed before response.completed was received." }
       }
 
       return { valid: true, status: res.status, toolCallsCount }
     } catch (e) {
       return { valid: false, error: redact((e as Error).message) }
     }
+  }
+}
+
+/**
+ * Resolves a valid ChatGPT access token from an opaque key, session JSON, or auth service.
+ * Refreshes token silently if expired.
+ */
+export async function resolveChatGPTAccessToken(rawKeyOrSession: string | null | undefined, authService?: ChatGPTAuthService): Promise<string> {
+  if (authService) {
+    return authService.getValidAccessToken()
+  }
+  if (!rawKeyOrSession) {
+    throw new Error("No ChatGPT session found.")
+  }
+  if (!rawKeyOrSession.startsWith("{")) {
+    return rawKeyOrSession
+  }
+  try {
+    const session = JSON.parse(rawKeyOrSession) as ChatGPTSession
+    if (session.expiresAt && Date.now() < session.expiresAt - 60_000 && session.accessToken) {
+      return session.accessToken
+    }
+    if (session.refreshToken) {
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: session.clientId,
+        refresh_token: session.refreshToken,
+        ext_agent_host_id: session.hostId,
+        resource: OPENAI_API_BASE_URL,
+      })
+      const res = await fetch(CHATGPT_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { access_token?: string }
+        if (data.access_token) return data.access_token
+      }
+    }
+    return session.accessToken ?? rawKeyOrSession
+  } catch {
+    return rawKeyOrSession
   }
 }
