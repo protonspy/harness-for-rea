@@ -9,11 +9,25 @@ import { getSetting, setSetting } from "./db"
 
 export function electronKeyStore(): KeyStore {
   return {
-    available: () => safeStorage.isEncryptionAvailable(),
+    available: () =>
+      typeof safeStorage.isAsyncEncryptionAvailable === "function" ? safeStorage.isAsyncEncryptionAvailable() : safeStorage.isEncryptionAvailable(),
     read: async (slot) => {
       const v = getSetting<string | null>(slot, null)
-      return v ? safeStorage.decryptString(Buffer.from(v, "base64")) : null
+      if (!v) return null
+      const buf = Buffer.from(v, "base64")
+      if (typeof safeStorage.decryptStringAsync === "function") {
+        const decrypted = await safeStorage.decryptStringAsync(buf)
+        return typeof decrypted === "string" ? decrypted : decrypted.result
+      }
+      return safeStorage.decryptString(buf)
     },
-    write: async (slot, key) => setSetting(slot, key === null ? null : safeStorage.encryptString(key).toString("base64")),
+    write: async (slot, key) => {
+      if (key === null) {
+        setSetting(slot, null)
+        return
+      }
+      const enc = typeof safeStorage.encryptStringAsync === "function" ? await safeStorage.encryptStringAsync(key) : safeStorage.encryptString(key)
+      setSetting(slot, enc.toString("base64"))
+    },
   }
 }

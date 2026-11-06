@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { stub } from "./electron-stub"
+import { stub, safeStorage } from "./electron-stub"
 import { closeDb, getDb, getSetting, openDb, setSetting } from "../src/main/db"
 import { clearKey, CredentialError, initKey, keyStatus, onKey, readKey, saveKey, useKeyStore } from "../src/main/credentials"
 import { electronKeyStore } from "../src/main/keys-electron"
@@ -232,5 +232,44 @@ describe("credentials (R3.1–R3.3)", () => {
     stub.encryption = false
     await initKey()
     expect(readKey()).toBeNull()
+  })
+
+  it("uses safeStorage.isAsyncEncryptionAvailable when present and avoids deprecated sync call", async () => {
+    const origSync = safeStorage.isEncryptionAvailable
+    const origAsync = safeStorage.isAsyncEncryptionAvailable
+    const syncSpy = vi.fn(() => true)
+    const asyncSpy = vi.fn(async () => true)
+    safeStorage.isEncryptionAvailable = syncSpy
+    safeStorage.isAsyncEncryptionAvailable = asyncSpy
+
+    try {
+      const store = electronKeyStore()
+      const avail = await store.available()
+      expect(avail).toBe(true)
+      expect(asyncSpy).toHaveBeenCalledTimes(1)
+      expect(syncSpy).not.toHaveBeenCalled()
+    } finally {
+      safeStorage.isEncryptionAvailable = origSync
+      safeStorage.isAsyncEncryptionAvailable = origAsync
+    }
+  })
+
+  it("falls back to safeStorage.isEncryptionAvailable if async method is unavailable", async () => {
+    const origSync = safeStorage.isEncryptionAvailable
+    const origAsync = safeStorage.isAsyncEncryptionAvailable
+    const syncSpy = vi.fn(() => true)
+    safeStorage.isEncryptionAvailable = syncSpy
+    // @ts-expect-error test fallback when isAsyncEncryptionAvailable is undefined
+    delete safeStorage.isAsyncEncryptionAvailable
+
+    try {
+      const store = electronKeyStore()
+      const avail = await store.available()
+      expect(avail).toBe(true)
+      expect(syncSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      safeStorage.isEncryptionAvailable = origSync
+      safeStorage.isAsyncEncryptionAvailable = origAsync
+    }
   })
 })

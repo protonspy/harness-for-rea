@@ -11,7 +11,7 @@ import type { KeyStatus } from "@shared/types"
 /** Where a host keeps the keys (plans/finish-the-harness 1.8): read and written whole, by slot. */
 export interface KeyStore {
   /** whether keys can be kept protected by the OS; when not, none is stored */
-  available(): boolean
+  available(): boolean | Promise<boolean>
   read(slot: string): Promise<string | null>
   /** `null` removes the slot */
   write(slot: string, key: string | null): Promise<void>
@@ -27,6 +27,7 @@ export class CredentialError extends Error {
 }
 
 let store: KeyStore | null = null
+let encryptionAvailable = true
 const cached = new Map<ProviderId, string>()
 const listeners = new Set<(key: string) => void>()
 
@@ -56,7 +57,8 @@ function loaded(provider: ProviderId, key: string) {
   (specs/shared-data-folder R5.2). A key already in the shared store wins. Returns how many were moved.
 */
 export async function moveKeys(from: KeyStore, to: KeyStore): Promise<number> {
-  if (!from.available() || !to.available()) return 0
+  const [fromAvail, toAvail] = await Promise.all([from.available(), to.available()])
+  if (!fromAvail || !toAvail) return 0
   let moved = 0
   for (const provider of PROVIDER_IDS) {
     const name = slot(provider)
@@ -76,7 +78,9 @@ export async function moveKeys(from: KeyStore, to: KeyStore): Promise<number> {
 /** Read the stored keys once; afterwards `readKey` is a synchronous read. A key that cannot be read is left unset. */
 export async function initKey() {
   cached.clear()
-  if (!keys().available()) return
+  const avail = await keys().available()
+  encryptionAvailable = Boolean(avail)
+  if (!avail) return
   for (const provider of PROVIDER_IDS) {
     try {
       const v = await keys().read(slot(provider))
@@ -89,14 +93,17 @@ export async function initKey() {
 
 export async function saveKey(key: string, provider: ProviderId = "openrouter"): Promise<KeyStatus> {
   const trimmed = key.trim()
-  if (!keys().available())
-    throw new CredentialError("The OS keychain is not available, so the key was not stored. Harness for REA never keeps it in plain text.")
+  const avail = await keys().available()
+  encryptionAvailable = Boolean(avail)
+  if (!avail) throw new CredentialError("The OS keychain is not available, so the key was not stored. Harness for REA never keeps it in plain text.")
   await keys().write(slot(provider), trimmed)
   loaded(provider, trimmed)
   return keyStatus(provider)
 }
 
 export async function clearKey(provider: ProviderId = "openrouter"): Promise<KeyStatus> {
+  const avail = await keys().available()
+  encryptionAvailable = Boolean(avail)
   await keys().write(slot(provider), null)
   cached.delete(provider)
   return keyStatus(provider)
@@ -108,5 +115,7 @@ export function readKey(provider: ProviderId = "openrouter"): string | null {
 
 export function keyStatus(provider: ProviderId = "openrouter"): KeyStatus {
   const k = cached.get(provider)
-  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: keys().available() }
+  const avail = keys().available()
+  const encryption = typeof avail === "boolean" ? avail : encryptionAvailable
+  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption }
 }
