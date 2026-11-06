@@ -4,7 +4,7 @@
   is a base URL, a key and a model name. Adding one is one entry here.
 */
 
-export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "chatgpt", "custom"] as const
+export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "river", "chatgpt", "custom"] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
 export interface ProviderPreset {
@@ -62,6 +62,27 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
       "minimax/minimax-m3.1-flash",
     ],
     keyPlaceholder: "sk-or-v1-…",
+  },
+  river: {
+    id: "river",
+    label: "River",
+    kind: "openai",
+    baseUrl: "https://api.river.ai/v1",
+    editableBaseUrl: false,
+    keyRequired: true,
+    defaultModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    models: [
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "GLM-5.3",
+      "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+      "zai-org/GLM-5.3-Flash",
+      "Qwen/Qwen3.8-27B-FP8",
+      "deepseek-ai/DeepSeek-V4.1-Flash",
+      "moonshotai/Kimi-K3",
+    ],
+    keyPlaceholder: "rv-…",
+    signupUrl: "https://console.river.ai/keys",
+    offer: "API key from the River Console.",
   },
   deepseek: {
     id: "deepseek",
@@ -150,6 +171,18 @@ export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[
   if (provider === "chatgpt") {
     const unique = [...new Set(listed)]
     return unique.length ? [{ label: "Models", models: unique }] : []
+  }
+  if (provider === "river") {
+    if (listed.length > 0) {
+      const presets = PROVIDERS.river.models
+      const availablePresets = presets.filter((m) => listed.includes(m))
+      const extra = [...new Set(listed)].filter((m) => !presets.includes(m) && !m.endsWith(":batch")).sort()
+      return [
+        { label: "Recommended", models: availablePresets },
+        { label: "Models", models: extra },
+      ].filter((g) => g.models.length)
+    }
+    return [{ label: "Recommended", models: [...PROVIDERS.river.models] }]
   }
   const recommended = [...PROVIDERS[provider].models]
   const rest = [...new Set(listed)].filter((m) => !recommended.includes(m) && !m.endsWith(":batch"))

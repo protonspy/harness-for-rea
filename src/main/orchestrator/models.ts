@@ -109,7 +109,8 @@ export async function listModels(o: { provider: ProviderId; baseUrl: string; api
     throw new Error(`Could not reach ${base}/models: ${(e as Error).message}`, { cause: e })
   }
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, PROVIDERS[o.provider].label)
+    if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429)
+      throw friendlyError({ status: res.status }, PROVIDERS[o.provider].label)
     throw new Error(`${PROVIDERS[o.provider].label} answered ${res.status} to the model list.${res.status === 404 ? versionHint(base) : ""}`)
   }
   const body = (await res.json().catch(() => null)) as { data?: unknown } | null
@@ -133,7 +134,10 @@ export function versionHint(base: string): string {
 }
 
 /** Whether a failure is the provider refusing the key: the one answer a test request cannot get past. */
-export const refusedKey = (e: unknown) => (e as { status?: number })?.status === 401
+export const refusedKey = (e: unknown) => {
+  const s = (e as { status?: number })?.status
+  return s === 401 || s === 403
+}
 
 /**
   A one-token request to the chosen model (specs/onboarding R1.6): how an OpenAI-compatible server that has no model
@@ -168,7 +172,7 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
     }
 
     if (!res.ok) {
-      if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, label)
+      if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429) throw friendlyError({ status: res.status }, label)
       throw new Error(`${label} answered ${res.status} to a test request to ${o.model}.${res.status === 404 ? versionHint(base) : ""}`)
     }
 
@@ -228,7 +232,7 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
     throw new Error(`Could not reach ${base}/chat/completions: ${(e as Error).message}`, { cause: e })
   }
   if (res.ok) return
-  if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, label)
+  if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429) throw friendlyError({ status: res.status }, label)
   const detail = await res.text().catch(() => "")
   const said = /"message"\s*:\s*"([^"]{1,200})"/.exec(detail)?.[1] ?? ""
   throw new Error(`${label} answered ${res.status} to a test request to ${o.model}${said ? `: ${said}` : "."}${res.status === 404 ? versionHint(base) : ""}`)

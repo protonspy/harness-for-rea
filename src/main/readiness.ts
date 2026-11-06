@@ -25,6 +25,42 @@ export interface ReadinessDeps {
 const probed = new Map<string, number>()
 const PROBE_FOR_MS = 10 * 60_000
 
+async function checkModelAvailability(d: ReadinessDeps, run: RunChoice, label: string): Promise<{ ready: boolean; reason: string }> {
+  try {
+    const listed = await d.listModels(run)
+    if (!listed.length) {
+      return { ready: false, reason: `${label} listed no models.` }
+    }
+    if (run.provider === "chatgpt" && !listed.includes(run.model)) {
+      return {
+        ready: false,
+        reason: `The model "${run.model}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`,
+      }
+    }
+    if (run.provider === "river" && !listed.includes(run.model)) {
+      return {
+        ready: false,
+        reason: `The model "${run.model}" is not available for your ${label} account. Choose a model from the account's catalog.`,
+      }
+    }
+    return { ready: true, reason: "" }
+  } catch (e) {
+    if (refusedKey(e) || run.provider === "chatgpt") return { ready: false, reason: (e as Error).message }
+    const key = JSON.stringify([run.provider, run.baseUrl, run.model, d.keyHint?.(run.provider) ?? ""])
+    if ((probed.get(key) ?? 0) > Date.now()) return { ready: true, reason: "" }
+    try {
+      await d.probeModel(run)
+      probed.set(key, Date.now() + PROBE_FOR_MS)
+      return { ready: true, reason: "" }
+    } catch (p) {
+      return {
+        ready: false,
+        reason: refusedKey(p) ? (p as Error).message : `${label} has no model list, and a test request failed: ${(p as Error).message}`,
+      }
+    }
+  }
+}
+
 /** The provider, model and endpoint a task runs with: a project's own, or Settings' during the setup. */
 export interface RunChoice {
   provider: ProviderId
@@ -74,17 +110,10 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
       reason = `Set the base URL of your ${label} in Settings: the specialist runs on it.`
     } else if (!settings.specialistModel.trim()) {
       reason = `Choose the specialist's model on ${label}.`
-    } else if (sp === "chatgpt") {
-      try {
-        const listed = await d.listModels({ provider: "chatgpt", model: settings.specialistModel, baseUrl: baseUrlFor("chatgpt", settings) })
-        if (!listed.length) {
-          reason = "ChatGPT (Codex) listed no models for this account."
-        } else if (!listed.includes(settings.specialistModel)) {
-          reason = `The model "${settings.specialistModel}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`
-        }
-      } catch (e) {
-        reason = (e as Error).message
-      }
+    } else if (sp === "chatgpt" || sp === "river") {
+      const run: RunChoice = { provider: sp, model: settings.specialistModel, baseUrl: baseUrlFor(sp, settings) }
+      const res = await checkModelAvailability(d, run, label)
+      if (!res.ready) reason = res.reason
     }
     claude = { ready: !reason, reason, provider: sp, model: settings.specialistModel }
   } else if (sandbox.ready) {
@@ -105,39 +134,11 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
     model.reason = `Set the base URL of your ${label} in Settings.`
   } else if (!run.model.trim()) {
     model.reason = `Choose a model from ${label}.`
-  } else if (o.list === false && provider !== "chatgpt") {
+  } else if (o.list === false && provider !== "chatgpt" && provider !== "river") {
     model = { ...model, ready: true }
   } else {
-    try {
-      const listed = await d.listModels(run)
-      if (!listed.length) {
-        model = { ...model, ready: false, reason: `${label} listed no models.` }
-      } else if (provider === "chatgpt" && !listed.includes(run.model)) {
-        model = {
-          ...model,
-          ready: false,
-          reason: `The model "${run.model}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`,
-        }
-      } else {
-        model = { ...model, ready: true }
-      }
-    } catch (e) {
-      // A refused key is final; any other failure of the list — many OpenAI-compatible servers have none — is
-      // settled by a one-token request to the chosen model (specs/onboarding R1.6).
-      if (refusedKey(e) || provider === "chatgpt") model.reason = (e as Error).message
-      else {
-        const key = JSON.stringify([run.provider, run.baseUrl, run.model, d.keyHint?.(run.provider) ?? ""])
-        if ((probed.get(key) ?? 0) > Date.now()) model = { ...model, ready: true }
-        else
-          try {
-            await d.probeModel(run)
-            probed.set(key, Date.now() + PROBE_FOR_MS)
-            model = { ...model, ready: true }
-          } catch (p) {
-            model.reason = refusedKey(p) ? (p as Error).message : `${label} has no model list, and a test request failed: ${(p as Error).message}`
-          }
-      }
-    }
+    const res = await checkModelAvailability(d, run, label)
+    model = { ...model, ready: res.ready, reason: res.reason }
   }
 
   return { sandbox, claude, model, ready: sandbox.ready && claude.ready && model.ready, completed: settings.setupCompleted }
