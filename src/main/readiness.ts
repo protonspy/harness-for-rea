@@ -74,7 +74,7 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
       reason = `Set the base URL of your ${label} in Settings: the specialist runs on it.`
     } else if (!settings.specialistModel.trim()) {
       reason = `Choose the specialist's model on ${label}.`
-    } else if (sp === "chatgpt" && o.list !== false) {
+    } else if (sp === "chatgpt") {
       try {
         const listed = await d.listModels({ provider: "chatgpt", model: settings.specialistModel, baseUrl: baseUrlFor("chatgpt", settings) })
         if (!listed.length) {
@@ -105,7 +105,7 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
     model.reason = `Set the base URL of your ${label} in Settings.`
   } else if (!run.model.trim()) {
     model.reason = `Choose a model from ${label}.`
-  } else if (o.list === false) {
+  } else if (o.list === false && provider !== "chatgpt") {
     model = { ...model, ready: true }
   } else {
     try {

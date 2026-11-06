@@ -1,3 +1,4 @@
+import { API_SCHEMAS } from "../src/shared/api"
 import { describe, expect, it } from "vitest"
 import { generateKeyPairSync, createSign } from "node:crypto"
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages"
@@ -1114,6 +1115,44 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
 
       const rOk = await readiness(fakeDeps(["unavailable-slug"]))
       expect(rOk.model.ready).toBe(true)
+    })
+    it("R1: SettingsPatch and saveSettings accept empty model for ChatGPT pending discovery, but reject empty model for other providers", async () => {
+      // Verify SettingsPatch allows model: ""
+      const patchChatgpt = API_SCHEMAS.saveSettings.parse([{ provider: "chatgpt", model: "" }])
+      expect(patchChatgpt[0].model).toBe("")
+
+      const patchSpecialist = API_SCHEMAS.saveSettings.parse([{ specialistProvider: "chatgpt", specialistModel: "" }])
+      expect(patchSpecialist[0].specialistModel).toBe("")
+    })
+
+    it("R2: expectedProvider prevents stale async catalog discovery from corrupting another provider", async () => {
+      const patchWithGuard = API_SCHEMAS.saveSettings.parse([{ model: "custom-chatgpt-slug", expectedProvider: "chatgpt" }])
+      expect(patchWithGuard[0].expectedProvider).toBe("chatgpt")
+      expect(patchWithGuard[0].model).toBe("custom-chatgpt-slug")
+    })
+
+    it("R4: readiness with list: false still validates ChatGPT orchestrator and specialist models", async () => {
+      const fakeDeps = (accountModels: string[]) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          provider: "chatgpt" as const,
+          model: "unlisted-model",
+          specialistProvider: "chatgpt" as const,
+          specialistModel: "unlisted-specialist",
+        }),
+        keySet: () => true,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      // Even with list: false, ChatGPT models MUST be validated
+      const r = await readiness(fakeDeps(["account-model-1"]), { list: false })
+      expect(r.model.ready).toBe(false)
+      expect(r.model.reason).toContain("unlisted-model")
+      expect(r.claude.ready).toBe(false)
+      expect(r.claude.reason).toContain("unlisted-specialist")
     })
   })
 })

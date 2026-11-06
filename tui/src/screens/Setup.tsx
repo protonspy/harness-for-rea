@@ -43,11 +43,24 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
         ))
         if (!id) return
         const p = id as SpecialistProvider
+        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" ? "" : PROVIDERS[p].defaultModel || settings?.specialistModel || ""
         await app.attempt(
           () =>
-            api.saveSettings({ specialistProvider: p, ...(p === "claude" ? {} : { specialistModel: PROVIDERS[p].defaultModel || settings?.specialistModel }) }),
+            api.saveSettings({
+              specialistProvider: p,
+              ...(nextSpecialistModel !== undefined ? { specialistModel: nextSpecialistModel } : {}),
+            }),
           `The specialist runs on ${specialistLabel(p)}.`,
         )
+        if (p === "chatgpt") {
+          const auth = await api.chatGPTAuthStatus().catch(() => null)
+          if (auth?.connected) {
+            const models = await api.listChatGPTModels().catch(() => null)
+            if (models && models.length > 0) {
+              await api.saveSettings({ specialistModel: models[0].slug, expectedSpecialistProvider: "chatgpt" }).catch(() => null)
+            }
+          }
+        }
         refresh()
       },
     },
@@ -121,8 +134,18 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     ))
     if (!id) return
     const p = PROVIDERS[id as ProviderId]
+    const nextModel = p.id === "chatgpt" ? "" : p.defaultModel || settings?.model || ""
     // Switching provider swaps in its own endpoint (kept per provider), model and key; one provider's model name means nothing to another.
-    await app.attempt(() => api.saveSettings({ provider: p.id, model: p.defaultModel || settings?.model }), `Provider: ${p.label}.`)
+    await app.attempt(() => api.saveSettings({ provider: p.id, model: nextModel }), `Provider: ${p.label}.`)
+    if (p.id === "chatgpt") {
+      const auth = await api.chatGPTAuthStatus().catch(() => null)
+      if (auth?.connected) {
+        const models = await api.listChatGPTModels().catch(() => null)
+        if (models && models.length > 0) {
+          await api.saveSettings({ model: models[0].slug, expectedProvider: "chatgpt" }).catch(() => null)
+        }
+      }
+    }
     refresh()
   }
   const pickModel = async (arg: string) => {

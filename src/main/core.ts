@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Handlers } from "@shared/api"
@@ -185,6 +186,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     ...deps,
     projects,
     apiKey: (provider) => readKey(provider),
+    listChatGPTModels: async () => handlers.listChatGPTModels(),
     // The orchestrator's tools run in the task's own container (adr:0007-run-the-orchestrators-tools-in-a-task-container).
     workspace: async (task) => {
       // The project is this app's while the task is open; another app holding it refuses the task (specs/shared-data-folder R1).
@@ -286,7 +288,19 @@ export async function startCore(host: CoreHost): Promise<Core> {
 
   setChatGPTAuthService(chatgpt)
 
-  let chatgptModelsCache: { accountKey: string; models: ChatGPTModelOption[]; timestamp: number } | null = null
+  let chatgptSessionGen = 0
+  let chatgptModelsCache: { gen: number; fingerprint: string; models: ChatGPTModelOption[]; timestamp: number } | null = null
+
+  function getChatGPTFingerprint(): string {
+    const raw = readKey("chatgpt")
+    if (!raw) return ""
+    return createHash("sha256").update(raw).digest("hex")
+  }
+
+  function invalidateChatGPTCache() {
+    chatgptSessionGen++
+    chatgptModelsCache = null
+  }
 
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
@@ -296,7 +310,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
         login: () => login.refresh(),
         settings: getSettings,
         keySet: (provider) => keyStatus(provider).set,
-        listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
+        listModels: async (run) =>
+          run.provider === "chatgpt"
+            ? (await handlers.listChatGPTModels()).map((m) => m.slug)
+            : listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
         probeModel: (run) => probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model }),
         keyHint: (provider) => keyStatus(provider).hint,
       },
@@ -314,25 +331,43 @@ export async function startCore(host: CoreHost): Promise<Core> {
       saveSettings({ setupCompleted: true })
       return { ...r, completed: true }
     },
-    saveSettings: async ({ integrations: wanted, ...patch }) => {
+    saveSettings: async ({ integrations: wanted, expectedProvider, expectedSpecialistProvider, ...patch }) => {
       const current = getSettings()
+      if (expectedProvider && current.provider !== expectedProvider) {
+        return current
+      }
+      if (expectedSpecialistProvider && current.specialistProvider !== expectedSpecialistProvider) {
+        return current
+      }
       const targetProvider = patch.provider ?? current.provider
       const targetSpecialistProvider = patch.specialistProvider ?? current.specialistProvider
-      if (patch.model !== undefined && targetProvider === "chatgpt") {
+      if (patch.model !== undefined) {
         const m = patch.model.trim()
-        if (m) {
-          const available = await handlers.listChatGPTModels()
-          if (!available.some((opt) => opt.slug === m)) {
-            throw new Error(`The model "${m}" is not available for the connected ChatGPT account.`)
+        if (targetProvider === "chatgpt") {
+          if (m) {
+            const available = await handlers.listChatGPTModels()
+            if (!available.some((opt) => opt.slug === m)) {
+              throw new Error(`The model "${m}" is not available for the connected ChatGPT account.`)
+            }
+          }
+        } else {
+          if (!m) {
+            throw new Error(`A model must be provided for ${PROVIDERS[targetProvider].label}.`)
           }
         }
       }
-      if (patch.specialistModel !== undefined && targetSpecialistProvider === "chatgpt") {
+      if (patch.specialistModel !== undefined) {
         const sm = patch.specialistModel.trim()
-        if (sm) {
-          const available = await handlers.listChatGPTModels()
-          if (!available.some((opt) => opt.slug === sm)) {
-            throw new Error(`The model "${sm}" is not available for the connected ChatGPT account.`)
+        if (targetSpecialistProvider === "chatgpt") {
+          if (sm) {
+            const available = await handlers.listChatGPTModels()
+            if (!available.some((opt) => opt.slug === sm)) {
+              throw new Error(`The model "${sm}" is not available for the connected ChatGPT account.`)
+            }
+          }
+        } else if (targetSpecialistProvider !== "claude") {
+          if (!sm) {
+            throw new Error(`A model must be provided for ${PROVIDERS[targetSpecialistProvider].label}.`)
           }
         }
       }
@@ -353,7 +388,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     clearKey: async (provider) => {
       if (provider === "chatgpt") {
-        chatgptModelsCache = null
+        invalidateChatGPTCache()
         const current = getSettings()
         if (current.specialistProvider === "chatgpt") {
           saveSettings({ specialistModel: "" })
@@ -374,16 +409,33 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return listModels({ provider: target, baseUrl, apiKey: readKey(target) })
     },
     listChatGPTModels: async () => {
+      const callGen = chatgptSessionGen
       const st = await chatgpt.status()
       if (!st.connected) {
         throw new Error("Connect your ChatGPT account to list available models.")
       }
-      const accountKey = st.accountEmail ?? "connected"
-      if (chatgptModelsCache && chatgptModelsCache.accountKey === accountKey && Date.now() - chatgptModelsCache.timestamp < 60_000) {
+      const fingerprint = getChatGPTFingerprint()
+      if (!fingerprint) {
+        throw new Error("Connect your ChatGPT account to list available models.")
+      }
+      if (
+        chatgptModelsCache &&
+        chatgptModelsCache.gen === callGen &&
+        chatgptModelsCache.fingerprint === fingerprint &&
+        Date.now() - chatgptModelsCache.timestamp < 60_000
+      ) {
         return chatgptModelsCache.models
       }
-      const models = await listChatGPTModels({ apiKey: readKey("chatgpt") })
-      chatgptModelsCache = { accountKey, models, timestamp: Date.now() }
+      const rawKey = readKey("chatgpt")
+      const models = await listChatGPTModels({ apiKey: rawKey })
+      if (callGen !== chatgptSessionGen) {
+        throw new Error("ChatGPT session changed during model discovery.")
+      }
+      const currentFingerprint = getChatGPTFingerprint()
+      if (currentFingerprint !== fingerprint) {
+        throw new Error("ChatGPT session changed during model discovery.")
+      }
+      chatgptModelsCache = { gen: callGen, fingerprint, models, timestamp: Date.now() }
       return models
     },
     sandboxStatus: () => sandbox.status(),
@@ -409,7 +461,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     hopperSignInStatus: () => hopper.status(),
     cancelHopperSignIn: () => hopper.cancel(),
     startChatGPTAuth: () => {
-      chatgptModelsCache = null
+      invalidateChatGPTCache()
       return chatgpt.startSignIn().then((s) => ({
         connected: true,
         accountEmail: s.accountEmail,
@@ -496,7 +548,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     closeTask: (id) => (freeTask(id), runner.close(id)),
     stopTurn: (id) => (freeTask(id), runner.stopTurn(id)),
     // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
-    continueTurn: (id) => (freeTask(id), runner.continueTask(id)),
+    continueTurn: async (id) => {
+      freeTask(id)
+      const task = log.getTask(id)
+      const project = task.projectId ? projects.get(task.projectId) : null
+      const run = project ? { provider: project.provider, model: project.model } : { provider: getSettings().provider, model: getSettings().model }
+      const blocked = blocking(await ready({ run, list: false }))
+      if (blocked) throw new Error(blocked)
+      return runner.continueTask(id)
+    },
     deleteTask: async (id) => (freeTask(id), await runner.remove(id), true),
     setTaskModel: (id, model) => (freeTask(id), runner.setModel(id, model)),
     decideTool: (id, callId, decision) => (freeTask(id), runner.decideTool(id, callId, decision)),

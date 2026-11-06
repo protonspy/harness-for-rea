@@ -274,7 +274,19 @@ export class TaskRunner {
       })
     // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
     const ready = (this.disposing.get(task.id) ?? Promise.resolve())
-      .then(() => this.deps.workspace(task))
+      .then(async () => {
+        if (run.provider === "chatgpt") {
+          const modelToUse = task.model || run.model
+          if (this.deps.listChatGPTModels) {
+            const available = await this.deps.listChatGPTModels()
+            const match = available.some((opt) => (typeof opt === "string" ? opt === modelToUse : opt.slug === modelToUse))
+            if (!match) {
+              throw new Error(`The model "${modelToUse}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`)
+            }
+          }
+        }
+        return this.deps.workspace(task)
+      })
       .then(async (ws) => {
         // The integration tools the orchestrator has, and what a delegation can target, as Settings has them now (R5.1).
         const [own, targetable] = await Promise.all([ctx.integrations?.orchestratorTools() ?? [], ctx.integrations?.targetable() ?? []])
