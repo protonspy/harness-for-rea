@@ -6,6 +6,7 @@ import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
   ChatGPTAuthStatus,
+  ChatGPTModelOption,
   KeyStatus,
   HopperSignIn,
   LoginStatus,
@@ -79,7 +80,8 @@ export const API_SCHEMAS = {
   keyStatus: z.tuple([Provider.optional()]),
   saveKey: z.tuple([z.string().trim().min(8).max(512), Provider.optional()]),
   clearKey: z.tuple([Provider.optional()]),
-  listModels: z.tuple([]),
+  listModels: z.tuple([Provider.optional()]),
+  listChatGPTModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
   readiness: z.tuple([]),
   completeSetup: z.tuple([]),
@@ -184,6 +186,7 @@ export interface ApiResults {
   saveKey: KeyStatus
   clearKey: KeyStatus
   listModels: string[]
+  listChatGPTModels: ChatGPTModelOption[]
   sandboxStatus: SandboxStatus
   readiness: Readiness
   completeSetup: Readiness

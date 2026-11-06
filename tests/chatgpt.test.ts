@@ -24,7 +24,10 @@ import {
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { redact } from "../src/main/events/redact"
 import { makeModel } from "../src/main/orchestrator/model"
-import { listModels, probeModel } from "../src/main/orchestrator/models"
+import { groupModels } from "../src/shared/providers"
+import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import { readiness } from "../src/main/readiness"
+import { listChatGPTModels, listModels, probeModel } from "../src/main/orchestrator/models"
 
 describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)", () => {
   it("registers chatgpt as an independent provider preset in PROVIDERS", () => {
@@ -32,9 +35,8 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
     expect(PROVIDERS.chatgpt.id).toBe("chatgpt")
     expect(PROVIDERS.chatgpt.kind).toBe("openai")
     expect(PROVIDERS.chatgpt.baseUrl).toBe("https://api.openai.com/v1")
-    expect(PROVIDERS.chatgpt.defaultModel).toBe("gpt-4o")
-    expect(PROVIDERS.chatgpt.models).toContain("gpt-4o")
-    expect(PROVIDERS.chatgpt.models).toContain("o1")
+    expect(PROVIDERS.chatgpt.defaultModel).toBe("")
+    expect(PROVIDERS.chatgpt.models).toEqual([])
     expect(resolveBaseUrl("chatgpt", "")).toBe("https://api.openai.com/v1")
   })
 
@@ -1002,6 +1004,116 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       } finally {
         globalThis.fetch = originalFetch
       }
+    })
+
+    it("groupModels for chatgpt preserves exact server order, contains zero static presets, and does not sort alphabetically", () => {
+      const input = ["account-model-z", "account-model-a"]
+      const groups = groupModels("chatgpt", input)
+      expect(groups).toEqual([{ label: "Models", models: ["account-model-z", "account-model-a"] }])
+      expect(groups[0].models).not.toContain("gpt-4o")
+      expect(groups[0].models[0]).toBe("account-model-z")
+      expect(groups[0].models[1]).toBe("account-model-a")
+    })
+
+    it("listChatGPTModels returns slug and displayName, preserves order, and filters visibility === list", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url).endsWith("/models")) {
+          return new Response(
+            JSON.stringify({
+              models: [
+                { slug: "model-zeta", display_name: "Model Zeta", visibility: "list" },
+                { slug: "model-alpha", display_name: "Model Alpha", visibility: "list" },
+                { slug: "hidden-beta", display_name: "Hidden Beta", visibility: "none" },
+                { slug: "no-visibility", display_name: "No Visibility" },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          )
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      try {
+        const options = await listChatGPTModels({ apiKey: "tok" })
+        expect(options).toEqual([
+          { slug: "model-zeta", displayName: "Model Zeta" },
+          { slug: "model-alpha", displayName: "Model Alpha" },
+        ])
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("listChatGPTModels refuses generic body.data fallback and throws", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [{ id: "generic-gpt" }] }), { status: 200, headers: { "Content-Type": "application/json" } })
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      try {
+        await expect(listChatGPTModels({ apiKey: "tok" })).rejects.toThrow(/did not return a ChatGPT model list/)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("readiness validates ChatGPT specialist model against account catalog and requires account connection", async () => {
+      const fakeDeps = (accountModels: string[], keySet = true) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          specialistProvider: "chatgpt" as const,
+          specialistModel: "custom-slug-1",
+        }),
+        keySet: () => keySet,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      const rNotConnected = await readiness(fakeDeps(["custom-slug-1"], false))
+      expect(rNotConnected.claude.ready).toBe(false)
+      expect(rNotConnected.claude.reason).toBe("Connect your ChatGPT account: the specialist runs on it.")
+
+      const rInvalidModel = await readiness(fakeDeps(["different-model"]))
+      expect(rInvalidModel.claude.ready).toBe(false)
+      expect(rInvalidModel.claude.reason).toContain("custom-slug-1")
+      expect(rInvalidModel.claude.reason).toContain("not available for the connected ChatGPT account")
+
+      const rValid = await readiness(fakeDeps(["custom-slug-1"]))
+      expect(rValid.claude.ready).toBe(true)
+      expect(rValid.claude.reason).toBe("")
+    })
+
+    it("readiness validates ChatGPT orchestrator model against account catalog without generic fallback", async () => {
+      const fakeDeps = (accountModels: string[], keySet = true) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          provider: "chatgpt" as const,
+          model: "unavailable-slug",
+          specialistProvider: "claude" as const,
+        }),
+        keySet: () => keySet,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      const rNoKey = await readiness(fakeDeps(["other"], false))
+      expect(rNoKey.model.ready).toBe(false)
+      expect(rNoKey.model.reason).toBe("Connect your ChatGPT account.")
+
+      const rBadModel = await readiness(fakeDeps(["other"]))
+      expect(rBadModel.model.ready).toBe(false)
+      expect(rBadModel.model.reason).toContain("not available for the connected ChatGPT account")
+
+      const rOk = await readiness(fakeDeps(["unavailable-slug"]))
+      expect(rOk.model.ready).toBe(true)
     })
   })
 })

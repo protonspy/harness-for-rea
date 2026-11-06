@@ -54,8 +54,40 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
     {
       name: "specialist-model",
       title: "Name the specialist's model on its provider",
-      args: "<id>",
-      run: async (model) => {
+      args: "[id]",
+      run: async (arg) => {
+        let model = arg?.trim() ?? ""
+        if (!model) {
+          if (sp === "chatgpt") {
+            const chatgptModels = await app.attempt(() => api.listChatGPTModels())
+            if (!chatgptModels || chatgptModels.length === 0) {
+              return app.toast("No models available for the connected ChatGPT account.", "info")
+            }
+            const id = await app.dialog<string>((done) => (
+              <SelectDialog
+                title={`Specialist models of ${PROVIDERS[sp].label}`}
+                items={chatgptModels.map((m) => ({ id: m.slug, label: `${m.displayName} (${m.slug})` }))}
+                initial={settings?.specialistModel}
+                done={done}
+              />
+            ))
+            if (!id) return
+            model = id
+          } else if (sp !== "claude") {
+            const models = await app.attempt(() => api.listModels(sp))
+            if (!models) return app.toast("No model list here: name the model with /specialist-model <id>.", "info")
+            const id = await app.dialog<string>((done) => (
+              <SelectDialog
+                title={`Specialist models of ${PROVIDERS[sp].label}`}
+                items={models.map((m) => ({ id: m, label: m }))}
+                initial={settings?.specialistModel}
+                done={done}
+              />
+            ))
+            if (!id) return
+            model = id
+          }
+        }
         await app.attempt(() => api.saveSettings({ specialistModel: model.trim() }), `Specialist's model: ${model.trim()}.`)
         refresh()
       },
@@ -66,6 +98,7 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
       args: "<key>",
       run: async (key) => {
         if (sp === "claude") return app.toast("Claude Code signs in with /login; it takes no key.", "info")
+        if (sp === "chatgpt") return app.toast("ChatGPT uses OAuth token sharing. Use 'chatgpt-login' to connect your account.", "error")
         await app.attempt(() => api.saveKey(key.trim(), sp), "Key saved in the OS keychain.")
         refresh()
       },
@@ -95,13 +128,35 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
   const pickModel = async (arg: string) => {
     let model = arg.trim()
     if (!model) {
-      const models = await app.attempt(() => api.listModels())
-      if (!models) return app.toast("No model list here: name the model with /model <id>; the setup checks it with a test request.", "info")
-      const id = await app.dialog<string>((done) => (
-        <SelectDialog title={`Models of ${PROVIDERS[provider].label}`} items={models.map((m) => ({ id: m, label: m }))} initial={settings?.model} done={done} />
-      ))
-      if (!id) return
-      model = id
+      if (provider === "chatgpt") {
+        const chatgptModels = await app.attempt(() => api.listChatGPTModels())
+        if (!chatgptModels || chatgptModels.length === 0) {
+          return app.toast("No models available for the connected ChatGPT account.", "info")
+        }
+        const id = await app.dialog<string>((done) => (
+          <SelectDialog
+            title={`Models of ${PROVIDERS[provider].label}`}
+            items={chatgptModels.map((m) => ({ id: m.slug, label: `${m.displayName} (${m.slug})` }))}
+            initial={settings?.model}
+            done={done}
+          />
+        ))
+        if (!id) return
+        model = id
+      } else {
+        const models = await app.attempt(() => api.listModels(provider))
+        if (!models) return app.toast("No model list here: name the model with /model <id>; the setup checks it with a test request.", "info")
+        const id = await app.dialog<string>((done) => (
+          <SelectDialog
+            title={`Models of ${PROVIDERS[provider].label}`}
+            items={models.map((m) => ({ id: m, label: m }))}
+            initial={settings?.model}
+            done={done}
+          />
+        ))
+        if (!id) return
+        model = id
+      }
     }
     await app.attempt(() => api.saveSettings({ model }), `Model: ${model}.`)
     refresh()
@@ -181,6 +236,26 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       name: "chatgpt-cancel",
       title: "Cancel ChatGPT authorization",
       run: () => void app.attempt(() => api.cancelChatGPTAuth(), "ChatGPT authorization cancelled."),
+    },
+    {
+      name: "chatgpt-status",
+      title: "Show current ChatGPT authentication status",
+      run: async () => {
+        const s = await app.attempt(() => api.chatGPTAuthStatus())
+        if (!s) return
+        app.toast(s.connected ? `Connected: ${s.accountEmail || "ChatGPT account"} (${s.planType || "plan"})` : "Not connected to ChatGPT.", "info")
+      },
+    },
+    {
+      name: "chatgpt-models",
+      title: "List available models for the connected ChatGPT account",
+      run: async () => {
+        const models = await app.attempt(() => api.listChatGPTModels())
+        if (!models || models.length === 0) {
+          return app.toast("No models available for the connected ChatGPT account.", "info")
+        }
+        app.toast(`Available models: ${models.map((m) => m.displayName).join(", ")}`, "info")
+      },
     },
     {
       name: "chatgpt-logout",

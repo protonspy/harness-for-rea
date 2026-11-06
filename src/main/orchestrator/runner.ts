@@ -179,7 +179,11 @@ export class TaskRunner {
     if (!dir) throw new Error(`${sourceRoot || "The source"} is not a folder.`)
     const run = this.runWith(project)
     const apiKey = keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const { log } = this.deps
     const task = log.createTask({ request: input.request, sourceRoot, model: run.model, projectId: project?.id ?? null })
     const auto = input.auto === true
@@ -218,7 +222,11 @@ export class TaskRunner {
     const project = task.projectId && this.deps.projects ? this.deps.projects.get(task.projectId) : null
     const run = this.runWith(project)
     const apiKey = key ?? keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const abort = new AbortController()
     // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
     const baseUrl = baseUrlFor(run.provider, settings)

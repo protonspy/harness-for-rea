@@ -25,6 +25,7 @@ import type { IntegrationGate } from "./integrations/gate"
 import type { IntegrationRegistry } from "./integrations/registry"
 import { mcpListing, type OfferedIntegration, type TaskIntegrations } from "./integrations/task"
 import { baseUrlFor, needsKey } from "./readiness"
+import { listChatGPTModels } from "./orchestrator/models"
 import {
   agentRunArgs,
   claudeArgs,
@@ -251,6 +252,7 @@ export interface DelegationDeps {
   integrations?: { gate: IntegrationGate; registry: IntegrationRegistry; serverScript: string }
   /** a provider's key, for the specialist on a provider (specs/specialist-providers R1.2) */
   apiKey?(provider: ProviderId): string | null
+  listChatGPTModels?(): Promise<Array<{ slug: string } | string>>
   /** how the DeepAgents specialist reaches its container: `docker` for its tools, and its MCP servers' start; Docker's own by default */
   agent?: { exec?: ExecBuffer; startServer?: StartServer }
 }
@@ -408,9 +410,24 @@ export async function delegate(
   if (blocked) refuse(blocked)
   // The specialist on a provider runs on its key; without one nothing is started (specs/specialist-providers R1.2).
   const sp = settings.specialistProvider
-  if (sp !== "claude" && needsKey(sp) && !deps.apiKey?.(sp)) refuse(`Set your ${PROVIDERS[sp].label} API key: the specialist runs on it.`)
+  if (sp !== "claude" && needsKey(sp) && !deps.apiKey?.(sp)) {
+    if (sp === "chatgpt") refuse("Connect your ChatGPT account: the specialist runs on it.")
+    refuse(`Set your ${PROVIDERS[sp].label} API key: the specialist runs on it.`)
+  }
   if (sp !== "claude" && !settings.specialistModel.trim()) refuse(`Choose the specialist's model on ${PROVIDERS[sp].label} in Settings.`)
   if (sp !== "claude" && !baseUrlFor(sp, settings)) refuse(`Set the base URL of your ${PROVIDERS[sp].label} in Settings: the specialist runs on it.`)
+  if (sp === "chatgpt") {
+    let available: string[] = []
+    try {
+      const models = deps.listChatGPTModels ? await deps.listChatGPTModels() : await listChatGPTModels({ apiKey: deps.apiKey?.("chatgpt") ?? null })
+      available = models.map((m) => (typeof m === "string" ? m : m.slug))
+    } catch {
+      available = []
+    }
+    if (!available.includes(settings.specialistModel)) {
+      refuse(`The model "${settings.specialistModel}" is not available for the connected ChatGPT account.`)
+    }
+  }
 
   let ws: Workspace
   let held: { box: Box; release: () => Promise<void> } | null = null

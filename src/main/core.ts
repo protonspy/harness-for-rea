@@ -4,7 +4,7 @@ import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
 import { PROVIDERS } from "@shared/providers"
-import type { ProjectRow, Push } from "@shared/types"
+import type { ChatGPTModelOption, ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, refreshKeyAvailability, saveKey, useKeyStore, type KeyStore } from "./credentials"
@@ -20,10 +20,10 @@ import { IntegrationRegistry } from "./integrations/registry"
 import { integrationStatus, saveIntegrations } from "./integrations/settings"
 import { APP_LABEL, LockHeld, Locks, projectLockName, type AppName, type Holder } from "./lock"
 import { ProcessRegistry } from "./processes"
-import { listModels, probeModel } from "./orchestrator/models"
+import { listChatGPTModels, listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
-import { blocking, readiness } from "./readiness"
+import { baseUrlFor, blocking, readiness } from "./readiness"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { SandboxRegistry, SpecialistBoxes } from "./sandbox/specialistbox"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
@@ -286,6 +286,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
 
   setChatGPTAuthService(chatgpt)
 
+  let chatgptModelsCache: { accountKey: string; models: ChatGPTModelOption[]; timestamp: number } | null = null
+
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
     readiness(
@@ -312,8 +314,30 @@ export async function startCore(host: CoreHost): Promise<Core> {
       saveSettings({ setupCompleted: true })
       return { ...r, completed: true }
     },
-    saveSettings: async ({ integrations: wanted, ...patch }) =>
-      saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) }),
+    saveSettings: async ({ integrations: wanted, ...patch }) => {
+      const current = getSettings()
+      const targetProvider = patch.provider ?? current.provider
+      const targetSpecialistProvider = patch.specialistProvider ?? current.specialistProvider
+      if (patch.model !== undefined && targetProvider === "chatgpt") {
+        const m = patch.model.trim()
+        if (m) {
+          const available = await handlers.listChatGPTModels()
+          if (!available.some((opt) => opt.slug === m)) {
+            throw new Error(`The model "${m}" is not available for the connected ChatGPT account.`)
+          }
+        }
+      }
+      if (patch.specialistModel !== undefined && targetSpecialistProvider === "chatgpt") {
+        const sm = patch.specialistModel.trim()
+        if (sm) {
+          const available = await handlers.listChatGPTModels()
+          if (!available.some((opt) => opt.slug === sm)) {
+            throw new Error(`The model "${sm}" is not available for the connected ChatGPT account.`)
+          }
+        }
+      }
+      return saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) })
+    },
     keyStatus: async (provider) => {
       await refreshKeyAvailability()
       return keyStatus(provider)
@@ -329,15 +353,38 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     clearKey: async (provider) => {
       if (provider === "chatgpt") {
+        chatgptModelsCache = null
+        const current = getSettings()
+        if (current.specialistProvider === "chatgpt") {
+          saveSettings({ specialistModel: "" })
+        }
+        if (current.provider === "chatgpt") {
+          saveSettings({ model: "" })
+        }
         await chatgpt.signOut()
       }
       const s = await clearKey(provider)
       setSetting("keys.rev", Date.now())
       return s
     },
-    listModels: () => {
-      const { provider, baseUrl } = getSettings()
-      return listModels({ provider, baseUrl, apiKey: readKey(provider) })
+    listModels: (provider) => {
+      const settings = getSettings()
+      const target = provider ?? settings.provider
+      const baseUrl = baseUrlFor(target, settings)
+      return listModels({ provider: target, baseUrl, apiKey: readKey(target) })
+    },
+    listChatGPTModels: async () => {
+      const st = await chatgpt.status()
+      if (!st.connected) {
+        throw new Error("Connect your ChatGPT account to list available models.")
+      }
+      const accountKey = st.accountEmail ?? "connected"
+      if (chatgptModelsCache && chatgptModelsCache.accountKey === accountKey && Date.now() - chatgptModelsCache.timestamp < 60_000) {
+        return chatgptModelsCache.models
+      }
+      const models = await listChatGPTModels({ apiKey: readKey("chatgpt") })
+      chatgptModelsCache = { accountKey, models, timestamp: Date.now() }
+      return models
     },
     sandboxStatus: () => sandbox.status(),
     buildSandbox: () => sandbox.build().status,
@@ -361,20 +408,30 @@ export async function startCore(host: CoreHost): Promise<Core> {
     startHopperSignIn: (email) => hopper.start(email),
     hopperSignInStatus: () => hopper.status(),
     cancelHopperSignIn: () => hopper.cancel(),
-    startChatGPTAuth: () =>
-      chatgpt.startSignIn().then((s) => ({
+    startChatGPTAuth: () => {
+      chatgptModelsCache = null
+      return chatgpt.startSignIn().then((s) => ({
         connected: true,
         accountEmail: s.accountEmail,
         planType: s.planType,
         expiresAt: s.expiresAt,
         hasTokenSharingScope: true,
-      })),
+      }))
+    },
     chatGPTAuthStatus: () => chatgpt.status(),
     cancelChatGPTAuth: async () => {
       chatgpt.cancelSignIn()
       return chatgpt.status()
     },
     chatGPTLogout: async () => {
+      chatgptModelsCache = null
+      const current = getSettings()
+      if (current.specialistProvider === "chatgpt") {
+        saveSettings({ specialistModel: "" })
+      }
+      if (current.provider === "chatgpt") {
+        saveSettings({ model: "" })
+      }
       const res = await chatgpt.signOut()
       const st = await chatgpt.status()
       return { ...st, warning: res.warning }

@@ -81,8 +81,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     baseUrl: "https://api.openai.com/v1",
     editableBaseUrl: false,
     keyRequired: true,
-    defaultModel: "gpt-4o",
-    models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    defaultModel: "",
+    models: [],
     keyPlaceholder: "OAuth session token",
     signupUrl: "https://chatgpt.com",
     offer: "Use your ChatGPT Plus or Pro plan via OpenAI token sharing.",
@@ -147,6 +147,10 @@ export interface ModelGroup {
   out: a task needs answers now.
 */
 export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[] {
+  if (provider === "chatgpt") {
+    const unique = [...new Set(listed)]
+    return unique.length ? [{ label: "Models", models: unique }] : []
+  }
   const recommended = [...PROVIDERS[provider].models]
   const rest = [...new Set(listed)].filter((m) => !recommended.includes(m) && !m.endsWith(":batch"))
   if (provider !== "openrouter")
