@@ -29,6 +29,7 @@ export class CredentialError extends Error {
 let store: KeyStore | null = null
 let encryptionAvailable = false
 let pendingAvailability: Promise<boolean> | null = null
+let probeGeneration = 0
 const cached = new Map<ProviderId, string>()
 const listeners = new Set<(key: string) => void>()
 
@@ -41,63 +42,53 @@ export async function refreshKeyAvailability(): Promise<boolean> {
   if (pendingAvailability) return pendingAvailability
 
   const currentStore = store
+  const gen = ++probeGeneration
   let probe: boolean | Promise<boolean>
   try {
     probe = currentStore.available()
   } catch {
-    if (store === currentStore) encryptionAvailable = false
+    if (store === currentStore && gen === probeGeneration) {
+      encryptionAvailable = false
+    }
     return false
   }
 
   if (typeof probe === "boolean") {
-    encryptionAvailable = probe
+    if (store === currentStore && gen === probeGeneration) {
+      encryptionAvailable = probe
+    }
     return probe
   }
 
-  pendingAvailability = Promise.resolve(probe)
+  const p = Promise.resolve(probe)
     .then((result) => {
-      if (store === currentStore) {
+      if (store === currentStore && gen === probeGeneration) {
         encryptionAvailable = Boolean(result)
       }
-      return encryptionAvailable
+      return Boolean(result)
     })
     .catch(() => {
-      if (store === currentStore) {
+      if (store === currentStore && gen === probeGeneration) {
         encryptionAvailable = false
       }
       return false
     })
     .finally(() => {
-      pendingAvailability = null
+      if (pendingAvailability === p) {
+        pendingAvailability = null
+      }
     })
 
-  return pendingAvailability
+  pendingAvailability = p
+  return p
 }
 
 /** The host's key store, set once at start before `initKey`. */
 export function useKeyStore(s: KeyStore) {
   store = s
   pendingAvailability = null
-  let probe: boolean | Promise<boolean>
-  try {
-    probe = s.available()
-  } catch {
-    encryptionAvailable = false
-    return
-  }
-
-  if (typeof probe === "boolean") {
-    encryptionAvailable = probe
-  } else {
-    encryptionAvailable = false
-    void Promise.resolve(probe)
-      .then((v) => {
-        if (store === s) encryptionAvailable = Boolean(v)
-      })
-      .catch(() => {
-        if (store === s) encryptionAvailable = false
-      })
-  }
+  probeGeneration++
+  encryptionAvailable = false
 }
 
 function keys(): KeyStore {

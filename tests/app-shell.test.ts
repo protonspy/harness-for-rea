@@ -387,4 +387,133 @@ describe("credentials (R3.1–R3.3)", () => {
     await refreshKeyAvailability()
     expect(keyStatus().encryption).toBe(false)
   })
+
+  it("shares concurrent in-flight availability probes without redundant available() calls", async () => {
+    let callCount = 0
+    let resolveProbe!: (v: boolean) => void
+    const asyncStore: KeyStore = {
+      available: () => {
+        callCount++
+        return new Promise((r) => {
+          resolveProbe = r
+        })
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+
+    useKeyStore(asyncStore)
+    expect(callCount).toBe(0)
+
+    const probe1 = refreshKeyAvailability()
+    const probe2 = refreshKeyAvailability()
+    const probe3 = refreshKeyAvailability()
+    expect(callCount).toBe(1)
+
+    resolveProbe(true)
+    const [r1, r2, r3] = await Promise.all([probe1, probe2, probe3])
+    expect(r1).toBe(true)
+    expect(r2).toBe(true)
+    expect(r3).toBe(true)
+    expect(callCount).toBe(1)
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("prevents out-of-order probe resolutions from overwriting newer availability state", async () => {
+    let resolveProbeA!: (v: boolean) => void
+    let rejectProbeA!: (err: unknown) => void
+
+    const storeA: KeyStore = {
+      available: () =>
+        new Promise((resolve, reject) => {
+          resolveProbeA = resolve
+          rejectProbeA = reject
+        }),
+      read: async () => null,
+      write: async () => {},
+    }
+
+    // Start probe A on storeA
+    useKeyStore(storeA)
+    const pendingA = refreshKeyAvailability()
+
+    // Store switch or new cycle creates generation 2 with storeB
+    const storeB: KeyStore = {
+      available: () => Promise.resolve(true),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeB)
+    const resB = await refreshKeyAvailability()
+    expect(resB).toBe(true)
+    expect(keyStatus().encryption).toBe(true)
+
+    // Probe A finishes later with false: it must NOT overwrite storeB's newer status
+    resolveProbeA(false)
+    await pendingA
+    expect(keyStatus().encryption).toBe(true)
+
+    // Similarly, obsolete probe rejection must not flip newer status or throw
+    const storeC: KeyStore = {
+      available: () =>
+        new Promise((_, reject) => {
+          rejectProbeA = reject
+        }),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeC)
+    const pendingC = refreshKeyAvailability()
+
+    useKeyStore(storeB)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    rejectProbeA(new Error("delayed probe failure"))
+    await pendingC.catch(() => {})
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("ensures useKeyStore does not invoke available() and invalidates older generation on re-install", async () => {
+    let callCount = 0
+    let resolveProbe1!: (v: boolean) => void
+
+    const store: KeyStore = {
+      available: () => {
+        callCount++
+        if (callCount === 1) {
+          return new Promise((r) => {
+            resolveProbe1 = r
+          })
+        }
+        return Promise.resolve(true)
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+
+    // Installing the store does not trigger probing
+    useKeyStore(store)
+    expect(callCount).toBe(0)
+    expect(keyStatus().encryption).toBe(false)
+
+    // Probe 1 is started
+    const probe1 = refreshKeyAvailability()
+    expect(callCount).toBe(1)
+
+    // Re-installing the store advances generation and resets state
+    useKeyStore(store)
+    expect(keyStatus().encryption).toBe(false)
+
+    // Probe 2 runs under new generation and resolves to true
+    const res2 = await refreshKeyAvailability()
+    expect(res2).toBe(true)
+    expect(callCount).toBe(2)
+    expect(keyStatus().encryption).toBe(true)
+
+    // Older Probe 1 finishes late with false: must NOT overwrite newer generation's true
+    resolveProbe1(false)
+    await probe1
+    expect(keyStatus().encryption).toBe(true)
+  })
 })
