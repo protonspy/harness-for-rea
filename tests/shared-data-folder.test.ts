@@ -335,6 +335,81 @@ describe("keys (R5.1, R5.2)", () => {
     expect(retrieved?.includes("🚀")).toBe(true)
   })
 
+  it("retries reading across generation rotation when chunks are pruned by a concurrent writer (E1)", async () => {
+    const entries = new Map<string, number[]>()
+    let pauseReadAfterRoot = false
+    const signal = { resume: null as (() => void) | null }
+
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => {
+        if (name === "chatgpt.key" && pauseReadAfterRoot) {
+          pauseReadAfterRoot = false
+          await new Promise<void>((r) => {
+            signal.resume = r
+          })
+        }
+        return entries.get(`${service}/${name}`) ?? null
+      },
+      setSecret: async (b) => void entries.set(`${service}/${name}`, [...b]),
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const storeA = keyringStore("hfr-test", make)
+    const storeB = keyringStore("hfr-test", make)
+
+    const g0Data = "A".repeat(4500)
+    await storeA.write("chatgpt.key", g0Data)
+
+    pauseReadAfterRoot = true
+    const readPromise = storeA.read("chatgpt.key")
+
+    while (!signal.resume) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+
+    const g1Data = "B".repeat(4500)
+    await storeB.write("chatgpt.key", g1Data)
+
+    signal.resume!()
+    const result = await readPromise
+    expect(result).toBe(g1Data)
+  })
+
+  it("coordinates concurrent writers and prevents orphaned generation chunks on logout (E2)", async () => {
+    const entries = new Map<string, number[]>()
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        await new Promise((r) => setTimeout(r, 2))
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => {
+        await new Promise((r) => setTimeout(r, 1))
+        return entries.delete(`${service}/${name}`)
+      },
+    })
+
+    const store1 = keyringStore("hfr-test", make)
+    const store2 = keyringStore("hfr-test", make)
+
+    const initial4500A = "A".repeat(4500)
+    await store1.write("chatgpt.key", initial4500A)
+    expect(await store1.read("chatgpt.key")).toBe(initial4500A)
+
+    const next4500B = "B".repeat(4500)
+    const next4500C = "C".repeat(4500)
+    await Promise.all([store1.write("chatgpt.key", next4500B), store2.write("chatgpt.key", next4500C)])
+
+    const finalVal = await store1.read("chatgpt.key")
+    expect(finalVal === next4500B || finalVal === next4500C).toBe(true)
+
+    await store1.write("chatgpt.key", null)
+
+    const remaining = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remaining).toEqual([])
+    expect(await store1.read("chatgpt.key")).toBeNull()
+  })
+
   it("moves the keys of a former store into the shared one, keeping one already there, and removes them", async () => {
     const former = memory({ "openrouter.key": "sk-old-openrouter", "deepseek.key": "sk-old-deepseek" })
     const shared = memory({ "deepseek.key": "sk-shared-deepseek" })
