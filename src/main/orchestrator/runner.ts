@@ -273,6 +273,7 @@ export class TaskRunner {
       refusal: (stepId, message) => this.refusal(task.id, stepId, message),
       projectId: task.projectId,
       specialistEffort: run.specialistEffort,
+      specialistProtocol: run.specialistProtocol,
     }
     ctx.auto = auto
     const integ = this.deps.integrations

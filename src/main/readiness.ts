@@ -77,12 +77,23 @@ export function baseUrlFor(provider: ProviderId, settings: Pick<Settings, "provi
 export function protocolFor(
   provider: ProviderId,
   role: "orchestrator" | "specialist",
-  settings: Pick<Settings, "provider" | "specialistProvider"> & Partial<Pick<Settings, "protocols" | "orchestratorProtocol" | "specialistProtocol">>,
+  settings: Partial<
+    Pick<
+      Settings,
+      "provider" | "specialistProvider" | "protocols" | "orchestratorProtocol" | "specialistProtocol" | "orchestratorProtocols" | "specialistProtocols"
+    >
+  >,
 ): ModelProtocol {
   if (provider === "chatgpt") return "responses"
+  if (role === "orchestrator") {
+    if (settings.orchestratorProtocols?.[provider]) return settings.orchestratorProtocols[provider]!
+    if (settings.orchestratorProtocol && (provider === settings.provider || !settings.provider)) return settings.orchestratorProtocol
+  }
+  if (role === "specialist") {
+    if (settings.specialistProtocols?.[provider]) return settings.specialistProtocols[provider]!
+    if (settings.specialistProtocol && (provider === settings.specialistProvider || !settings.specialistProvider)) return settings.specialistProtocol
+  }
   if (settings.protocols?.[provider]) return settings.protocols[provider]!
-  if (role === "specialist" && settings.specialistProtocol) return settings.specialistProtocol
-  if (role === "orchestrator" && settings.orchestratorProtocol) return settings.orchestratorProtocol
   return PROVIDERS[provider]?.defaultProtocol ?? "chat_completions"
 }
 

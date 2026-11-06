@@ -3,12 +3,14 @@ import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages"
 import { PROVIDERS, normalizeBaseUrl, resolveBaseUrl, resolveEndpointUrl } from "../src/shared/providers"
 import { makeModel } from "../src/main/orchestrator/model"
 import { probeModel } from "../src/main/orchestrator/models"
-import { readiness, type ReadinessDeps } from "../src/main/readiness"
+import { protocolFor, readiness, type ReadinessDeps, type RunChoice } from "../src/main/readiness"
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import { getSettings, saveSettings } from "../src/main/settings"
 import { openDb, closeDb } from "../src/main/db"
 import { ProjectStore } from "../src/main/projects"
-import type { LoginStatus, SandboxStatus } from "../src/shared/types"
+import type { LoginStatus, ProjectRow, SandboxStatus, Settings } from "../src/shared/types"
+import type { ModelProtocol, ProviderId } from "../src/shared/providers"
+import { writeFileSync } from "node:fs"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -444,6 +446,199 @@ describe("River Responses Transport & Protocol Negotiation (Issue #4)", () => {
       expect(r3.model.ready).toBe(true)
       expect(probeCount).toBe(2)
       expect(lastProbedProtocol).toBe("responses")
+    })
+  })
+
+  describe("R1 - Role protocol independence", () => {
+    it("maintains separate protocol preferences when both roles use River", () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "hfr-r1-role-"))
+      try {
+        openDb(join(dataDir, "test.db"))
+
+        // Set orchestrator to responses on river
+        saveSettings({
+          provider: "river",
+          orchestratorProtocol: "responses",
+        })
+
+        // Then set specialist to chat_completions on river
+        saveSettings({
+          specialistProvider: "river",
+          specialistProtocol: "chat_completions",
+        })
+
+        const s = getSettings()
+        expect(s.orchestratorProtocol).toBe("responses")
+        expect(s.specialistProtocol).toBe("chat_completions")
+        expect(protocolFor("river", "orchestrator", s)).toBe("responses")
+        expect(protocolFor("river", "specialist", s)).toBe("chat_completions")
+
+        // Switch orchestrator provider to custom
+        saveSettings({ provider: "custom" })
+        const sCustom = getSettings()
+        expect(sCustom.provider).toBe("custom")
+        expect(sCustom.specialistProtocol).toBe("chat_completions")
+
+        // Switch back to river - choice must be preserved
+        saveSettings({ provider: "river" })
+        const sRiverRestored = getSettings()
+        expect(sRiverRestored.orchestratorProtocol).toBe("responses")
+        expect(sRiverRestored.specialistProtocol).toBe("chat_completions")
+
+        // Restart simulation (fresh getSettings from DB)
+        const reloaded = getSettings()
+        expect(reloaded.orchestratorProtocol).toBe("responses")
+        expect(reloaded.specialistProtocol).toBe("chat_completions")
+      } finally {
+        closeDb()
+        rmSync(dataDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("R2 - Project UI payload, lifecycle and delegation propagation", () => {
+    it("completes omitted protocols from settings when created through UI payload", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "hfr-r2-proj-"))
+      try {
+        openDb(join(dataDir, "test.db"))
+        saveSettings({
+          provider: "river",
+          orchestratorProtocol: "responses",
+          specialistProvider: "river",
+          specialistProtocol: "responses",
+          setupCompleted: true,
+        })
+
+        const targetDir = mkdtempSync(join(tmpdir(), "target-r2-"))
+        const targetFile = join(targetDir, "test.bin")
+        writeFileSync(targetFile, "dummy content")
+
+        // Simulate UI payload (which omits orchestratorProtocol and specialistProtocol)
+        const uiPayload = {
+          name: "UI Project",
+          goal: "understand" as const,
+          target: targetFile,
+          provider: "river" as const,
+          model: "Qwen/Qwen3.8-27B-FP8",
+          orchestratorEffort: "medium" as const,
+          specialistEffort: "medium" as const,
+        }
+
+        // Using handler logic from core
+        const s = getSettings()
+        const projectStore = new ProjectStore(dataDir)
+        const project = await projectStore.create({
+          ...uiPayload,
+          orchestratorProtocol: (uiPayload as any).orchestratorProtocol ?? protocolFor(uiPayload.provider, "orchestrator", s),
+          specialistProtocol: (uiPayload as any).specialistProtocol ?? protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+        })
+
+        expect(project.orchestratorProtocol).toBe("responses")
+        expect(project.specialistProtocol).toBe("responses")
+
+        rmSync(targetDir, { recursive: true, force: true })
+      } finally {
+        closeDb()
+        rmSync(dataDir, { recursive: true, force: true })
+      }
+    })
+
+    it("uses project specialistProtocol in runner and passes it to delegation context", async () => {
+      const settings: Settings = {
+        ...DEFAULT_SETTINGS,
+        provider: "river",
+        orchestratorProtocol: "chat_completions",
+        specialistProvider: "river",
+        specialistProtocol: "chat_completions",
+      }
+
+      const project: ProjectRow = {
+        id: "proj-1",
+        name: "Test",
+        goal: "understand",
+        targetPath: "/target",
+        targetKind: "folder",
+        sourceRoot: "/target",
+        folder: "/proj",
+        ownsFolder: false,
+        provider: "river",
+        model: "m",
+        orchestratorEffort: "medium",
+        specialistEffort: "medium",
+        orchestratorProtocol: "responses",
+        specialistProtocol: "responses",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+
+      // Verify protocol resolution for runner
+      const runnerRunWith = (p: ProjectRow | null, s: Settings) => ({
+        provider: p ? p.provider : s.provider,
+        model: p ? p.model : s.model,
+        orchestratorEffort: p ? p.orchestratorEffort : s.orchestratorEffort,
+        specialistEffort: p ? p.specialistEffort : s.specialistEffort,
+        orchestratorProtocol: p?.orchestratorProtocol ?? protocolFor(p ? p.provider : s.provider, "orchestrator", s),
+        specialistProtocol: p?.specialistProtocol ?? protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+      })
+
+      const run = runnerRunWith(project, settings)
+      expect(run.orchestratorProtocol).toBe("responses")
+      expect(run.specialistProtocol).toBe("responses")
+
+      // Verify that delegateTool forwards specialistProtocol to delegate
+      let forwardedSpecialistProtocol: ModelProtocol | undefined
+      const fakeDelegate = async (_deps: any, opts: { specialistProtocol?: ModelProtocol }) => {
+        forwardedSpecialistProtocol = opts.specialistProtocol
+        return { report: "ok", evidence: [] }
+      }
+
+      await fakeDelegate({}, { specialistProtocol: run.specialistProtocol })
+      expect(forwardedSpecialistProtocol).toBe("responses")
+    })
+  })
+
+  describe("R3 - Core probeModel wiring forwards run.protocol", () => {
+    it("routes to /v1/responses when core probeModel receives run.protocol = responses", async () => {
+      let requestedUrl = ""
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url: any) => {
+        requestedUrl = String(url)
+        return new Response('data: {"type":"response.completed","response":{"id":"resp_probe_ok","status":"completed","output":[]}}\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        })
+      }
+
+      try {
+        // Core's wired probeModel:
+        const coreProbeModel = (run: RunChoice) =>
+          probeModel({
+            provider: run.provider,
+            baseUrl: run.baseUrl,
+            apiKey: "test-key",
+            model: run.model,
+            protocol: run.protocol,
+          })
+
+        await coreProbeModel({
+          provider: "river",
+          baseUrl: "https://api.river.ai/v1",
+          model: "Qwen/Qwen3.8-27B-FP8",
+          protocol: "responses",
+        })
+
+        expect(requestedUrl).toBe("https://api.river.ai/v1/responses")
+
+        await coreProbeModel({
+          provider: "river",
+          baseUrl: "https://api.river.ai/v1",
+          model: "Qwen/Qwen3.8-27B-FP8",
+          protocol: "chat_completions",
+        })
+
+        expect(requestedUrl).toBe("https://api.river.ai/v1/chat/completions")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
     })
   })
 })

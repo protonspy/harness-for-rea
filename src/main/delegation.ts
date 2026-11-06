@@ -18,7 +18,7 @@ import { join } from "node:path"
 import { questionProblem, QuestionSchema, type Answer, type Origin, type Question } from "@shared/chat"
 import { parseEvidence, type ContextPackage, type Evidence } from "@shared/context"
 import { readContract, type Contract } from "@shared/contract"
-import { PROVIDERS, type ProviderId } from "@shared/providers"
+import { PROVIDERS, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { PatchView, Settings, SpecialistEffort, StepRow } from "@shared/types"
 import type { EventLog } from "./events/log"
 import type { IntegrationGate } from "./integrations/gate"
@@ -344,6 +344,7 @@ async function startAgent(
     box?: string
     integrations: string[]
     effort: SpecialistEffort
+    protocol?: ModelProtocol
     system: string
     events: { idleMs: number; signal?: AbortSignal; onEvent(e: StreamEvent): void }
   },
@@ -362,7 +363,7 @@ async function startAgent(
       apiKey: deps.apiKey?.(provider) ?? "",
       model: settings.specialistModel.trim(),
       effort: o.effort,
-      protocol: protocolFor(provider, "specialist", settings),
+      protocol: o.protocol ?? protocolFor(provider, "specialist", settings),
     },
     { ...o.events, systemPrompt: o.system },
   )
@@ -381,6 +382,7 @@ export async function delegate(
     sandbox?: { boxes: TaskSandboxes; id: string }
     /** the specialist's effort for this delegation, the project's; the Settings default when absent */
     specialistEffort?: SpecialistEffort
+    specialistProtocol?: ModelProtocol
     /** the orchestrator's tool call that started this delegation, which the timeline nests it under (specs/chat-timeline R1.1) */
     callId?: string
     /** the task's project, whose unknowns ledger this delegation reads and feeds (specs/analysis-contract R2) */
@@ -513,7 +515,16 @@ export async function delegate(
             deps.launcher.launch(ws, o.pkg.mode, { specialistEffort: effort, ...(offered.length ? { integrations: integrationIds } : {}) }, held?.box.name),
             { ...events, onRaw: (line) => log.raw(o.taskId, "specialist", line, step.id) },
           )
-        : await startAgent(deps, settings, { ws, mode: o.pkg.mode, box: held?.box.name, integrations: integrationIds, effort, system, events })
+        : await startAgent(deps, settings, {
+            ws,
+            mode: o.pkg.mode,
+            box: held?.box.name,
+            integrations: integrationIds,
+            effort,
+            protocol: o.specialistProtocol,
+            system,
+            events,
+          })
     const task = o.integrations?.task
     const calls = limited(CALLS_IN_FLIGHT)
     let stopAsking = () => undefined as void

@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs"
 import { copyFile } from "node:fs/promises"
 import { basename, isAbsolute, join, relative } from "node:path"
 import { GOALS, type Goal, type OrchestratorEffort, type ProjectRow, type Push, type SpecialistEffort, type TargetKind } from "@shared/types"
-import type { ModelProtocol } from "@shared/providers"
+import { PROVIDERS, type ModelProtocol } from "@shared/providers"
 import type { ProviderId } from "@shared/providers"
 import { getDb } from "./db"
 import type { EventLog } from "./events/log"
@@ -126,8 +126,8 @@ export class ProjectStore {
           p.model,
           p.orchestratorEffort,
           p.specialistEffort,
-          p.orchestratorProtocol ?? "chat_completions",
-          p.specialistProtocol ?? "chat_completions",
+          p.orchestratorProtocol ?? PROVIDERS[p.provider]?.defaultProtocol ?? "chat_completions",
+          p.specialistProtocol ?? PROVIDERS[p.provider]?.defaultProtocol ?? "chat_completions",
           at,
           at,
         )
@@ -166,8 +166,8 @@ export class ProjectStore {
         patch.model ?? cur.model,
         patch.orchestratorEffort ?? cur.orchestratorEffort,
         patch.specialistEffort ?? cur.specialistEffort,
-        patch.orchestratorProtocol ?? cur.orchestratorProtocol ?? "chat_completions",
-        patch.specialistProtocol ?? cur.specialistProtocol ?? "chat_completions",
+        patch.orchestratorProtocol ?? cur.orchestratorProtocol ?? PROVIDERS[cur.provider]?.defaultProtocol ?? "chat_completions",
+        patch.specialistProtocol ?? cur.specialistProtocol ?? PROVIDERS[cur.provider]?.defaultProtocol ?? "chat_completions",
         this.now(),
         id,
       )
@@ -220,8 +220,8 @@ export class ProjectStore {
           defaults.model,
           defaults.orchestratorEffort,
           defaults.specialistEffort,
-          defaults.orchestratorProtocol ?? "chat_completions",
-          defaults.specialistProtocol ?? "chat_completions",
+          defaults.orchestratorProtocol ?? PROVIDERS[defaults.provider]?.defaultProtocol ?? "chat_completions",
+          defaults.specialistProtocol ?? PROVIDERS[defaults.provider]?.defaultProtocol ?? "chat_completions",
           at,
           this.now(),
         )

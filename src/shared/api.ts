@@ -74,6 +74,8 @@ const SettingsPatch = z
     specialistModel: z.union([z.literal(""), ModelName]),
     orchestratorProtocol: Protocol,
     specialistProtocol: Protocol,
+    orchestratorProtocols: z.record(Provider, Protocol.optional()),
+    specialistProtocols: z.record(Provider, Protocol.optional()),
     protocols: z.record(Provider, Protocol.optional()),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
     questionTimeoutMinutes: z.number().int().min(1).max(1440),

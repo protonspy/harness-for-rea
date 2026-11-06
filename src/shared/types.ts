@@ -227,6 +227,8 @@ export interface Settings {
   integrations: Record<string, IntegrationSettings>
   orchestratorProtocol?: ModelProtocol
   specialistProtocol?: ModelProtocol
+  orchestratorProtocols?: Partial<Record<ProviderId, ModelProtocol>>
+  specialistProtocols?: Partial<Record<ProviderId, ModelProtocol>>
   protocols?: Partial<Record<ProviderId, ModelProtocol>>
 }
 

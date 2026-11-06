@@ -5,6 +5,7 @@ import { questionProblem, QuestionSchema, type Answer, type Origin, type Questio
 import { ContextPackageSchema } from "@shared/context"
 import { toolName, type IntegrationInfo, type IntegrationTool } from "@shared/integrations"
 import type { SpecialistEffort } from "@shared/types"
+import type { ModelProtocol } from "@shared/providers"
 import { withoutContract, type Contract } from "@shared/contract"
 import { approvePatch, delegate, DelegationRefused, SafeguardRefusal, type DelegationDeps } from "../delegation"
 import { redactValue } from "../events/redact"
@@ -61,6 +62,7 @@ export interface ToolContext {
   projectId?: string | null
   /** the specialist's effort for this task's delegations, the project's (specs/projects R2.1) */
   specialistEffort?: SpecialistEffort
+  specialistProtocol?: ModelProtocol
   /** runs a shell command in the task's sandbox, where the orchestrator's code is (specs/vector-replay R2.1) */
   run?(command: string): Promise<{ output: string; exitCode: number | null; truncated?: boolean }>
   /** the task's MCP integrations: their approvals, calls and what a delegation offers (specs/mcp-integrations) */
@@ -196,6 +198,7 @@ export function delegateTool(ctx: ToolContext) {
           prepared,
           sandbox: sandbox && ctx.sandboxes ? { boxes: ctx.sandboxes, id: sandbox } : undefined,
           specialistEffort: ctx.specialistEffort,
+          specialistProtocol: ctx.specialistProtocol,
           callId: config?.toolCall?.id,
           projectId: ctx.projectId,
           ...(ctx.integrations ? { integrations: { task: ctx.integrations, targets } } : {}),

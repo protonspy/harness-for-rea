@@ -24,5 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   questionTimeoutMinutes: 10,
   setupCompleted: false,
   integrations: {},
+  orchestratorProtocols: { river: "chat_completions", chatgpt: "responses" },
+  specialistProtocols: { river: "chat_completions", chatgpt: "responses" },
   protocols: { river: "chat_completions", chatgpt: "responses" },
 }
