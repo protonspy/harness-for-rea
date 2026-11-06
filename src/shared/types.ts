@@ -309,3 +309,8 @@ export interface ChatGPTAuthStatus {
   error?: string
   warning?: string
 }
+
+export interface ChatGPTModelOption {
+  slug: string
+  displayName: string
+}

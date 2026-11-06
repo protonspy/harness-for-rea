@@ -67,14 +67,25 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
   if (sp !== "claude") {
     // On a provider the specialist needs its key, endpoint and model, and no Claude sign-in (specs/specialist-providers R1.3).
     const label = PROVIDERS[sp].label
-    const reason =
-      needsKey(sp) && !d.keySet(sp)
-        ? `Set your ${label} API key: the specialist runs on it.`
-        : !baseUrlFor(sp, settings)
-          ? `Set the base URL of your ${label} in Settings: the specialist runs on it.`
-          : !settings.specialistModel.trim()
-            ? `Choose the specialist's model on ${label}.`
-            : ""
+    let reason = ""
+    if (needsKey(sp) && !d.keySet(sp)) {
+      reason = sp === "chatgpt" ? "Connect your ChatGPT account: the specialist runs on it." : `Set your ${label} API key: the specialist runs on it.`
+    } else if (!baseUrlFor(sp, settings)) {
+      reason = `Set the base URL of your ${label} in Settings: the specialist runs on it.`
+    } else if (!settings.specialistModel.trim()) {
+      reason = `Choose the specialist's model on ${label}.`
+    } else if (sp === "chatgpt") {
+      try {
+        const listed = await d.listModels({ provider: "chatgpt", model: settings.specialistModel, baseUrl: baseUrlFor("chatgpt", settings) })
+        if (!listed.length) {
+          reason = "ChatGPT (Codex) listed no models for this account."
+        } else if (!listed.includes(settings.specialistModel)) {
+          reason = `The model "${settings.specialistModel}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`
+        }
+      } catch (e) {
+        reason = (e as Error).message
+      }
+    }
     claude = { ready: !reason, reason, provider: sp, model: settings.specialistModel }
   } else if (sandbox.ready) {
     const l = await d.login().catch((e: unknown): LoginStatus | null => {
@@ -88,18 +99,32 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
   const run: RunChoice = { provider, model: o.run?.model ?? settings.model, baseUrl: baseUrlFor(provider, settings) }
   const label = PROVIDERS[provider].label
   let model: Readiness["model"] = { ready: false, reason: "", provider, model: run.model }
-  if (needsKey(provider) && !d.keySet(provider)) model.reason = `Set your ${label} API key.`
-  else if (!run.baseUrl) model.reason = `Set the base URL of your ${label} in Settings.`
-  else if (!run.model.trim()) model.reason = `Choose a model from ${label}.`
-  else if (o.list === false) model = { ...model, ready: true }
-  else {
+  if (needsKey(provider) && !d.keySet(provider)) {
+    model.reason = provider === "chatgpt" ? "Connect your ChatGPT account." : `Set your ${label} API key.`
+  } else if (!run.baseUrl) {
+    model.reason = `Set the base URL of your ${label} in Settings.`
+  } else if (!run.model.trim()) {
+    model.reason = `Choose a model from ${label}.`
+  } else if (o.list === false && provider !== "chatgpt") {
+    model = { ...model, ready: true }
+  } else {
     try {
       const listed = await d.listModels(run)
-      model = listed.length ? { ...model, ready: true } : { ...model, reason: `${label} listed no models.` }
+      if (!listed.length) {
+        model = { ...model, ready: false, reason: `${label} listed no models.` }
+      } else if (provider === "chatgpt" && !listed.includes(run.model)) {
+        model = {
+          ...model,
+          ready: false,
+          reason: `The model "${run.model}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`,
+        }
+      } else {
+        model = { ...model, ready: true }
+      }
     } catch (e) {
       // A refused key is final; any other failure of the list — many OpenAI-compatible servers have none — is
       // settled by a one-token request to the chosen model (specs/onboarding R1.6).
-      if (refusedKey(e)) model.reason = (e as Error).message
+      if (refusedKey(e) || provider === "chatgpt") model.reason = (e as Error).message
       else {
         const key = JSON.stringify([run.provider, run.baseUrl, run.model, d.keyHint?.(run.provider) ?? ""])
         if ((probed.get(key) ?? 0) > Date.now()) model = { ...model, ready: true }

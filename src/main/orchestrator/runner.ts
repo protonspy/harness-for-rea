@@ -179,7 +179,11 @@ export class TaskRunner {
     if (!dir) throw new Error(`${sourceRoot || "The source"} is not a folder.`)
     const run = this.runWith(project)
     const apiKey = keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const { log } = this.deps
     const task = log.createTask({ request: input.request, sourceRoot, model: run.model, projectId: project?.id ?? null })
     const auto = input.auto === true
@@ -218,7 +222,11 @@ export class TaskRunner {
     const project = task.projectId && this.deps.projects ? this.deps.projects.get(task.projectId) : null
     const run = this.runWith(project)
     const apiKey = key ?? keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const abort = new AbortController()
     // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
     const baseUrl = baseUrlFor(run.provider, settings)
@@ -266,7 +274,19 @@ export class TaskRunner {
       })
     // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
     const ready = (this.disposing.get(task.id) ?? Promise.resolve())
-      .then(() => this.deps.workspace(task))
+      .then(async () => {
+        if (run.provider === "chatgpt") {
+          const modelToUse = task.model || run.model
+          if (this.deps.listChatGPTModels) {
+            const available = await this.deps.listChatGPTModels()
+            const match = available.some((opt) => (typeof opt === "string" ? opt === modelToUse : opt.slug === modelToUse))
+            if (!match) {
+              throw new Error(`The model "${modelToUse}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`)
+            }
+          }
+        }
+        return this.deps.workspace(task)
+      })
       .then(async (ws) => {
         // The integration tools the orchestrator has, and what a delegation can target, as Settings has them now (R5.1).
         const [own, targetable] = await Promise.all([ctx.integrations?.orchestratorTools() ?? [], ctx.integrations?.targetable() ?? []])

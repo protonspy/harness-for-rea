@@ -6,6 +6,7 @@ import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
   ChatGPTAuthStatus,
+  ChatGPTModelOption,
   KeyStatus,
   HopperSignIn,
   LoginStatus,
@@ -40,6 +41,8 @@ const ModelName = z
 
 const SettingsPatch = z
   .object({
+    expectedProvider: Provider.optional(),
+    expectedSpecialistProvider: z.enum(SPECIALIST_PROVIDERS).optional(),
     provider: Provider,
     // Empty clears it; otherwise an http(s) URL with no credentials in it.
     baseUrl: z
@@ -55,10 +58,13 @@ const SettingsPatch = z
           return false
         }
       }, "Enter a full http(s) URL"),
-    model: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
+    model: z.union([
+      z.literal(""),
+      z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
+    ]),
     timeoutMinutes: z.number().int().min(1).max(240),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
@@ -79,7 +85,8 @@ export const API_SCHEMAS = {
   keyStatus: z.tuple([Provider.optional()]),
   saveKey: z.tuple([z.string().trim().min(8).max(512), Provider.optional()]),
   clearKey: z.tuple([Provider.optional()]),
-  listModels: z.tuple([]),
+  listModels: z.tuple([Provider.optional()]),
+  listChatGPTModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
   readiness: z.tuple([]),
   completeSetup: z.tuple([]),
@@ -184,6 +191,7 @@ export interface ApiResults {
   saveKey: KeyStatus
   clearKey: KeyStatus
   listModels: string[]
+  listChatGPTModels: ChatGPTModelOption[]
   sandboxStatus: SandboxStatus
   readiness: Readiness
   completeSetup: Readiness

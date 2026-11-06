@@ -1,3 +1,4 @@
+import { API_SCHEMAS } from "../src/shared/api"
 import { describe, expect, it } from "vitest"
 import { generateKeyPairSync, createSign } from "node:crypto"
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages"
@@ -24,7 +25,30 @@ import {
 import { PROVIDERS, resolveBaseUrl } from "../src/shared/providers"
 import { redact } from "../src/main/events/redact"
 import { makeModel } from "../src/main/orchestrator/model"
-import { listModels, probeModel } from "../src/main/orchestrator/models"
+import { groupModels } from "../src/shared/providers"
+import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import { readiness } from "../src/main/readiness"
+import { listChatGPTModels, listModels, probeModel } from "../src/main/orchestrator/models"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { startCore } from "../src/main/core"
+import type { KeyStore } from "../src/main/credentials"
+
+const memory = (init: Record<string, string> = {}): KeyStore => {
+  const slots = new Map(Object.entries(init))
+  return {
+    available: () => true,
+    read: async (k: string) => slots.get(k) ?? null,
+    write: async (k: string, v: string | null) => {
+      if (v === null) {
+        slots.delete(k)
+      } else {
+        slots.set(k, v)
+      }
+    },
+  }
+}
 
 describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)", () => {
   it("registers chatgpt as an independent provider preset in PROVIDERS", () => {
@@ -32,9 +56,8 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
     expect(PROVIDERS.chatgpt.id).toBe("chatgpt")
     expect(PROVIDERS.chatgpt.kind).toBe("openai")
     expect(PROVIDERS.chatgpt.baseUrl).toBe("https://api.openai.com/v1")
-    expect(PROVIDERS.chatgpt.defaultModel).toBe("gpt-4o")
-    expect(PROVIDERS.chatgpt.models).toContain("gpt-4o")
-    expect(PROVIDERS.chatgpt.models).toContain("o1")
+    expect(PROVIDERS.chatgpt.defaultModel).toBe("")
+    expect(PROVIDERS.chatgpt.models).toEqual([])
     expect(resolveBaseUrl("chatgpt", "")).toBe("https://api.openai.com/v1")
   })
 
@@ -1001,6 +1024,317 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         expect(models).toEqual(["gpt-4o", "o1"])
       } finally {
         globalThis.fetch = originalFetch
+      }
+    })
+
+    it("groupModels for chatgpt preserves exact server order, contains zero static presets, and does not sort alphabetically", () => {
+      const input = ["account-model-z", "account-model-a"]
+      const groups = groupModels("chatgpt", input)
+      expect(groups).toEqual([{ label: "Models", models: ["account-model-z", "account-model-a"] }])
+      expect(groups[0].models).not.toContain("gpt-4o")
+      expect(groups[0].models[0]).toBe("account-model-z")
+      expect(groups[0].models[1]).toBe("account-model-a")
+    })
+
+    it("listChatGPTModels returns slug and displayName, preserves order, and filters visibility === list", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url).endsWith("/models")) {
+          return new Response(
+            JSON.stringify({
+              models: [
+                { slug: "model-zeta", display_name: "Model Zeta", visibility: "list" },
+                { slug: "model-alpha", display_name: "Model Alpha", visibility: "list" },
+                { slug: "hidden-beta", display_name: "Hidden Beta", visibility: "none" },
+                { slug: "no-visibility", display_name: "No Visibility" },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          )
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      try {
+        const options = await listChatGPTModels({ apiKey: "tok" })
+        expect(options).toEqual([
+          { slug: "model-zeta", displayName: "Model Zeta" },
+          { slug: "model-alpha", displayName: "Model Alpha" },
+        ])
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("listChatGPTModels refuses generic body.data fallback and throws", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [{ id: "generic-gpt" }] }), { status: 200, headers: { "Content-Type": "application/json" } })
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      try {
+        await expect(listChatGPTModels({ apiKey: "tok" })).rejects.toThrow(/did not return a ChatGPT model list/)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it("readiness validates ChatGPT specialist model against account catalog and requires account connection", async () => {
+      const fakeDeps = (accountModels: string[], keySet = true) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          specialistProvider: "chatgpt" as const,
+          specialistModel: "custom-slug-1",
+        }),
+        keySet: () => keySet,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      const rNotConnected = await readiness(fakeDeps(["custom-slug-1"], false))
+      expect(rNotConnected.claude.ready).toBe(false)
+      expect(rNotConnected.claude.reason).toBe("Connect your ChatGPT account: the specialist runs on it.")
+
+      const rInvalidModel = await readiness(fakeDeps(["different-model"]))
+      expect(rInvalidModel.claude.ready).toBe(false)
+      expect(rInvalidModel.claude.reason).toContain("custom-slug-1")
+      expect(rInvalidModel.claude.reason).toContain("not available for the connected ChatGPT account")
+
+      const rValid = await readiness(fakeDeps(["custom-slug-1"]))
+      expect(rValid.claude.ready).toBe(true)
+      expect(rValid.claude.reason).toBe("")
+    })
+
+    it("readiness validates ChatGPT orchestrator model against account catalog without generic fallback", async () => {
+      const fakeDeps = (accountModels: string[], keySet = true) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          provider: "chatgpt" as const,
+          model: "unavailable-slug",
+          specialistProvider: "claude" as const,
+        }),
+        keySet: () => keySet,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      const rNoKey = await readiness(fakeDeps(["other"], false))
+      expect(rNoKey.model.ready).toBe(false)
+      expect(rNoKey.model.reason).toBe("Connect your ChatGPT account.")
+
+      const rBadModel = await readiness(fakeDeps(["other"]))
+      expect(rBadModel.model.ready).toBe(false)
+      expect(rBadModel.model.reason).toContain("not available for the connected ChatGPT account")
+
+      const rOk = await readiness(fakeDeps(["unavailable-slug"]))
+      expect(rOk.model.ready).toBe(true)
+    })
+    it("R1: SettingsPatch and saveSettings accept empty model for ChatGPT pending discovery, but reject empty model for other providers", async () => {
+      // Verify SettingsPatch allows model: ""
+      const patchChatgpt = API_SCHEMAS.saveSettings.parse([{ provider: "chatgpt", model: "" }])
+      expect(patchChatgpt[0].model).toBe("")
+
+      const patchSpecialist = API_SCHEMAS.saveSettings.parse([{ specialistProvider: "chatgpt", specialistModel: "" }])
+      expect(patchSpecialist[0].specialistModel).toBe("")
+    })
+
+    it("R2: expectedProvider prevents stale async catalog discovery from corrupting another provider", async () => {
+      const patchWithGuard = API_SCHEMAS.saveSettings.parse([{ model: "custom-chatgpt-slug", expectedProvider: "chatgpt" }])
+      expect(patchWithGuard[0].expectedProvider).toBe("chatgpt")
+      expect(patchWithGuard[0].model).toBe("custom-chatgpt-slug")
+    })
+
+    it("R4: readiness with list: false still validates ChatGPT orchestrator and specialist models", async () => {
+      const fakeDeps = (accountModels: string[]) => ({
+        sandbox: async () => ({ docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "1.0" }),
+        login: async () => ({ loggedIn: true, method: "claude.ai", inProgress: false, url: null, text: "", error: "" }),
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          provider: "chatgpt" as const,
+          model: "unlisted-model",
+          specialistProvider: "chatgpt" as const,
+          specialistModel: "unlisted-specialist",
+        }),
+        keySet: () => true,
+        listModels: async () => accountModels,
+        probeModel: async () => undefined,
+      })
+
+      // Even with list: false, ChatGPT models MUST be validated
+      const r = await readiness(fakeDeps(["account-model-1"]), { list: false })
+      expect(r.model.ready).toBe(false)
+      expect(r.model.reason).toContain("unlisted-model")
+      expect(r.claude.ready).toBe(false)
+      expect(r.claude.reason).toContain("unlisted-specialist")
+    })
+
+    it("R1 behavioral: saveSettings rejects empty model for non-ChatGPT providers in real handler", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "hfr-core-r1-"))
+      const core = await startCore({
+        app: "desktop",
+        version: "1.0.0",
+        dataDir: dir,
+        sandboxDir: dir,
+        push: () => {},
+        keys: memory(),
+      })
+
+      try {
+        await expect(core.handlers.saveSettings({ provider: "hopper", model: "" })).rejects.toThrow(/A model must be provided for Hopper/)
+        await expect(core.handlers.saveSettings({ specialistProvider: "hopper", specialistModel: "" })).rejects.toThrow(/A model must be provided for Hopper/)
+      } finally {
+        await core.shutdown()
+      }
+    })
+
+    it("R2 behavioral: saveSettings with suspended model validation discards patch when provider changes concurrently", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "hfr-core-r2-"))
+      const keyStore = memory({
+        "chatgpt.key": JSON.stringify({
+          scopes: ["chatgpt.tokens.use.direct"],
+          hostId: "urn:uuid:00000000-0000-4000-8000-000000000001",
+          clientId: "client_123",
+          accessToken: "tok",
+          refreshToken: "ref",
+          accountEmail: "user@example.com",
+          planType: "plus",
+          expiresAt: Date.now() + 3600_000,
+        }),
+      })
+      const core = await startCore({
+        app: "desktop",
+        version: "1.0.0",
+        dataDir: dir,
+        sandboxDir: dir,
+        push: () => {},
+        keys: keyStore,
+      })
+
+      try {
+        await core.handlers.saveSettings({ provider: "chatgpt", model: "" })
+        const initial = await core.handlers.getSettings()
+        expect(initial.provider).toBe("chatgpt")
+
+        let resolveModels: (res: Response) => void
+        const modelPromise = new Promise<Response>((resolve) => {
+          resolveModels = resolve
+        })
+
+        const originalFetch = globalThis.fetch
+        globalThis.fetch = async (url) => {
+          if (String(url).endsWith("/models")) {
+            return modelPromise
+          }
+          return new Response("Not found", { status: 404 })
+        }
+
+        try {
+          const pendingSave = core.handlers.saveSettings({
+            model: "chatgpt-account-only",
+            expectedProvider: "chatgpt",
+          })
+
+          await core.handlers.saveSettings({
+            provider: "hopper",
+            model: "deepseek-coder",
+          })
+          const switched = await core.handlers.getSettings()
+          expect(switched.provider).toBe("hopper")
+          expect(switched.model).toBe("deepseek-coder")
+
+          resolveModels!(
+            new Response(
+              JSON.stringify({
+                models: [{ slug: "chatgpt-account-only", display_name: "Account Only", visibility: "list" }],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          )
+
+          const res = await pendingSave
+          expect(res.provider).toBe("hopper")
+          expect(res.model).toBe("deepseek-coder")
+
+          const current = await core.handlers.getSettings()
+          expect(current.provider).toBe("hopper")
+          expect(current.model).toBe("deepseek-coder")
+        } finally {
+          globalThis.fetch = originalFetch
+        }
+      } finally {
+        await core.shutdown()
+      }
+    })
+
+    it("R3 behavioral: chatGPTLogout advances generation, rejecting in-flight discovery and keeping cache empty", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "hfr-core-r3-"))
+      const keyStore = memory({
+        "chatgpt.key": JSON.stringify({
+          scopes: ["chatgpt.tokens.use.direct"],
+          hostId: "urn:uuid:00000000-0000-4000-8000-000000000001",
+          clientId: "client_123",
+          accessToken: "tok",
+          refreshToken: "ref",
+          accountEmail: "user@example.com",
+          planType: "plus",
+          expiresAt: Date.now() + 3600_000,
+        }),
+      })
+      const core = await startCore({
+        app: "desktop",
+        version: "1.0.0",
+        dataDir: dir,
+        sandboxDir: dir,
+        push: () => {},
+        keys: keyStore,
+      })
+
+      try {
+        let resolveDiscovery: (res: Response) => void
+        const discoveryPromise = new Promise<Response>((resolve) => {
+          resolveDiscovery = resolve
+        })
+
+        const originalFetch = globalThis.fetch
+        globalThis.fetch = async (url) => {
+          if (String(url).endsWith("/models")) {
+            return discoveryPromise
+          }
+          if (String(url) === CHATGPT_REVOKE_URL) {
+            return new Response(JSON.stringify({ ok: true }), { status: 200 })
+          }
+          return new Response("Not found", { status: 404 })
+        }
+
+        try {
+          const inFlightDiscovery = core.handlers.listChatGPTModels()
+
+          await core.handlers.chatGPTLogout()
+
+          resolveDiscovery!(
+            new Response(
+              JSON.stringify({
+                models: [{ slug: "gpt-4o", display_name: "GPT-4o", visibility: "list" }],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          )
+
+          await expect(inFlightDiscovery).rejects.toThrow(/ChatGPT session changed during model discovery/)
+
+          await expect(core.handlers.listChatGPTModels()).rejects.toThrow(/Connect your ChatGPT account to list available models/)
+        } finally {
+          globalThis.fetch = originalFetch
+        }
+      } finally {
+        await core.shutdown()
       }
     })
   })

@@ -1,7 +1,7 @@
 import { ExternalLink, Hammer, KeyRound, LogIn, LogOut, RefreshCw } from "lucide-react"
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { PROVIDER_IDS, PROVIDERS, resolveBaseUrl, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "@shared/providers"
-import type { ChatGPTAuthStatus, HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
+import type { ChatGPTAuthStatus, ChatGPTModelOption, HopperSignIn, KeyStatus, LoginStatus, SandboxStatus, Settings } from "@shared/types"
 import { ErrorText, Field, Mono } from "@/components/common"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { Badge } from "@/components/ui/badge"
@@ -163,8 +163,10 @@ export function ModelPanel({
   const api = window.hfr.api
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
-  const [models, setModels] = useState<string[]>([])
+  const [models, setModels] = useState<Array<string | ChatGPTModelOption>>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsNote, setModelsNote] = useState("")
+  const [modelNotice, setModelNotice] = useState("")
   const { error, run } = useRun(onChange)
 
   useEffect(() => {
@@ -178,24 +180,75 @@ export function ModelPanel({
   const activeProvider = settings?.provider
   const activeBaseUrl = settings?.baseUrl
   const keySet = key?.set
-  const loadModels = useCallback(
-    () =>
-      api.listModels().then(
-        (list) => {
-          setModels(list)
-          setModelsNote("")
+  const modelGenRef = useRef(0)
+  const currentProviderRef = useRef(activeProvider)
+  useEffect(() => {
+    currentProviderRef.current = activeProvider
+  }, [activeProvider])
+
+  const loadModels = useCallback(() => {
+    const gen = ++modelGenRef.current
+    setModelsLoading(true)
+    setModelsNote("")
+    setModelNotice("")
+    if (activeProvider === "chatgpt") {
+      return api.listChatGPTModels().then(
+        async (chatgptModels) => {
+          if (gen !== modelGenRef.current || currentProviderRef.current !== "chatgpt") return
+          setModelsLoading(false)
+          setModels(chatgptModels)
+          if (chatgptModels.length > 0) {
+            const currentModel = settings?.model ?? ""
+            const hasValid = chatgptModels.some((m) => m.slug === currentModel)
+            if (!hasValid) {
+              const first = chatgptModels[0]
+              const updated = await api.saveSettings({ model: first.slug, expectedProvider: "chatgpt" })
+              if (gen !== modelGenRef.current || currentProviderRef.current !== "chatgpt") return
+              setSettings(updated)
+              onChange?.()
+              if (currentModel) {
+                setModelNotice(`Previous model unavailable on your plan. Selected ${first.displayName} (${first.slug}).`)
+              }
+            }
+          } else {
+            setModelsNote("ChatGPT (Codex) listed no models for this account.")
+          }
         },
         (e: unknown) => {
+          if (gen !== modelGenRef.current || currentProviderRef.current !== "chatgpt") return
+          setModelsLoading(false)
           setModels([])
-          // A server with no model list still works: the model named here is checked with a test request (specs/onboarding R1.6).
-          setModelsNote(`${message(e)} Name the model below; the setup checks it with a one-token test request.`)
+          setModelsNote(message(e))
         },
-      ),
-    [api],
-  )
+      )
+    }
+    return api.listModels(activeProvider).then(
+      (list) => {
+        if (gen !== modelGenRef.current || currentProviderRef.current !== activeProvider) return
+        setModelsLoading(false)
+        setModels(list)
+        setModelsNote("")
+      },
+      (e: unknown) => {
+        if (gen !== modelGenRef.current || currentProviderRef.current !== activeProvider) return
+        setModelsLoading(false)
+        setModels([])
+        // A server with no model list still works: the model named here is checked with a test request (specs/onboarding R1.6).
+        setModelsNote(`${message(e)} Name the model below; the setup checks it with a one-token test request.`)
+      },
+    )
+  }, [activeProvider, api, settings?.model, onChange])
   useEffect(() => {
     if (!activeProvider || (PROVIDERS[activeProvider].keyRequired && !keySet) || (activeProvider === "custom" && !activeBaseUrl)) return
-    void loadModels()
+    let active = true
+    void (async () => {
+      await Promise.resolve()
+      if (!active) return
+      void loadModels()
+    })()
+    return () => {
+      active = false
+    }
   }, [activeProvider, activeBaseUrl, keySet, loadModels])
 
   const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
@@ -205,9 +258,14 @@ export function ModelPanel({
     // Picking the provider already chosen changes nothing: its endpoint and model stay as they were saved.
     id !== settings?.provider &&
     run(async () => {
+      modelGenRef.current++
       setModels([])
-      setSettings(await api.saveSettings({ provider: id, model: PROVIDERS[id].defaultModel || settings?.model }))
+      setModelNotice("")
+      setModelsNote("")
+      const nextModel = id === "chatgpt" ? "" : PROVIDERS[id].defaultModel || settings?.model
+      setSettings(await api.saveSettings({ provider: id, model: nextModel }))
       setKey(await api.keyStatus(id))
+      onChange?.()
     })
 
   if (!settings) return null
@@ -250,6 +308,8 @@ export function ModelPanel({
             provider={settings.provider}
             value={settings.model}
             listed={models}
+            loading={modelsLoading}
+            emptyNote={modelsNote}
             onChange={(m) => save({ model: m })}
           />
           <Button variant="outline" onClick={() => run(loadModels)} aria-label="Refresh the model list" title="Refresh the model list">
@@ -262,6 +322,7 @@ export function ModelPanel({
             : modelsNote ||
               (keySet || !provider.keyRequired ? `Reading ${provider.label}'s models…` : "Save a key to list this provider's models; you can still name one.")}
         </p>
+        {modelNotice && <p className="mt-1.5 text-xs text-blue-400">{modelNotice}</p>}
       </Field>
       {children?.(settings, save)}
       <ErrorText>{error}</ErrorText>
@@ -294,7 +355,7 @@ export function ProviderKeyField({
   status,
   onStatus,
   run,
-  label = "API key",
+  label,
 }: {
   provider: ProviderId
   status: KeyStatus | null
@@ -307,9 +368,10 @@ export function ProviderKeyField({
   const p = PROVIDERS[provider]
 
   if (provider === "chatgpt") {
+    const fieldLabel = label ?? "ChatGPT account / Your ChatGPT plan"
     return (
       <Field
-        label={label}
+        label={fieldLabel}
         hint={
           status?.set
             ? "Connected via Sign in with ChatGPT (Token Sharing). Tokens are protected by the OS keychain."
@@ -321,9 +383,10 @@ export function ProviderKeyField({
     )
   }
 
+  const fieldLabel = label ?? `${p.label} API key, shared with the orchestrator`
   return (
     <Field
-      label={label}
+      label={fieldLabel}
       hint={
         status?.set
           ? `Saved (${status.hint}), encrypted with the OS keychain. It is never shown again.`
@@ -374,6 +437,10 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
   const api = window.hfr.api
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
+  const [models, setModels] = useState<Array<string | ChatGPTModelOption>>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsNote, setModelsNote] = useState("")
+  const [modelNotice, setModelNotice] = useState("")
   const { error, run } = useRun(onChange)
   const sp = settings?.specialistProvider
   useEffect(() => {
@@ -382,10 +449,95 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
   useEffect(() => {
     if (sp && sp !== "claude") void api.keyStatus(sp).then(setKey)
   }, [api, sp])
+  const currentSpecialistModel = settings?.specialistModel ?? ""
+  const specialistGenRef = useRef(0)
+  const currentSpRef = useRef(sp)
+  useEffect(() => {
+    currentSpRef.current = sp
+  }, [sp])
+
+  const loadSpecialistModels = useCallback(async () => {
+    if (!sp || sp === "claude") return
+    const gen = ++specialistGenRef.current
+    setModelsLoading(true)
+    setModelsNote("")
+    setModelNotice("")
+    if (sp === "chatgpt") {
+      if (!key?.set) {
+        setModelsLoading(false)
+        setModelsNote("Connect your ChatGPT account to list available models.")
+        setModels([])
+        return
+      }
+      return api
+        .listChatGPTModels()
+        .then(async (chatgptModels) => {
+          if (gen !== specialistGenRef.current || currentSpRef.current !== "chatgpt") return
+          setModelsLoading(false)
+          setModels(chatgptModels)
+          if (chatgptModels.length > 0) {
+            const currentModel = currentSpecialistModel
+            const hasValid = chatgptModels.some((m) => m.slug === currentModel)
+            if (!hasValid) {
+              const first = chatgptModels[0]
+              const updated = await api.saveSettings({ specialistModel: first.slug, expectedSpecialistProvider: "chatgpt" })
+              if (gen !== specialistGenRef.current || currentSpRef.current !== "chatgpt") return
+              setSettings(updated)
+              onChange?.()
+              if (currentModel) {
+                setModelNotice(`Previous model unavailable on your plan. Selected ${first.displayName} (${first.slug}).`)
+              }
+            }
+          } else {
+            setModelsNote("ChatGPT (Codex) listed no models for this account.")
+          }
+        })
+        .catch((e: unknown) => {
+          if (gen !== specialistGenRef.current || currentSpRef.current !== "chatgpt") return
+          setModelsLoading(false)
+          setModelsNote(message(e))
+        })
+    }
+    if (PROVIDERS[sp].keyRequired && !key?.set) {
+      setModelsLoading(false)
+      setModelsNote(`Save your ${PROVIDERS[sp].label} API key to list models.`)
+      setModels([])
+      return
+    }
+    return api
+      .listModels(sp)
+      .then((list) => {
+        if (gen !== specialistGenRef.current || currentSpRef.current !== sp) return
+        setModelsLoading(false)
+        setModels(list)
+      })
+      .catch((e: unknown) => {
+        if (gen !== specialistGenRef.current || currentSpRef.current !== sp) return
+        setModelsLoading(false)
+        setModelsNote(message(e))
+      })
+  }, [sp, key?.set, api, currentSpecialistModel, onChange])
+
+  useEffect(() => {
+    if (!sp || sp === "claude") return
+    let active = true
+    void (async () => {
+      await Promise.resolve()
+      if (!active) return
+      loadSpecialistModels()
+    })()
+    return () => {
+      active = false
+    }
+  }, [sp, loadSpecialistModels])
   if (!settings || !sp) return null
   const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
   const choose = (p: SpecialistProvider) =>
-    p !== sp && save({ specialistProvider: p, ...(p === "claude" ? {} : { specialistModel: PROVIDERS[p].defaultModel || settings.specialistModel }) })
+    p !== sp &&
+    save({
+      specialistProvider: p,
+      ...(p === "claude" ? {} : p === "chatgpt" ? { specialistModel: "" } : { specialistModel: PROVIDERS[p].defaultModel || settings.specialistModel }),
+    })
   return (
     <div className="flex flex-col gap-4">
       <Field
@@ -404,21 +556,50 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
         claude
       ) : (
         <>
-          <ProviderKeyField provider={sp} status={key} onStatus={setKey} run={run} label={`${PROVIDERS[sp].label} API key, shared with the orchestrator`} />
+          <ProviderKeyField
+            provider={sp}
+            status={key}
+            onStatus={(nextKey) => {
+              setKey(nextKey)
+              if (!nextKey.set && sp === "chatgpt") {
+                setModels([])
+                save({ specialistModel: "" })
+              }
+            }}
+            run={run}
+            label={sp === "chatgpt" ? "ChatGPT account / Your ChatGPT plan" : `${PROVIDERS[sp].label} API key, shared with the orchestrator`}
+          />
           {PROVIDERS[sp].editableBaseUrl && (
             <p className="text-xs text-muted-foreground">
               Uses the base URL set for {PROVIDERS[sp].label} under the orchestrator's model:{" "}
               {resolveBaseUrl(sp, settings.baseUrls[sp] ?? "") || "none set yet"}.
             </p>
           )}
-          <Field label="Model" hint="Any model of this provider with tool calling.">
-            <ModelPicker
-              key={`${sp}:${settings.specialistModel}`}
-              provider={sp}
-              value={settings.specialistModel}
-              listed={[]}
-              onChange={(m) => save({ specialistModel: m })}
-            />
+          <Field
+            label="Model"
+            hint={sp === "chatgpt" ? "Models available for your connected ChatGPT subscription plan." : "Any model of this provider with tool calling."}
+          >
+            <div className="flex items-start gap-2">
+              <ModelPicker
+                key={`${sp}:${settings.specialistModel}`}
+                provider={sp}
+                value={settings.specialistModel}
+                listed={models}
+                loading={modelsLoading}
+                emptyNote={modelsNote}
+                onChange={(m) => save({ specialistModel: m })}
+              />
+              <Button
+                variant="outline"
+                onClick={() => run(loadSpecialistModels)}
+                aria-label="Refresh the specialist model list"
+                title="Refresh the specialist model list"
+              >
+                <RefreshCw size={14} />
+              </Button>
+            </div>
+            {modelNotice && <p className="mt-1.5 text-xs text-blue-400">{modelNotice}</p>}
+            {modelsNote && models.length === 0 && <p className="mt-1.5 text-xs text-muted-foreground">{modelsNote}</p>}
           </Field>
         </>
       )}

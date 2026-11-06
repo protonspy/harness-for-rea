@@ -1,4 +1,5 @@
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
+import type { ChatGPTModelOption } from "@shared/types"
 import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
 import { OPENAI_RESPONSES_URL, resolveChatGPTAccessToken } from "../chatgpt"
@@ -30,56 +31,68 @@ const TIMEOUT_MS = 10_000
 /** A test request waits for one token, which a cold model can take a while to give. */
 const TEST_TIMEOUT_MS = 30_000
 
+export async function listChatGPTModels(o?: { baseUrl?: string; apiKey?: string | null }): Promise<ChatGPTModelOption[]> {
+  const base = resolveBaseUrl("chatgpt", o?.baseUrl ?? PROVIDERS.chatgpt.baseUrl)
+  if (!base) throw new Error("Set a base URL first.")
+
+  let token: string | null = null
+  try {
+    token = await resolveChatGPTAccessToken(o?.apiKey, getChatGPTAuthService())
+  } catch {
+    token = null
+  }
+  if (!token) {
+    throw new Error("Connect your ChatGPT account to list available models.")
+  }
+
+  let res: Response
+  try {
+    res = await fetch(`${base}/models`, {
+      headers: {
+        ...attributionHeaders(base),
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+  } catch (e) {
+    throw new Error(`Could not reach ${base}/models: ${(e as Error).message}`, { cause: e })
+  }
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, PROVIDERS.chatgpt.label)
+    throw new Error(`${PROVIDERS.chatgpt.label} answered ${res.status} to the model list.${res.status === 404 ? versionHint(base) : ""}`)
+  }
+
+  const body = (await res.json().catch(() => null)) as {
+    models?: Array<{ slug?: string; id?: string; display_name?: string; visibility?: string }>
+  } | null
+
+  if (!Array.isArray(body?.models)) {
+    throw new Error(`${base}/models did not return a ChatGPT model list.`)
+  }
+
+  const seen = new Set<string>()
+  const result: ChatGPTModelOption[] = []
+  for (const m of body.models) {
+    if (m.visibility !== "list") continue
+    const slug = (m.slug || m.id)?.trim()
+    if (!slug || seen.has(slug)) continue
+    seen.add(slug)
+    const displayName = m.display_name?.trim() || slug
+    result.push({ slug, displayName })
+  }
+
+  return result
+}
+
 export async function listModels(o: { provider: ProviderId; baseUrl: string; apiKey: string | null }): Promise<string[]> {
   const base = resolveBaseUrl(o.provider, o.baseUrl)
   if (!base) throw new Error("Set a base URL first.")
 
   if (o.provider === "chatgpt") {
-    let token: string | null = null
-    try {
-      token = await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService())
-    } catch {
-      token = null
-    }
-
-    let res: Response
-    try {
-      res = await fetch(`${base}/models`, {
-        headers: {
-          ...attributionHeaders(base),
-          accept: "application/json",
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      })
-    } catch (e) {
-      throw new Error(`Could not reach ${base}/models: ${(e as Error).message}`, { cause: e })
-    }
-
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) throw friendlyError({ status: 401 }, PROVIDERS[o.provider].label)
-      throw new Error(`${PROVIDERS[o.provider].label} answered ${res.status} to the model list.${res.status === 404 ? versionHint(base) : ""}`)
-    }
-
-    const body = (await res.json().catch(() => null)) as {
-      models?: Array<{ slug?: string; id?: string; display_name?: string; visibility?: string }>
-      data?: Array<{ id?: string }>
-    } | null
-
-    if (Array.isArray(body?.models)) {
-      const slugs = body.models
-        .filter((m) => m.visibility === "list" || !m.visibility)
-        .map((m) => m.slug || m.id)
-        .filter((slug): slug is string => typeof slug === "string" && slug.length > 0)
-      return [...new Set(slugs)]
-    }
-
-    if (Array.isArray(body?.data)) {
-      const ids = body.data.map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0)
-      return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
-    }
-
-    throw new Error(`${base}/models did not return a model list.`)
+    const opts = await listChatGPTModels(o)
+    return opts.map((m) => m.slug)
   }
 
   let res: Response

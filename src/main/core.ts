@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
 import { PROVIDERS } from "@shared/providers"
-import type { ProjectRow, Push } from "@shared/types"
+import type { ChatGPTModelOption, ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, refreshKeyAvailability, saveKey, useKeyStore, type KeyStore } from "./credentials"
@@ -20,10 +21,10 @@ import { IntegrationRegistry } from "./integrations/registry"
 import { integrationStatus, saveIntegrations } from "./integrations/settings"
 import { APP_LABEL, LockHeld, Locks, projectLockName, type AppName, type Holder } from "./lock"
 import { ProcessRegistry } from "./processes"
-import { listModels, probeModel } from "./orchestrator/models"
+import { listChatGPTModels, listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
-import { blocking, readiness } from "./readiness"
+import { baseUrlFor, blocking, readiness } from "./readiness"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { SandboxRegistry, SpecialistBoxes } from "./sandbox/specialistbox"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
@@ -185,6 +186,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     ...deps,
     projects,
     apiKey: (provider) => readKey(provider),
+    listChatGPTModels: async () => handlers.listChatGPTModels(),
     // The orchestrator's tools run in the task's own container (adr:0007-run-the-orchestrators-tools-in-a-task-container).
     workspace: async (task) => {
       // The project is this app's while the task is open; another app holding it refuses the task (specs/shared-data-folder R1).
@@ -286,6 +288,20 @@ export async function startCore(host: CoreHost): Promise<Core> {
 
   setChatGPTAuthService(chatgpt)
 
+  let chatgptSessionGen = 0
+  let chatgptModelsCache: { gen: number; fingerprint: string; models: ChatGPTModelOption[]; timestamp: number } | null = null
+
+  function getChatGPTFingerprint(): string {
+    const raw = readKey("chatgpt")
+    if (!raw) return ""
+    return createHash("sha256").update(raw).digest("hex")
+  }
+
+  function invalidateChatGPTCache() {
+    chatgptSessionGen++
+    chatgptModelsCache = null
+  }
+
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
     readiness(
@@ -294,7 +310,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
         login: () => login.refresh(),
         settings: getSettings,
         keySet: (provider) => keyStatus(provider).set,
-        listModels: (run) => listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
+        listModels: async (run) =>
+          run.provider === "chatgpt"
+            ? (await handlers.listChatGPTModels()).map((m) => m.slug)
+            : listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
         probeModel: (run) => probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model }),
         keyHint: (provider) => keyStatus(provider).hint,
       },
@@ -312,8 +331,65 @@ export async function startCore(host: CoreHost): Promise<Core> {
       saveSettings({ setupCompleted: true })
       return { ...r, completed: true }
     },
-    saveSettings: async ({ integrations: wanted, ...patch }) =>
-      saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) }),
+    saveSettings: async ({ integrations: wanted, expectedProvider, expectedSpecialistProvider, ...patch }) => {
+      const current = getSettings()
+      if (expectedProvider && current.provider !== expectedProvider) {
+        return current
+      }
+      if (expectedSpecialistProvider && current.specialistProvider !== expectedSpecialistProvider) {
+        return current
+      }
+      const targetProvider = patch.provider ?? current.provider
+      const targetSpecialistProvider = patch.specialistProvider ?? current.specialistProvider
+      if (patch.model !== undefined) {
+        const m = patch.model.trim()
+        if (targetProvider === "chatgpt") {
+          if (m) {
+            const available = await handlers.listChatGPTModels()
+            if (!available.some((opt) => opt.slug === m)) {
+              throw new Error(`The model "${m}" is not available for the connected ChatGPT account.`)
+            }
+          }
+        } else {
+          if (!m) {
+            throw new Error(`A model must be provided for ${PROVIDERS[targetProvider].label}.`)
+          }
+        }
+      }
+      if (patch.specialistModel !== undefined) {
+        const sm = patch.specialistModel.trim()
+        if (targetSpecialistProvider === "chatgpt") {
+          if (sm) {
+            const available = await handlers.listChatGPTModels()
+            if (!available.some((opt) => opt.slug === sm)) {
+              throw new Error(`The model "${sm}" is not available for the connected ChatGPT account.`)
+            }
+          }
+        } else if (targetSpecialistProvider !== "claude") {
+          if (!sm) {
+            throw new Error(`A model must be provided for ${PROVIDERS[targetSpecialistProvider].label}.`)
+          }
+        }
+      }
+      const savedIntegrations = wanted ? await saveIntegrations(integrationRegistry, getSettings(), wanted) : undefined
+      const latest = getSettings()
+      if (expectedProvider && latest.provider !== expectedProvider) {
+        return latest
+      }
+      if (expectedSpecialistProvider && latest.specialistProvider !== expectedSpecialistProvider) {
+        return latest
+      }
+      if (patch.provider === undefined && patch.model !== undefined && targetProvider !== latest.provider) {
+        return latest
+      }
+      if (patch.specialistProvider === undefined && patch.specialistModel !== undefined && targetSpecialistProvider !== latest.specialistProvider) {
+        return latest
+      }
+      return saveSettings({
+        ...patch,
+        ...(savedIntegrations !== undefined ? { integrations: savedIntegrations } : {}),
+      })
+    },
     keyStatus: async (provider) => {
       await refreshKeyAvailability()
       return keyStatus(provider)
@@ -329,15 +405,55 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     clearKey: async (provider) => {
       if (provider === "chatgpt") {
+        invalidateChatGPTCache()
+        const current = getSettings()
+        if (current.specialistProvider === "chatgpt") {
+          saveSettings({ specialistModel: "" })
+        }
+        if (current.provider === "chatgpt") {
+          saveSettings({ model: "" })
+        }
         await chatgpt.signOut()
       }
       const s = await clearKey(provider)
       setSetting("keys.rev", Date.now())
       return s
     },
-    listModels: () => {
-      const { provider, baseUrl } = getSettings()
-      return listModels({ provider, baseUrl, apiKey: readKey(provider) })
+    listModels: (provider) => {
+      const settings = getSettings()
+      const target = provider ?? settings.provider
+      const baseUrl = baseUrlFor(target, settings)
+      return listModels({ provider: target, baseUrl, apiKey: readKey(target) })
+    },
+    listChatGPTModels: async () => {
+      const callGen = chatgptSessionGen
+      const st = await chatgpt.status()
+      if (!st.connected) {
+        throw new Error("Connect your ChatGPT account to list available models.")
+      }
+      const fingerprint = getChatGPTFingerprint()
+      if (!fingerprint) {
+        throw new Error("Connect your ChatGPT account to list available models.")
+      }
+      if (
+        chatgptModelsCache &&
+        chatgptModelsCache.gen === callGen &&
+        chatgptModelsCache.fingerprint === fingerprint &&
+        Date.now() - chatgptModelsCache.timestamp < 60_000
+      ) {
+        return chatgptModelsCache.models
+      }
+      const rawKey = readKey("chatgpt")
+      const models = await listChatGPTModels({ apiKey: rawKey })
+      if (callGen !== chatgptSessionGen) {
+        throw new Error("ChatGPT session changed during model discovery.")
+      }
+      const currentFingerprint = getChatGPTFingerprint()
+      if (currentFingerprint !== fingerprint) {
+        throw new Error("ChatGPT session changed during model discovery.")
+      }
+      chatgptModelsCache = { gen: callGen, fingerprint, models, timestamp: Date.now() }
+      return models
     },
     sandboxStatus: () => sandbox.status(),
     buildSandbox: () => sandbox.build().status,
@@ -361,20 +477,30 @@ export async function startCore(host: CoreHost): Promise<Core> {
     startHopperSignIn: (email) => hopper.start(email),
     hopperSignInStatus: () => hopper.status(),
     cancelHopperSignIn: () => hopper.cancel(),
-    startChatGPTAuth: () =>
-      chatgpt.startSignIn().then((s) => ({
+    startChatGPTAuth: () => {
+      invalidateChatGPTCache()
+      return chatgpt.startSignIn().then((s) => ({
         connected: true,
         accountEmail: s.accountEmail,
         planType: s.planType,
         expiresAt: s.expiresAt,
         hasTokenSharingScope: true,
-      })),
+      }))
+    },
     chatGPTAuthStatus: () => chatgpt.status(),
     cancelChatGPTAuth: async () => {
       chatgpt.cancelSignIn()
       return chatgpt.status()
     },
     chatGPTLogout: async () => {
+      invalidateChatGPTCache()
+      const current = getSettings()
+      if (current.specialistProvider === "chatgpt") {
+        saveSettings({ specialistModel: "" })
+      }
+      if (current.provider === "chatgpt") {
+        saveSettings({ model: "" })
+      }
       const res = await chatgpt.signOut()
       const st = await chatgpt.status()
       return { ...st, warning: res.warning }
@@ -439,7 +565,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     closeTask: (id) => (freeTask(id), runner.close(id)),
     stopTurn: (id) => (freeTask(id), runner.stopTurn(id)),
     // A stopped turn, or a task that ended, continued from where it stopped (specs/task-persistence R2.1).
-    continueTurn: (id) => (freeTask(id), runner.continueTask(id)),
+    continueTurn: async (id) => {
+      freeTask(id)
+      const task = log.getTask(id)
+      const project = task.projectId ? projects.get(task.projectId) : null
+      const run = project ? { provider: project.provider, model: project.model } : { provider: getSettings().provider, model: getSettings().model }
+      const blocked = blocking(await ready({ run, list: false }))
+      if (blocked) throw new Error(blocked)
+      return runner.continueTask(id)
+    },
     deleteTask: async (id) => (freeTask(id), await runner.remove(id), true),
     setTaskModel: (id, model) => (freeTask(id), runner.setModel(id, model)),
     decideTool: (id, callId, decision) => (freeTask(id), runner.decideTool(id, callId, decision)),
