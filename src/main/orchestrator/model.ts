@@ -5,6 +5,7 @@ import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
+import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
 
 /*
   The orchestrator's chat model (specs/orchestrator R1, adr:0014-add-openai-compatible-orchestrator-providers).
@@ -13,6 +14,16 @@ import type { OrchestratorEffort } from "@shared/types"
   OpenAI chat API at the provider's base URL, DeepSeek's being one preset. Each call's usage and cost
   is handed to `onUsage`.
 */
+
+let globalChatGPTService: ChatGPTAuthService | undefined
+
+export function setChatGPTAuthService(service: ChatGPTAuthService | undefined): void {
+  globalChatGPTService = service
+}
+
+export function getChatGPTAuthService(): ChatGPTAuthService | undefined {
+  return globalChatGPTService
+}
 
 export interface ModelUsage {
   tokensIn: number
@@ -54,7 +65,180 @@ export interface ModelOptions {
   onUsage(u: ModelUsage): void
 }
 
+export function resolveApiKey(provider: ProviderId, apiKey: string): string {
+  if (provider === "chatgpt" && apiKey.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(apiKey) as { accessToken?: string }
+      return parsed.accessToken ?? apiKey
+    } catch {
+      return apiKey
+    }
+  }
+  return apiKey
+}
+
+function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let completed = false
+  let terminalError: Error | null = null
+
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith("data:")) continue
+          const dataStr = trimmed.slice(5).trim()
+          if (!dataStr || dataStr === "[DONE]") continue
+
+          try {
+            const parsed = JSON.parse(dataStr)
+            if (parsed.type === "response.completed") {
+              completed = true
+            } else if (parsed.type === "response.failed") {
+              const reason = parsed.response?.error?.message ?? parsed.error?.message ?? "response.failed"
+              terminalError = new Error(`ChatGPT Responses stream failed: ${reason}`)
+              controller.error(terminalError)
+              return
+            } else if (parsed.type === "response.incomplete") {
+              const reason = parsed.response?.incomplete_details?.reason ?? "response.incomplete"
+              terminalError = new Error(`ChatGPT Responses stream incomplete: ${reason}`)
+              controller.error(terminalError)
+              return
+            }
+          } catch {
+            // Non-JSON SSE event line, ignore
+          }
+        }
+
+        if (!terminalError) {
+          controller.enqueue(chunk)
+        }
+      },
+      flush(controller) {
+        if (terminalError) {
+          controller.error(terminalError)
+          return
+        }
+        if (!completed) {
+          controller.error(new Error("ChatGPT Responses stream terminated prematurely without response.completed."))
+        }
+      },
+    }),
+  )
+}
+
+function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
+  const callbacks = [
+    {
+      handleLLMEnd(output: unknown) {
+        o.onUsage(usageOf(output as LlmEndOutput, o.model))
+      },
+    },
+  ]
+  const effort = o.effort && o.effort !== "default" ? o.effort : undefined
+  const baseURL = resolveBaseUrl("chatgpt", o.baseUrl ?? "") || "https://api.openai.com/v1"
+
+  return new ChatOpenAI({
+    model: o.model,
+    apiKey: "managed-chatgpt-token",
+    useResponsesApi: true,
+    streaming: true,
+    configuration: {
+      baseURL,
+      defaultHeaders: attributionHeaders(baseURL),
+      fetch: async (url, init) => {
+        // Resolve valid access token per request via auth service or session parser
+        const token = await resolveChatGPTAccessToken(o.apiKey, globalChatGPTService)
+
+        const headers = new Headers(init?.headers)
+        headers.set("Authorization", `Bearer ${token}`)
+        headers.set("Accept", "text/event-stream")
+
+        let bodyObj: any = {}
+        if (init?.body) {
+          try {
+            bodyObj = JSON.parse(String(init.body))
+          } catch {
+            bodyObj = {}
+          }
+        }
+
+        bodyObj.store = false
+        bodyObj.stream = true
+
+        // SIWC parameter restrictions: omit temperature, top_p, and unsupported metadata fields (D1)
+        delete bodyObj.temperature
+        delete bodyObj.top_p
+        delete bodyObj.user
+        delete bodyObj.background
+        delete bodyObj.conversation
+        delete bodyObj.max_output_tokens
+        delete bodyObj.max_tool_calls
+        delete bodyObj.metadata
+        delete bodyObj.moderation
+        delete bodyObj.multi_agent
+        delete bodyObj.prompt
+        delete bodyObj.prompt_cache_retention
+        delete bodyObj.safety_identifier
+        delete bodyObj.top_logprobs
+        delete bodyObj.truncation
+        delete bodyObj.previous_response_id
+
+        // SIWC message restrictions: use developer role instead of system message (D1)
+        if (Array.isArray(bodyObj.input)) {
+          for (const item of bodyObj.input) {
+            if (item && item.type === "message" && item.role === "system") {
+              item.role = "developer"
+            }
+          }
+        }
+
+        // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
+        if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
+          const tools = bodyObj.tools
+          delete bodyObj.tools
+          bodyObj.input = bodyObj.input || []
+          bodyObj.input.unshift({
+            type: "additional_tools",
+            tools,
+          })
+        }
+
+        const res = await globalThis.fetch(url, {
+          ...init,
+          headers,
+          body: JSON.stringify(bodyObj),
+        })
+
+        if (res.ok && res.body) {
+          const wrappedBody = enforceResponsesCompletionStream(res.body)
+          return new Response(wrappedBody, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          })
+        }
+
+        return res
+      },
+    },
+    streamUsage: true,
+    ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),
+    callbacks,
+  })
+}
+
 export function makeModel(o: ModelOptions): BaseChatModel {
+  if (o.provider === "chatgpt") {
+    return createChatGPTResponsesModel(o)
+  }
+
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {

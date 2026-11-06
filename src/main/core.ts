@@ -8,8 +8,10 @@ import type { ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
 import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, refreshKeyAvailability, saveKey, useKeyStore, type KeyStore } from "./credentials"
-import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
+import { closeDb, exclusive, getDb, getSetting, openDb, setSetting } from "./db"
 import { hopperPage, HopperSignInService } from "./hopper"
+import { ChatGPTAuthService, createHostId, isValidHostId, type ChatGPTSession } from "./chatgpt"
+import { setChatGPTAuthService } from "./orchestrator/model"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
 import { EventLog, eventRow, patchRow, stepRow } from "./events/log"
 import { registerSecret } from "./events/redact"
@@ -250,6 +252,40 @@ export async function startCore(host: CoreHost): Promise<Core> {
     save: async (key) => void (await saveKey(key, "hopper")),
   })
 
+  let chatgptHostId = getSetting<string>("chatgpt.host_id", "")
+  if (!isValidHostId(chatgptHostId)) {
+    chatgptHostId = createHostId()
+    setSetting("chatgpt.host_id", chatgptHostId)
+  }
+
+  const chatgpt = new ChatGPTAuthService({
+    openUrl: async (url) => {
+      if (!host.openExternal) return false
+      await host.openExternal(url)
+      return true
+    },
+    saveSession: async (session) => {
+      if (!session) {
+        await clearKey("chatgpt")
+      } else {
+        await saveKey(JSON.stringify(session), "chatgpt")
+      }
+      setSetting("keys.rev", Date.now())
+    },
+    loadSession: async () => {
+      const raw = readKey("chatgpt")
+      if (!raw) return null
+      try {
+        return JSON.parse(raw) as ChatGPTSession
+      } catch {
+        return null
+      }
+    },
+    hostId: chatgptHostId,
+  })
+
+  setChatGPTAuthService(chatgpt)
+
   // The first-run setup's three steps, read from the services Settings already uses (specs/onboarding R1).
   const ready = (o?: Parameters<typeof readiness>[1]) =>
     readiness(
@@ -284,11 +320,17 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     // Saved in the shared keychain; the other apps read it again when they see the bump (specs/shared-data-folder R5.1).
     saveKey: async (key, provider) => {
+      if (provider === "chatgpt" && !key.startsWith("{")) {
+        throw new Error("ChatGPT provider uses OAuth token sharing. Use Sign in with ChatGPT to connect your account.")
+      }
       const s = await saveKey(key, provider)
       setSetting("keys.rev", Date.now())
       return s
     },
     clearKey: async (provider) => {
+      if (provider === "chatgpt") {
+        await chatgpt.signOut()
+      }
       const s = await clearKey(provider)
       setSetting("keys.rev", Date.now())
       return s
@@ -319,6 +361,24 @@ export async function startCore(host: CoreHost): Promise<Core> {
     startHopperSignIn: (email) => hopper.start(email),
     hopperSignInStatus: () => hopper.status(),
     cancelHopperSignIn: () => hopper.cancel(),
+    startChatGPTAuth: () =>
+      chatgpt.startSignIn().then((s) => ({
+        connected: true,
+        accountEmail: s.accountEmail,
+        planType: s.planType,
+        expiresAt: s.expiresAt,
+        hasTokenSharingScope: true,
+      })),
+    chatGPTAuthStatus: () => chatgpt.status(),
+    cancelChatGPTAuth: async () => {
+      chatgpt.cancelSignIn()
+      return chatgpt.status()
+    },
+    chatGPTLogout: async () => {
+      const res = await chatgpt.signOut()
+      const st = await chatgpt.status()
+      return { ...st, warning: res.warning }
+    },
     pickFolder: async () => (host.pickFolder ? host.pickFolder() : null),
     // Every project, one another app is running a task of shown as taken by it (specs/shared-data-folder R1.3).
     listProjects: () => projects.list().map(withHolder),

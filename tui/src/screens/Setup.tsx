@@ -123,6 +123,9 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Save the provider's API key in the OS keychain",
       args: "<key>",
       run: async (key) => {
+        if (provider === "chatgpt") {
+          return app.toast("ChatGPT uses OAuth token sharing. Use 'chatgpt-login' to connect your account.", "error")
+        }
         await app.attempt(() => api.saveKey(key.trim(), provider), "Key saved in the OS keychain.")
         refresh()
       },
@@ -131,7 +134,12 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       name: "remove-key",
       title: "Remove the provider's API key",
       run: async () => {
-        await app.attempt(() => api.clearKey(provider), "Key removed.")
+        if (provider === "chatgpt") {
+          const s = await app.attempt(() => api.chatGPTLogout(), "ChatGPT account disconnected.")
+          if (s?.warning) app.toast(s.warning, "info")
+        } else {
+          await app.attempt(() => api.clearKey(provider), "Key removed.")
+        }
         refresh()
       },
     },
@@ -160,6 +168,29 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       },
     },
     { name: "hopper-cancel", title: "Cancel the Hopper sign-in", run: () => void app.attempt(() => api.cancelHopperSignIn(), "Hopper sign-in cancelled.") },
+    {
+      name: "chatgpt-login",
+      title: "Connect your ChatGPT account via official OAuth token sharing",
+      run: async () => {
+        app.toast("Opening browser for ChatGPT authorization...", "info")
+        const s = await app.attempt(() => api.startChatGPTAuth(), "ChatGPT account connected.")
+        if (s) refresh()
+      },
+    },
+    {
+      name: "chatgpt-cancel",
+      title: "Cancel ChatGPT authorization",
+      run: () => void app.attempt(() => api.cancelChatGPTAuth(), "ChatGPT authorization cancelled."),
+    },
+    {
+      name: "chatgpt-logout",
+      title: "Disconnect and sign out of your ChatGPT account",
+      run: async () => {
+        const s = await app.attempt(() => api.chatGPTLogout(), "ChatGPT account disconnected.")
+        if (s?.warning) app.toast(s.warning, "info")
+        refresh()
+      },
+    },
     {
       name: "signup",
       title: "Open the provider's account page in your browser",

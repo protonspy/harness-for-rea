@@ -298,3 +298,14 @@ export type Push =
   | { type: "patch"; patch: PatchView }
   | { type: "sandbox"; status: SandboxStatus }
   | { type: "login"; status: LoginStatus }
+
+export interface ChatGPTAuthStatus {
+  connected: boolean
+  inProgress?: boolean
+  accountEmail?: string
+  planType?: string
+  expiresAt?: number
+  hasTokenSharingScope: boolean
+  error?: string
+  warning?: string
+}

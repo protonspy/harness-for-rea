@@ -5,6 +5,7 @@ import { PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
 import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
+  ChatGPTAuthStatus,
   KeyStatus,
   HopperSignIn,
   LoginStatus,
@@ -95,6 +96,10 @@ export const API_SCHEMAS = {
   startHopperSignIn: z.tuple([z.string().trim().email().max(254)]),
   hopperSignInStatus: z.tuple([]),
   cancelHopperSignIn: z.tuple([]),
+  startChatGPTAuth: z.tuple([]),
+  chatGPTAuthStatus: z.tuple([]),
+  cancelChatGPTAuth: z.tuple([]),
+  chatGPTLogout: z.tuple([]),
   pickFolder: z.tuple([]),
   startTask: z.tuple([
     z
@@ -193,6 +198,10 @@ export interface ApiResults {
   startHopperSignIn: HopperSignIn
   hopperSignInStatus: HopperSignIn
   cancelHopperSignIn: HopperSignIn
+  startChatGPTAuth: ChatGPTAuthStatus
+  chatGPTAuthStatus: ChatGPTAuthStatus
+  cancelChatGPTAuth: ChatGPTAuthStatus
+  chatGPTLogout: ChatGPTAuthStatus
   pickFolder: string | null
   startTask: TaskRow
   listProjects: ProjectRow[]
