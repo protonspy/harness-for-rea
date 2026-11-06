@@ -5,6 +5,12 @@ import { attributionHeaders } from "../src/main/orchestrator/attribution"
 import { API_SCHEMAS } from "../src/shared/api"
 import { listModels, refusedKey } from "../src/main/orchestrator/models"
 import { makeModel } from "../src/main/orchestrator/model"
+import { friendlyError } from "../src/main/orchestrator/errors"
+import { classifyAgentFailure, AgentSpecialist } from "../src/main/specialist/agent"
+import { ContainerBackend } from "../src/main/specialist/container"
+import { readiness, type ReadinessDeps } from "../src/main/readiness"
+import { DEFAULT_SETTINGS } from "../src/shared/defaults"
+import type { LoginStatus, SandboxStatus } from "../src/shared/types"
 import { HumanMessage, ToolMessage } from "@langchain/core/messages"
 
 describe("River authentication investigation (specs/river-auth, adr:0029)", () => {
@@ -374,13 +380,29 @@ describe("River native provider and model catalog (Issue #3)", () => {
     }
   })
 
-  it("groupModels preserves the exact 7 River IDs without converting them to aliases", () => {
-    const accountExtra = ["extra-provider/special-model"]
-    const groups = groupModels("river", accountExtra)
-    expect(groups).toEqual([
-      { label: "Recommended", models: [...PROVIDERS.river.models] },
-      { label: "Models", models: ["extra-provider/special-model"] },
-    ])
+  describe("Preset and catalog reconciliation in groupModels", () => {
+    it("reconciles presets with discovery when account has a partial catalog", () => {
+      const groups = groupModels("river", ["GLM-5.3"])
+      expect(groups).toEqual([{ label: "Recommended", models: ["GLM-5.3"] }])
+    })
+
+    it("reconciles presets and places non-preset discovered models under Models", () => {
+      const groups = groupModels("river", ["GLM-5.3", "river/custom-preview-model"])
+      expect(groups).toEqual([
+        { label: "Recommended", models: ["GLM-5.3"] },
+        { label: "Models", models: ["river/custom-preview-model"] },
+      ])
+    })
+
+    it("preserves all 7 preset models when discovery returns all of them", () => {
+      const groups = groupModels("river", [...PROVIDERS.river.models])
+      expect(groups).toEqual([{ label: "Recommended", models: [...PROVIDERS.river.models] }])
+    })
+
+    it("preserves all 7 presets in Recommended for manual entry on recoverable discovery failure or empty list", () => {
+      const groups = groupModels("river", [])
+      expect(groups).toEqual([{ label: "Recommended", models: [...PROVIDERS.river.models] }])
+    })
   })
 
   describe("Model discovery and error distinction (Issue #3)", () => {
@@ -678,6 +700,205 @@ describe("River native provider and model catalog (Issue #3)", () => {
       } finally {
         globalThis.fetch = originalFetch
       }
+    })
+  })
+
+  describe("Readiness and catalog reconciliation in both roles", () => {
+    const okSandbox: SandboxStatus = { docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "2.1.310" }
+    const okLogin: LoginStatus = { loggedIn: true, method: "claude.ai", plan: "max", email: "a@b.c", inProgress: false, url: null, text: "", error: "" }
+
+    function makeDeps(o: Partial<ReadinessDeps> = {}): ReadinessDeps {
+      return {
+        sandbox: async () => okSandbox,
+        login: async () => okLogin,
+        settings: () => ({
+          ...DEFAULT_SETTINGS,
+          provider: "river" as const,
+          model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+          specialistProvider: "claude" as const,
+          specialistModel: "",
+        }),
+        keySet: () => true,
+        listModels: async () => ["deepseek-ai/DeepSeek-V4.1-Flash-1017", "GLM-5.3"],
+        probeModel: async () => undefined,
+        ...o,
+      }
+    }
+
+    describe("Orchestrator role", () => {
+      it("is ready when selected model is present in partial catalog", async () => {
+        const d = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "GLM-5.3" }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const r = await readiness(d)
+        expect(r.model).toMatchObject({ ready: true, provider: "river", model: "GLM-5.3" })
+      })
+
+      it("is not ready when selected model is absent from partial catalog", async () => {
+        const d = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "deepseek-ai/DeepSeek-V4.1-Flash-1017" }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const r = await readiness(d)
+        expect(r.model).toMatchObject({
+          ready: false,
+          reason: 'The model "deepseek-ai/DeepSeek-V4.1-Flash-1017" is not available for your River account. Choose a model from the account\'s catalog.',
+        })
+      })
+
+      it("preserves manual entry on recoverable discovery failure and validates via probeModel", async () => {
+        let probeCalled = 0
+        const d = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "Qwen/Qwen3.8-27B-FP8" }),
+          listModels: async () => Promise.reject(new Error("River answered 500 to the model list.")),
+          probeModel: async () => void probeCalled++,
+        })
+        const r = await readiness(d)
+        expect(probeCalled).toBe(1)
+        expect(r.model).toMatchObject({ ready: true, provider: "river", model: "Qwen/Qwen3.8-27B-FP8" })
+      })
+
+      it("fails readiness without probe when discovery fails with refused key (401 / 403)", async () => {
+        let probeCalled = 0
+        const d = makeDeps({
+          settings: () => ({ ...DEFAULT_SETTINGS, provider: "river", model: "GLM-5.3" }),
+          listModels: async () =>
+            Promise.reject(Object.assign(new Error("Your River account does not have access or permissions for this endpoint or model."), { status: 403 })),
+          probeModel: async () => void probeCalled++,
+        })
+        const r = await readiness(d)
+        expect(probeCalled).toBe(0)
+        expect(r.model).toMatchObject({
+          ready: false,
+          reason: "Your River account does not have access or permissions for this endpoint or model.",
+        })
+      })
+    })
+
+    describe("Specialist role (specialistProvider: 'river')", () => {
+      it("is ready when specialist model is present in partial catalog", async () => {
+        const d = makeDeps({
+          settings: () => ({
+            ...DEFAULT_SETTINGS,
+            specialistProvider: "river",
+            specialistModel: "GLM-5.3",
+          }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const r = await readiness(d)
+        expect(r.claude).toMatchObject({ ready: true, provider: "river", model: "GLM-5.3" })
+      })
+
+      it("is not ready when specialist model is absent from partial catalog", async () => {
+        const d = makeDeps({
+          settings: () => ({
+            ...DEFAULT_SETTINGS,
+            specialistProvider: "river",
+            specialistModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+          }),
+          listModels: async () => ["GLM-5.3"],
+        })
+        const r = await readiness(d)
+        expect(r.claude).toMatchObject({
+          ready: false,
+          reason: 'The model "deepseek-ai/DeepSeek-V4.1-Flash-1017" is not available for your River account. Choose a model from the account\'s catalog.',
+        })
+      })
+
+      it("preserves manual entry on recoverable discovery failure and validates specialist via probeModel", async () => {
+        let probeCalled = 0
+        const d = makeDeps({
+          settings: () => ({
+            ...DEFAULT_SETTINGS,
+            specialistProvider: "river",
+            specialistModel: "Qwen/Qwen3.8-27B-FP8",
+          }),
+          listModels: async () => Promise.reject(new Error("Network timeout")),
+          probeModel: async () => void probeCalled++,
+        })
+        const r = await readiness(d)
+        expect(probeCalled).toBe(1)
+        expect(r.claude).toMatchObject({ ready: true, provider: "river", model: "Qwen/Qwen3.8-27B-FP8" })
+      })
+
+      it("fails specialist readiness without probe when discovery fails with refused key (401 / 403)", async () => {
+        let probeCalled = 0
+        const d = makeDeps({
+          settings: () => ({
+            ...DEFAULT_SETTINGS,
+            specialistProvider: "river",
+            specialistModel: "GLM-5.3",
+          }),
+          listModels: async () => Promise.reject(Object.assign(new Error("River rejected the API key. Set a valid key in Settings."), { status: 401 })),
+          probeModel: async () => void probeCalled++,
+        })
+        const r = await readiness(d)
+        expect(probeCalled).toBe(0)
+        expect(r.claude).toMatchObject({
+          ready: false,
+          reason: "River rejected the API key. Set a valid key in Settings.",
+        })
+      })
+    })
+  })
+
+  describe("Error distinction 401 vs 403 during delegation in both roles", () => {
+    describe("Orchestrator delegation errors (friendlyError)", () => {
+      it("classifies HTTP 401 as rejected API key with Settings guidance", () => {
+        const err = friendlyError({ status: 401, message: "Unauthorized" }, "River")
+        expect((err as any).status).toBe(401)
+        expect(err.message).toBe("River rejected the API key. Set a valid key in Settings.")
+      })
+
+      it("classifies HTTP 403 as endpoint or model permission denial with access guidance", () => {
+        const err = friendlyError({ status: 403, message: "Forbidden" }, "River")
+        expect((err as any).status).toBe(403)
+        expect(err.message).toBe("Your River account does not have access or permissions for this endpoint or model.")
+      })
+    })
+
+    describe("Specialist delegation errors (classifyAgentFailure and execution)", () => {
+      it("classifies HTTP 401 as auth error with API key guidance", () => {
+        const failure = classifyAgentFailure(Object.assign(new Error("Unauthorized"), { status: 401 }), "River")
+        expect(failure.kind).toBe("auth")
+        expect(failure.message).toBe("River refused the specialist's API key. Set a valid key in Settings.")
+      })
+
+      it("classifies HTTP 403 as auth error with permissions/model guidance", () => {
+        const failure = classifyAgentFailure(Object.assign(new Error("Forbidden"), { status: 403 }), "River")
+        expect(failure.kind).toBe("auth")
+        expect(failure.message).toBe("Your River account does not have access or permissions for this endpoint or model.")
+      })
+
+      it("rejects specialist turn with distinct 403 permissions guidance when River endpoint responds 403", async () => {
+        const originalFetch = globalThis.fetch
+        globalThis.fetch = async () => {
+          return new Response(JSON.stringify({ error: { message: "Access denied to model GLM-5.3" } }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          })
+        }
+
+        try {
+          const specialist = new AgentSpecialist({
+            model: (onUsage) => makeModel({ provider: "river", apiKey: "rv_test_key", model: "GLM-5.3", onUsage }),
+            provider: "River",
+            modelName: "GLM-5.3",
+            backend: new ContainerBackend(async () => ({ code: 0, stdout: Buffer.from(""), stderr: "" }), "container-123"),
+            tools: [],
+            systemPrompt: "You are the specialist.",
+            idleMs: 5000,
+          })
+
+          await expect(specialist.send("Run task")).rejects.toMatchObject({
+            kind: "auth",
+            message: "Your River account does not have access or permissions for this endpoint or model.",
+          })
+        } finally {
+          globalThis.fetch = originalFetch
+        }
+      })
     })
   })
 

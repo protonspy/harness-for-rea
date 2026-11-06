@@ -172,6 +172,18 @@ export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[
     const unique = [...new Set(listed)]
     return unique.length ? [{ label: "Models", models: unique }] : []
   }
+  if (provider === "river") {
+    if (listed.length > 0) {
+      const presets = PROVIDERS.river.models
+      const availablePresets = presets.filter((m) => listed.includes(m))
+      const extra = [...new Set(listed)].filter((m) => !presets.includes(m) && !m.endsWith(":batch")).sort()
+      return [
+        { label: "Recommended", models: availablePresets },
+        { label: "Models", models: extra },
+      ].filter((g) => g.models.length)
+    }
+    return [{ label: "Recommended", models: [...PROVIDERS.river.models] }]
+  }
   const recommended = [...PROVIDERS[provider].models]
   const rest = [...new Set(listed)].filter((m) => !recommended.includes(m) && !m.endsWith(":batch"))
   if (provider !== "openrouter")

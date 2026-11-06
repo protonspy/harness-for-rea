@@ -55,9 +55,11 @@ export function classifyAgentFailure(e: unknown, provider: string): SpecialistEr
   const text = clean((e as Error)?.message ?? e).slice(0, 400)
   // The client's status, or the one LangChain leaves at the start of its message.
   const status = err?.statusCode ?? err?.status ?? err?.cause?.status ?? Number(/^(\d{3}) /.exec(text)?.[1])
-  if (status === 401 || status === 403 || /invalid api key|unauthori[sz]ed|incorrect api key/i.test(text))
+  if (status === 401 || /invalid api key|unauthori[sz]ed|incorrect api key/i.test(text))
     return new SpecialistError("auth", `${provider} refused the specialist's API key. Set a valid key in Settings.`)
-  if (status === 402 || /insufficient[_ ]quota|insufficient credits/i.test(text))
+  if (status === 403 || /forbidden|permission denied|access denied/i.test(text))
+    return new SpecialistError("auth", `Your ${provider} account does not have access or permissions for this endpoint or model.`)
+  if (status === 402 || /insufficient[_ ]quota|insufficient credits|credit quota/i.test(text))
     return new SpecialistError("limit", `${provider} has no credit left for the specialist. Add credit to your ${provider} account.`)
   if (status === 429 || /rate.?limit/i.test(text))
     return new SpecialistError("limit", `${provider} is limiting the specialist's requests for now. Try again shortly.`)
