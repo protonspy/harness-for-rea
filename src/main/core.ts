@@ -371,7 +371,24 @@ export async function startCore(host: CoreHost): Promise<Core> {
           }
         }
       }
-      return saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) })
+      const savedIntegrations = wanted ? await saveIntegrations(integrationRegistry, getSettings(), wanted) : undefined
+      const latest = getSettings()
+      if (expectedProvider && latest.provider !== expectedProvider) {
+        return latest
+      }
+      if (expectedSpecialistProvider && latest.specialistProvider !== expectedSpecialistProvider) {
+        return latest
+      }
+      if (patch.provider === undefined && patch.model !== undefined && targetProvider !== latest.provider) {
+        return latest
+      }
+      if (patch.specialistProvider === undefined && patch.specialistModel !== undefined && targetSpecialistProvider !== latest.specialistProvider) {
+        return latest
+      }
+      return saveSettings({
+        ...patch,
+        ...(savedIntegrations !== undefined ? { integrations: savedIntegrations } : {}),
+      })
     },
     keyStatus: async (provider) => {
       await refreshKeyAvailability()
@@ -476,7 +493,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
       return chatgpt.status()
     },
     chatGPTLogout: async () => {
-      chatgptModelsCache = null
+      invalidateChatGPTCache()
       const current = getSettings()
       if (current.specialistProvider === "chatgpt") {
         saveSettings({ specialistModel: "" })
