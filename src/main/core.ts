@@ -7,7 +7,7 @@ import { PROVIDERS } from "@shared/providers"
 import type { ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
-import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, saveKey, useKeyStore, type KeyStore } from "./credentials"
+import { clearKey, initKey, keyStatus, moveKeys, onKey, readKey, refreshKeyAvailability, saveKey, useKeyStore, type KeyStore } from "./credentials"
 import { closeDb, exclusive, getDb, openDb, setSetting } from "./db"
 import { hopperPage, HopperSignInService } from "./hopper"
 import { approvePatch, dockerLauncher, rejectPatch } from "./delegation"
@@ -278,7 +278,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
     },
     saveSettings: async ({ integrations: wanted, ...patch }) =>
       saveSettings({ ...patch, ...(wanted ? { integrations: await saveIntegrations(integrationRegistry, getSettings(), wanted) } : {}) }),
-    keyStatus: (provider) => keyStatus(provider),
+    keyStatus: async (provider) => {
+      await refreshKeyAvailability()
+      return keyStatus(provider)
+    },
     // Saved in the shared keychain; the other apps read it again when they see the bump (specs/shared-data-folder R5.1).
     saveKey: async (key, provider) => {
       const s = await saveKey(key, provider)

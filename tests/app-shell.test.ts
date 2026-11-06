@@ -1,7 +1,18 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { stub, safeStorage } from "./electron-stub"
 import { closeDb, getDb, getSetting, openDb, setSetting } from "../src/main/db"
-import { clearKey, CredentialError, initKey, keyStatus, onKey, readKey, saveKey, useKeyStore } from "../src/main/credentials"
+import {
+  clearKey,
+  CredentialError,
+  initKey,
+  keyStatus,
+  onKey,
+  readKey,
+  refreshKeyAvailability,
+  saveKey,
+  useKeyStore,
+  type KeyStore,
+} from "../src/main/credentials"
 import { electronKeyStore } from "../src/main/keys-electron"
 import { isAppPage, makeDispatcher } from "../src/main/ipc"
 import { contentSecurityPolicy } from "../src/main/csp"
@@ -171,8 +182,13 @@ describe("credentials (R3.1–R3.3)", () => {
   })
   afterAll(() => closeDb())
   beforeEach(async () => {
+    useKeyStore(electronKeyStore())
     stub.encryption = true
     await clearKey()
+  })
+  afterEach(async () => {
+    useKeyStore(electronKeyStore())
+    stub.encryption = true
   })
 
   it("stores the key only encrypted and reads it back after a restart", async () => {
@@ -271,5 +287,104 @@ describe("credentials (R3.1–R3.3)", () => {
       safeStorage.isEncryptionAvailable = origSync
       safeStorage.isAsyncEncryptionAvailable = origAsync
     }
+  })
+
+  it("transitions availability from false to true on explicit refresh", async () => {
+    let availState = false
+    const asyncStore: KeyStore = {
+      available: () => Promise.resolve(availState),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    expect(keyStatus().encryption).toBe(false)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
+
+    availState = true
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("transitions availability from true to false on explicit refresh", async () => {
+    let availState = true
+    const asyncStore: KeyStore = {
+      available: () => Promise.resolve(availState),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    availState = false
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
+  })
+
+  it("handles key store available() rejection safely without unhandledRejection", async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (err: unknown) => unhandled.push(err)
+    process.on("unhandledRejection", onUnhandled)
+
+    try {
+      const rejectingStore: KeyStore = {
+        available: () => Promise.reject(new Error("keychain daemon unavailable")),
+        read: async () => null,
+        write: async () => {},
+      }
+      useKeyStore(rejectingStore)
+      const res = await refreshKeyAvailability()
+      expect(res).toBe(false)
+      expect(keyStatus().encryption).toBe(false)
+      // Multiple keyStatus calls must not trigger unhandled promises or throw
+      expect(keyStatus().encryption).toBe(false)
+      expect(keyStatus().encryption).toBe(false)
+      expect(unhandled).toHaveLength(0)
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
+  it("does not start unobserved calls on async store when keyStatus is queried", async () => {
+    let probeCount = 0
+    const asyncStore: KeyStore = {
+      available: () => {
+        probeCount++
+        return Promise.resolve(true)
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    await refreshKeyAvailability()
+    const baseline = probeCount
+
+    // Repeated synchronous status queries
+    keyStatus()
+    keyStatus("openrouter")
+    keyStatus("deepseek")
+    expect(probeCount).toBe(baseline)
+  })
+
+  it("resets availability safely when changing the key store", async () => {
+    const storeA: KeyStore = {
+      available: () => Promise.resolve(true),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeA)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    const storeB: KeyStore = {
+      available: () => Promise.resolve(false),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeB)
+    expect(keyStatus().encryption).toBe(false)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
   })
 })

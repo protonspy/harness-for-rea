@@ -27,13 +27,77 @@ export class CredentialError extends Error {
 }
 
 let store: KeyStore | null = null
-let encryptionAvailable = true
+let encryptionAvailable = false
+let pendingAvailability: Promise<boolean> | null = null
 const cached = new Map<ProviderId, string>()
 const listeners = new Set<(key: string) => void>()
+
+/** Explicitly refresh and return whether the key store's encryption is available. */
+export async function refreshKeyAvailability(): Promise<boolean> {
+  if (!store) {
+    encryptionAvailable = false
+    return false
+  }
+  if (pendingAvailability) return pendingAvailability
+
+  const currentStore = store
+  let probe: boolean | Promise<boolean>
+  try {
+    probe = currentStore.available()
+  } catch {
+    if (store === currentStore) encryptionAvailable = false
+    return false
+  }
+
+  if (typeof probe === "boolean") {
+    encryptionAvailable = probe
+    return probe
+  }
+
+  pendingAvailability = Promise.resolve(probe)
+    .then((result) => {
+      if (store === currentStore) {
+        encryptionAvailable = Boolean(result)
+      }
+      return encryptionAvailable
+    })
+    .catch(() => {
+      if (store === currentStore) {
+        encryptionAvailable = false
+      }
+      return false
+    })
+    .finally(() => {
+      pendingAvailability = null
+    })
+
+  return pendingAvailability
+}
 
 /** The host's key store, set once at start before `initKey`. */
 export function useKeyStore(s: KeyStore) {
   store = s
+  pendingAvailability = null
+  let probe: boolean | Promise<boolean>
+  try {
+    probe = s.available()
+  } catch {
+    encryptionAvailable = false
+    return
+  }
+
+  if (typeof probe === "boolean") {
+    encryptionAvailable = probe
+  } else {
+    encryptionAvailable = false
+    void Promise.resolve(probe)
+      .then((v) => {
+        if (store === s) encryptionAvailable = Boolean(v)
+      })
+      .catch(() => {
+        if (store === s) encryptionAvailable = false
+      })
+  }
 }
 
 function keys(): KeyStore {
@@ -57,7 +121,14 @@ function loaded(provider: ProviderId, key: string) {
   (specs/shared-data-folder R5.2). A key already in the shared store wins. Returns how many were moved.
 */
 export async function moveKeys(from: KeyStore, to: KeyStore): Promise<number> {
-  const [fromAvail, toAvail] = await Promise.all([from.available(), to.available()])
+  const [fromAvail, toAvail] = await Promise.all([
+    Promise.resolve()
+      .then(() => from.available())
+      .catch(() => false),
+    Promise.resolve()
+      .then(() => to.available())
+      .catch(() => false),
+  ])
   if (!fromAvail || !toAvail) return 0
   let moved = 0
   for (const provider of PROVIDER_IDS) {
@@ -76,10 +147,9 @@ export async function moveKeys(from: KeyStore, to: KeyStore): Promise<number> {
 }
 
 /** Read the stored keys once; afterwards `readKey` is a synchronous read. A key that cannot be read is left unset. */
-export async function initKey() {
+export async function initKey(): Promise<void> {
   cached.clear()
-  const avail = await keys().available()
-  encryptionAvailable = Boolean(avail)
+  const avail = await refreshKeyAvailability()
   if (!avail) return
   for (const provider of PROVIDER_IDS) {
     try {
@@ -93,8 +163,7 @@ export async function initKey() {
 
 export async function saveKey(key: string, provider: ProviderId = "openrouter"): Promise<KeyStatus> {
   const trimmed = key.trim()
-  const avail = await keys().available()
-  encryptionAvailable = Boolean(avail)
+  const avail = await refreshKeyAvailability()
   if (!avail) throw new CredentialError("The OS keychain is not available, so the key was not stored. Harness for REA never keeps it in plain text.")
   await keys().write(slot(provider), trimmed)
   loaded(provider, trimmed)
@@ -102,8 +171,7 @@ export async function saveKey(key: string, provider: ProviderId = "openrouter"):
 }
 
 export async function clearKey(provider: ProviderId = "openrouter"): Promise<KeyStatus> {
-  const avail = await keys().available()
-  encryptionAvailable = Boolean(avail)
+  await refreshKeyAvailability()
   await keys().write(slot(provider), null)
   cached.delete(provider)
   return keyStatus(provider)
@@ -115,7 +183,5 @@ export function readKey(provider: ProviderId = "openrouter"): string | null {
 
 export function keyStatus(provider: ProviderId = "openrouter"): KeyStatus {
   const k = cached.get(provider)
-  const avail = keys().available()
-  const encryption = typeof avail === "boolean" ? avail : encryptionAvailable
-  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption }
+  return { set: !!k, hint: k ? `…${k.slice(-4)}` : "", encryption: encryptionAvailable }
 }
