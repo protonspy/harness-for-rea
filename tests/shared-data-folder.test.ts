@@ -8,6 +8,7 @@ import { initKey, moveKeys, readKey, useKeyStore, type KeyStore } from "../src/m
 import { closeDb, exclusive, getDb, openDb, SCHEMA_VERSION, SchemaTooNew } from "../src/main/db"
 import { EventLog, eventRow, patchRow, stepRow } from "../src/main/events/log"
 import { keyringStore, type KeyEntry } from "../src/main/keys"
+import { Locks, type Holder } from "../src/main/lock"
 import { ProcessRegistry, STALE_MS } from "../src/main/processes"
 import { BASE_IMAGE, CLAUDE_CODE_VERSION, SPECIALIST_IMAGE, type Exec } from "../src/main/sandbox/docker"
 import { LoginService, SandboxService, type OnceGuard } from "../src/main/status"
@@ -408,6 +409,38 @@ describe("keys (R5.1, R5.2)", () => {
     const remaining = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
     expect(remaining).toEqual([])
     expect(await store1.read("chatgpt.key")).toBeNull()
+  })
+
+  it("coordinates writers across separate process locks with temp lockDir, preserving exclusion (F1)", async () => {
+    const entries = new Map<string, number[]>()
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        await new Promise((r) => setTimeout(r, 5))
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const lockDir = tmp()
+    const holderA: Holder = { app: "desktop", pid: 1001, since: 10 }
+    const holderB: Holder = { app: "tui", pid: 2002, since: 20 }
+    const locksA = new Locks(lockDir, holderA, () => true)
+    const locksB = new Locks(lockDir, holderB, () => true)
+
+    const storeA = keyringStore("hfr-test", make, locksA)
+    const storeB = keyringStore("hfr-test", make, locksB)
+
+    const valA = "A".repeat(4500)
+    const valB = "B".repeat(4500)
+    await Promise.all([storeA.write("chatgpt.key", valA), storeB.write("chatgpt.key", valB)])
+
+    const finalVal = await storeA.read("chatgpt.key")
+    expect(finalVal === valA || finalVal === valB).toBe(true)
+
+    await storeA.write("chatgpt.key", null)
+    const remaining = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remaining).toEqual([])
   })
 
   it("moves the keys of a former store into the shared one, keeping one already there, and removes them", async () => {

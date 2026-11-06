@@ -1,8 +1,6 @@
-import { closeSync, mkdirSync, openSync, rmSync, statSync, writeSync } from "node:fs"
-import { join } from "node:path"
 import { AsyncEntry } from "@napi-rs/keyring"
 import type { KeyStore } from "./credentials"
-import { defaultDataDir, LOCKS_DIR } from "./lock"
+import { defaultDataDir, defaultHolder, Locks, slotLockName } from "./lock"
 
 /*
   The one key store both apps read (specs/shared-data-folder R5.1, adr:0024-share-the-data-folder-between-processes):
@@ -73,55 +71,27 @@ function withInProcessQueue<T>(key: string, task: () => Promise<T>): Promise<T> 
     })
 }
 
-async function acquireCrossProcessLock(dir: string | null | undefined, slot: string, timeoutMs = 5000): Promise<(() => void) | null> {
-  if (!dir) return null
-  try {
-    mkdirSync(dir, { recursive: true })
-  } catch {}
-  const safe = slot.replace(/[^a-zA-Z0-9_-]/g, "_")
-  const file = join(dir, `keyring-${safe}.lock`)
-  const me = JSON.stringify({ pid: process.pid, time: Date.now() })
-  const start = Date.now()
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const fd = openSync(file, "wx")
-      writeSync(fd, me)
-      closeSync(fd)
-      return () => {
-        try {
-          rmSync(file, { force: true })
-        } catch {}
-      }
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err
-      try {
-        const stat = statSync(file)
-        if (Date.now() - stat.mtimeMs > 10_000) {
-          rmSync(file, { force: true })
-          continue
-        }
-      } catch {}
-      await new Promise((r) => setTimeout(r, 25))
-    }
-  }
-  throw new Error(`Timed out waiting for keyring slot lock: ${slot}`)
-}
-
-async function withSlotCoordination<T>(dir: string | null | undefined, service: string, slot: string, fn: () => Promise<T>): Promise<T> {
+async function withSlotCoordination<T>(locks: Locks | null, service: string, slot: string, fn: () => Promise<T>): Promise<T> {
   const queueKey = `${service}/${slot}`
   return withInProcessQueue(queueKey, async () => {
-    const releaseFile = await acquireCrossProcessLock(dir, slot)
+    const releaseLock = locks ? await locks.acquire(slotLockName(slot)) : null
     try {
       return await fn()
     } finally {
-      releaseFile?.()
+      releaseLock?.()
     }
   })
 }
 
-export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring, lockDir?: string | null): KeyStore {
-  const resolvedLockDir = lockDir !== undefined ? lockDir : make === keyring ? join(defaultDataDir(), LOCKS_DIR) : null
+export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring, locksOrDataDir?: Locks | string | null): KeyStore {
+  let locks: Locks | null = null
+  if (locksOrDataDir instanceof Locks) {
+    locks = locksOrDataDir
+  } else if (typeof locksOrDataDir === "string") {
+    locks = new Locks(locksOrDataDir, defaultHolder())
+  } else if (locksOrDataDir === undefined && make === keyring) {
+    locks = new Locks(defaultDataDir(), defaultHolder())
+  }
 
   return {
     available: () => make !== null,
@@ -194,7 +164,7 @@ export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring
     write: async (slot, key) => {
       if (!make) throw new Error("The OS keychain is not available.")
 
-      return withSlotCoordination(resolvedLockDir, service, slot, async () => {
+      return withSlotCoordination(locks, service, slot, async () => {
         const entry = make(service, slot)
 
         // Handle deletion
