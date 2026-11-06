@@ -165,11 +165,29 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
       const trimmed = line.trim()
       if (trimmed.startsWith("data:")) {
         const payloadStr = trimmed.slice(5).trim()
-        if (payloadStr.includes('"response.failed"') || payloadStr.includes('"error"')) {
-          throw new Error(`${label} test request failed: ${payloadStr}`)
-        }
-        if (payloadStr.includes('"response.completed"')) {
-          completed = true
+        if (!payloadStr || payloadStr === "[DONE]") continue
+        try {
+          const parsed = JSON.parse(payloadStr) as {
+            type?: string
+            event?: string
+            error?: { message?: string } | null
+            response?: { status?: string; error?: { message?: string } | null }
+          }
+          const eventType = parsed.type || parsed.event
+          if (eventType === "response.completed") {
+            completed = true
+          } else if (eventType === "response.failed" || eventType === "error") {
+            const errObj = parsed.response?.error || parsed.error
+            if (errObj && typeof errObj === "object" && errObj.message) {
+              throw new Error(`${label} test request failed: ${errObj.message}`)
+            } else if (eventType === "response.failed") {
+              throw new Error(`${label} test request failed: response.failed`)
+            }
+          }
+        } catch (e) {
+          if ((e as Error).message.includes("test request failed")) {
+            throw e
+          }
         }
       }
     }

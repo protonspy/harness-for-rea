@@ -5,7 +5,7 @@ import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
 import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
-import { OPENAI_RESPONSES_URL, resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
+import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
 
 /*
   The orchestrator's chat model (specs/orchestrator R1, adr:0014-add-openai-compatible-orchestrator-providers).
@@ -79,7 +79,7 @@ export function resolveApiKey(provider: ProviderId, apiKey: string): string {
 
 /**
  * Creates a ChatGPT model client speaking the official Responses API protocol
- * with `store: false`, `stream: true`, per-request token resolution, and tool support.
+ * with native SDK Responses support (`useResponsesApi: true`, `streaming: true`, `store: false`) (C2, C3).
  */
 function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
@@ -95,154 +95,34 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
   return new ChatOpenAI({
     model: o.model,
     apiKey: "managed-chatgpt-token",
+    useResponsesApi: true,
+    streaming: true,
     configuration: {
       baseURL,
       defaultHeaders: attributionHeaders(baseURL),
-      fetch: async (_url, init) => {
+      fetch: async (url, init) => {
         // Resolve valid access token per request via auth service or session parser
         const token = await resolveChatGPTAccessToken(o.apiKey, globalChatGPTService)
 
-        // Target official Responses API
-        const targetUrl = OPENAI_RESPONSES_URL
-
-        let bodyObj: any = {}
-        try {
-          bodyObj = JSON.parse(String(init?.body ?? "{}"))
-        } catch {
-          bodyObj = {}
-        }
-
-        // Map Chat Completions messages to Responses input format
-        const input = (bodyObj.messages ?? []).map((m: any) => {
-          let role = m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user"
-          if (m.role === "tool") role = "tool"
-          let content = m.content
-          if (typeof content === "string") {
-            content = [{ type: "input_text", text: content }]
-          }
-          return { role, content, ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}) }
-        })
-
-        // Map tools to Responses API format
-        const tools = (bodyObj.tools ?? []).map((t: any) => ({
-          type: "function",
-          name: t.function?.name ?? t.name,
-          description: t.function?.description ?? t.description,
-          parameters: t.function?.parameters ?? t.parameters ?? {},
-        }))
-
-        const responsesPayload = {
-          model: bodyObj.model || o.model,
-          input: input.length ? input : [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
-          store: false,
-          stream: true,
-          ...(tools.length ? { tools } : {}),
-        }
-
         const headers = new Headers(init?.headers)
         headers.set("Authorization", `Bearer ${token}`)
-        headers.set("Content-Type", "application/json")
         headers.set("Accept", "text/event-stream")
 
-        const res = await globalThis.fetch(targetUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(responsesPayload),
-          signal: init?.signal,
-        })
-
-        if (!res.ok) {
-          return res
-        }
-
-        // Consume SSE stream ensuring response.completed is reached
-        const streamText = await res.text().catch(() => "")
-        let content = ""
-        let toolCalls: any[] = []
-        let completed = false
-        let failed = false
-        let failureError: string | undefined
-        let usage = { prompt_tokens: 0, completion_tokens: 0 }
-
-        for (const line of streamText.split("\n")) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith("data:")) continue
-          const payloadStr = trimmed.slice(5).trim()
-          if (!payloadStr || payloadStr === "[DONE]") continue
-
+        let bodyObj: any = {}
+        if (init?.body) {
           try {
-            const data = JSON.parse(payloadStr)
-            const eventType = data.type || data.event
-            if (eventType === "response.text.delta" && data.delta) {
-              content += data.delta
-            } else if (eventType === "response.output_item.added" && data.item?.type === "function_call") {
-              toolCalls.push({
-                id: data.item.call_id || data.item.id || `call_${toolCalls.length + 1}`,
-                type: "function",
-                function: { name: data.item.name, arguments: data.item.arguments || "" },
-              })
-            } else if (eventType === "response.function_call_arguments.done") {
-              const existing = toolCalls.find((t) => t.id === (data.call_id || data.item_id))
-              if (existing) {
-                existing.function.arguments = data.arguments || existing.function.arguments
-              } else {
-                toolCalls.push({
-                  id: data.call_id || data.item_id || `call_${toolCalls.length + 1}`,
-                  type: "function",
-                  function: { name: data.name, arguments: data.arguments },
-                })
-              }
-            } else if (eventType === "response.completed") {
-              completed = true
-              if (data.response?.usage) {
-                usage.prompt_tokens = data.response.usage.input_tokens || 0
-                usage.completion_tokens = data.response.usage.output_tokens || 0
-              }
-            } else if (eventType === "response.failed" || eventType === "error") {
-              failed = true
-              failureError = data.response?.error?.message || data.error?.message || "Inference failed"
-            } else if (eventType === "response.incomplete") {
-              failed = true
-              failureError = "Inference stream incomplete"
-            }
+            bodyObj = JSON.parse(String(init.body))
           } catch {
-            // Ignore non-json lines
+            bodyObj = {}
           }
         }
+        bodyObj.store = false
+        bodyObj.stream = true
 
-        if (failed) {
-          throw new Error(failureError ?? "Inference failed.")
-        }
-        if (!completed) {
-          throw new Error("Response stream ended before response.completed was received.")
-        }
-
-        const chatCompletionResponse = {
-          id: `chatcmpl-${Date.now()}`,
-          object: "chat.completion",
-          created: Math.floor(Date.now() / 1000),
-          model: o.model,
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: "assistant",
-                content: content || null,
-                ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-              },
-              finish_reason: toolCalls.length ? "tool_calls" : "stop",
-            },
-          ],
-          usage: {
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            total_tokens: usage.prompt_tokens + usage.completion_tokens,
-          },
-        }
-
-        return new Response(JSON.stringify(chatCompletionResponse), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
+        return globalThis.fetch(url, {
+          ...init,
+          headers,
+          body: JSON.stringify(bodyObj),
         })
       },
     },

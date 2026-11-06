@@ -9,6 +9,8 @@ import type { KeyStore } from "./credentials"
 */
 
 export const SERVICE = "harness-for-rea"
+const CHUNK_PREFIX = "__HFR_CHUNKED__:"
+const CHUNK_SIZE = 2000
 
 /** The part of `@napi-rs/keyring`'s `AsyncEntry` the store uses. */
 export interface KeyEntry {
@@ -27,13 +29,64 @@ export function keyringStore(service = SERVICE, make: MakeEntry | null = keyring
     read: async (slot) => {
       if (!make) return null
       const bytes = await make(service, slot).getSecret()
-      return bytes && bytes.length ? Buffer.from(bytes).toString("utf8") : null
+      if (!bytes || !bytes.length) return null
+      const raw = Buffer.from(bytes).toString("utf8")
+      if (raw.startsWith(CHUNK_PREFIX)) {
+        const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
+        let full = ""
+        for (let i = 0; i < count; i++) {
+          const chunkBytes = await make(service, `${slot}#${i}`).getSecret()
+          if (!chunkBytes) return null
+          full += Buffer.from(chunkBytes).toString("utf8")
+        }
+        return full
+      }
+      return raw
     },
     write: async (slot, key) => {
       if (!make) throw new Error("The OS keychain is not available.")
       const entry = make(service, slot)
-      if (key === null) await entry.deleteCredential().catch(() => false)
-      else await entry.setSecret(new TextEncoder().encode(key))
+      if (key === null) {
+        const existing = await entry.getSecret().catch(() => null)
+        if (existing) {
+          const raw = Buffer.from(existing).toString("utf8")
+          if (raw.startsWith(CHUNK_PREFIX)) {
+            const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
+            for (let i = 0; i < count; i++) {
+              await make(service, `${slot}#${i}`)
+                .deleteCredential()
+                .catch(() => false)
+            }
+          }
+        }
+        await entry.deleteCredential().catch(() => false)
+        return
+      }
+
+      if (key.length > CHUNK_SIZE) {
+        const chunks: string[] = []
+        for (let i = 0; i < key.length; i += CHUNK_SIZE) {
+          chunks.push(key.slice(i, i + CHUNK_SIZE))
+        }
+        for (let i = 0; i < chunks.length; i++) {
+          await make(service, `${slot}#${i}`).setSecret(new TextEncoder().encode(chunks[i]))
+        }
+        await entry.setSecret(new TextEncoder().encode(`${CHUNK_PREFIX}${chunks.length}`))
+      } else {
+        const existing = await entry.getSecret().catch(() => null)
+        if (existing) {
+          const raw = Buffer.from(existing).toString("utf8")
+          if (raw.startsWith(CHUNK_PREFIX)) {
+            const count = parseInt(raw.slice(CHUNK_PREFIX.length), 10)
+            for (let i = 0; i < count; i++) {
+              await make(service, `${slot}#${i}`)
+                .deleteCredential()
+                .catch(() => false)
+            }
+          }
+        }
+        await entry.setSecret(new TextEncoder().encode(key))
+      }
     },
   }
 }

@@ -10,8 +10,9 @@ import { redact, registerSecret } from "./events/redact"
       Token:     https://auth.openai.com/api/accounts/oauth/token
       Revoke:    https://auth.openai.com/api/accounts/oauth/revoke
       Responses: https://api.openai.com/v1/responses
+      JWKS:      https://auth.openai.com/.well-known/jwks.json
   - Uses standard OAuth 2.0 Authorization Code flow with PKCE (RFC 7636, S256).
-  - Dynamic client identity: `client_id=dynamic_agent_client` (and retains issued client_id).
+  - Dynamic client identity: retains issued client_id from callback/token endpoint.
   - Persistent host identifier: URN format `urn:uuid:<uuid>`.
   - Loopback redirect: `http://127.0.0.1:<port>/callback`.
   - Scopes: `openid profile email offline_access chatgpt.tokens.use.direct resource.invoke`.
@@ -24,6 +25,7 @@ export const CHATGPT_AUTH_ORIGIN = "https://auth.openai.com"
 export const CHATGPT_AUTHORIZE_URL = `${CHATGPT_AUTH_ORIGIN}/api/accounts/authorize`
 export const CHATGPT_TOKEN_URL = `${CHATGPT_AUTH_ORIGIN}/api/accounts/oauth/token`
 export const CHATGPT_REVOKE_URL = `${CHATGPT_AUTH_ORIGIN}/api/accounts/oauth/revoke`
+export const CHATGPT_JWKS_URL = `${CHATGPT_AUTH_ORIGIN}/.well-known/jwks.json`
 export const OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 export const OPENAI_RESPONSES_URL = `${OPENAI_API_BASE_URL}/responses`
 export const DEFAULT_CLIENT_ID = "dynamic_agent_client"
@@ -244,7 +246,6 @@ export function verifyIdToken(params: VerifyIdTokenOptions): { sub: string; emai
       verified = false
     }
   } else {
-    // If no keys provided for cryptographic validation, require signature validation failure
     throw new Error("Invalid ID token: cryptographic verification failed (missing public key or JWKS).")
   }
 
@@ -345,6 +346,7 @@ export class ChatGPTAuthService {
   private readonly hostId: string
   private readonly jwks?: { keys: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
   private readonly publicKey?: KeyLike | string
+  private cachedJwks: { keys: Array<Record<string, unknown>>; fetchedAt: number } | null = null
   private activeLoopback: LoopbackHandle | null = null
   private currentSession: ChatGPTSession | null = null
   private refreshGeneration = 0
@@ -365,6 +367,41 @@ export class ChatGPTAuthService {
 
   getHostId(): string {
     return this.hostId
+  }
+
+  /**
+   * Fetches official OpenAI JWKS keys with in-memory caching and freshness management (C1).
+   */
+  async getJwks(): Promise<{ keys: Array<Record<string, unknown>> }> {
+    if (this.jwks) {
+      const keys = Array.isArray(this.jwks) ? this.jwks : this.jwks.keys
+      return { keys }
+    }
+
+    if (this.cachedJwks && Date.now() - this.cachedJwks.fetchedAt < 3600_000) {
+      return this.cachedJwks
+    }
+
+    try {
+      const res = await this.fetch(CHATGPT_JWKS_URL, {
+        headers: { Accept: "application/json" },
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { keys?: Array<Record<string, unknown>> }
+        if (Array.isArray(data?.keys)) {
+          this.cachedJwks = { keys: data.keys, fetchedAt: Date.now() }
+          return this.cachedJwks
+        }
+      }
+    } catch {
+      // Fallback below
+    }
+
+    if (this.cachedJwks) {
+      return this.cachedJwks
+    }
+
+    throw new Error("Failed to fetch official JWKS for ID token verification.")
   }
 
   /**
@@ -407,6 +444,7 @@ export class ChatGPTAuthService {
 
   /**
    * Starts the Sign in with ChatGPT authorization flow using RFC 7636 PKCE.
+   * Keeps timeout deadline active throughout both loopback and code exchange phases (C5).
    */
   async startSignIn(options?: { preferredPort?: number; timeoutMs?: number }): Promise<ChatGPTSession> {
     this.cancelSignIn()
@@ -431,7 +469,11 @@ export class ChatGPTAuthService {
 
     const { signal } = abortController
     let loopbackHandle: LoopbackHandle | null = null
-    let timeoutTimer: NodeJS.Timeout | null = null
+
+    // Deadline covers the entire flow including code exchange (C5)
+    const timeoutTimer = setTimeout(() => {
+      abortController.abort(new Error("Authentication timed out."))
+    }, timeoutMs)
 
     try {
       let resolveCallback!: (params: { code?: string; state?: string; clientId?: string; error?: string; errorDescription?: string }) => void
@@ -442,17 +484,11 @@ export class ChatGPTAuthService {
       })
       callbackPromise.catch(() => {})
 
-      timeoutTimer = setTimeout(() => {
-        rejectCallback(new Error("Authentication timed out waiting for browser callback."))
-      }, timeoutMs)
-
       signal.addEventListener("abort", () => {
-        if (timeoutTimer) clearTimeout(timeoutTimer)
         rejectCallback(new Error("Authentication cancelled by user."))
       })
 
       loopbackHandle = await startLoopbackServer(options?.preferredPort ?? 0, state, (params) => {
-        if (timeoutTimer) clearTimeout(timeoutTimer)
         resolveCallback(params)
       })
       this.activeLoopback = loopbackHandle
@@ -469,7 +505,6 @@ export class ChatGPTAuthService {
 
       const opened = await this.openUrl(authUrl)
       if (!opened) {
-        if (timeoutTimer) clearTimeout(timeoutTimer)
         throw new Error("Could not open system browser for ChatGPT authorization.")
       }
 
@@ -487,17 +522,32 @@ export class ChatGPTAuthService {
         throw new Error("Authorization callback returned no authorization code.")
       }
 
-      // Check re-authorization client_id consistency
-      if (this.currentSession?.clientId && callbackParams.clientId && callbackParams.clientId !== this.currentSession.clientId) {
-        throw new Error(`Client ID mismatch during re-authorization: expected ${this.currentSession.clientId}, got ${callbackParams.clientId}.`)
+      // Initial registration requires an issued client_id; re-authorization checks consistency (C6)
+      let targetClientId: string
+      if (this.currentSession?.clientId) {
+        if (callbackParams.clientId && callbackParams.clientId !== this.currentSession.clientId) {
+          throw new Error(`Client ID mismatch during re-authorization: expected ${this.currentSession.clientId}, got ${callbackParams.clientId}.`)
+        }
+        targetClientId = this.currentSession.clientId
+      } else {
+        if (!callbackParams.clientId) {
+          throw new Error("Authorization callback returned no client_id. An issued client ID is required for initial registration.")
+        }
+        targetClientId = callbackParams.clientId
       }
 
-      // Exchange authorization code for tokens
+      // Close loopback server as callback was processed
+      if (loopbackHandle) {
+        await loopbackHandle.close().catch(() => {})
+        this.activeLoopback = null
+      }
+
+      // Exchange authorization code for tokens (deadline still active)
       const session = await this.exchangeCode({
         code: callbackParams.code,
         codeVerifier: verifier,
-        redirectUri: loopbackHandle.redirectUri,
-        clientId: callbackParams.clientId ?? this.currentSession?.clientId ?? DEFAULT_CLIENT_ID,
+        redirectUri: loopbackHandle?.redirectUri ?? `http://127.0.0.1:0/callback`,
+        clientId: targetClientId,
         expectedNonce: nonce,
         signal,
       })
@@ -512,7 +562,7 @@ export class ChatGPTAuthService {
       await this.saveSession(session)
       return session
     } finally {
-      if (timeoutTimer) clearTimeout(timeoutTimer)
+      clearTimeout(timeoutTimer)
       if (loopbackHandle) {
         await loopbackHandle.close().catch(() => {})
       }
@@ -545,12 +595,20 @@ export class ChatGPTAuthService {
       resource: OPENAI_API_BASE_URL,
     })
 
+    if (params.signal?.aborted) {
+      throw (params.signal as any).reason || new Error("Authentication timed out.")
+    }
+
     const res = await this.fetch(CHATGPT_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
       signal: params.signal,
     })
+
+    if (params.signal?.aborted) {
+      throw (params.signal as any).reason || new Error("Authentication timed out.")
+    }
 
     const data = (await res.json().catch(() => ({}))) as {
       access_token?: string
@@ -568,18 +626,27 @@ export class ChatGPTAuthService {
       throw new Error(`Failed to exchange ChatGPT authorization code: ${err}`)
     }
 
-    const issuedClientId = data.client_id ?? params.clientId
+    // Client ID must not diverge from the attempt's target (C6)
+    if (data.client_id && data.client_id !== params.clientId) {
+      throw new Error(`Token endpoint returned client_id '${data.client_id}' which does not match authorization client_id '${params.clientId}'.`)
+    }
+    const issuedClientId = params.clientId
 
-    // Validate ID token (mandatory per R3)
+    // Validate ID token (mandatory per R3 / C1)
     if (!data.id_token) {
       throw new Error("Missing required OpenID Connect ID token in ChatGPT token response.")
+    }
+
+    let jwksToUse = this.jwks
+    if (!jwksToUse && !this.publicKey) {
+      jwksToUse = await this.getJwks()
     }
 
     const claims = verifyIdToken({
       idToken: data.id_token,
       expectedNonce: params.expectedNonce,
       expectedAudience: issuedClientId,
-      jwks: this.jwks,
+      jwks: jwksToUse,
       publicKey: this.publicKey,
     })
 
@@ -597,7 +664,6 @@ export class ChatGPTAuthService {
     const session: ChatGPTSession = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
-      idToken: data.id_token,
       expiresAt,
       scopes,
       hostId: this.hostId,
@@ -670,7 +736,6 @@ export class ChatGPTAuthService {
         ...current,
         accessToken: data.access_token,
         refreshToken: data.refresh_token ?? current.refreshToken,
-        idToken: data.id_token ?? current.idToken,
         expiresAt: Date.now() + expiresInMs,
         scopes,
       }
@@ -789,7 +854,7 @@ export class ChatGPTAuthService {
 
   /**
    * Verifies access to a model and proves inference capability with tools using Responses API.
-   * Requires `store: false` and `stream: true` per official token sharing preview requirements.
+   * Requires `store: false` and `stream: true` per official token sharing preview requirements (C2, C3).
    */
   async validateModelInference(
     model = "gpt-4o",
@@ -813,6 +878,8 @@ export class ChatGPTAuthService {
         },
       ]
 
+      const initialInput = [{ role: "user", content: [{ type: "input_text", text: "ping" }] }]
+
       const res = await this.fetch(OPENAI_RESPONSES_URL, {
         method: "POST",
         headers: {
@@ -822,7 +889,7 @@ export class ChatGPTAuthService {
         },
         body: JSON.stringify({
           model,
-          input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+          input: initialInput,
           store: false,
           stream: true,
           tools: tools ?? defaultTools,
@@ -854,7 +921,7 @@ export class ChatGPTAuthService {
       let completed = false
       let failed = false
       let failureError: string | undefined
-      let toolCallsCount = 0
+      const receivedToolCalls: Array<{ id: string; call_id: string; name: string; arguments: string }> = []
 
       for (const line of streamText.split("\n")) {
         const trimmed = line.trim()
@@ -867,7 +934,11 @@ export class ChatGPTAuthService {
             const parsed = JSON.parse(payloadStr) as {
               type?: string
               event?: string
-              tool_calls?: unknown[]
+              item?: { id?: string; call_id?: string; type?: string; name?: string; arguments?: string }
+              call_id?: string
+              name?: string
+              arguments?: string
+              delta?: string
               error?: { message?: string }
               response?: { status?: string; error?: { message?: string } }
             }
@@ -880,20 +951,24 @@ export class ChatGPTAuthService {
             } else if (eventType === "response.incomplete") {
               failed = true
               failureError = "Inference response incomplete."
-            }
-
-            if (parsed.tool_calls && Array.isArray(parsed.tool_calls)) {
-              toolCallsCount += parsed.tool_calls.length
-              if (toolExecutor) {
-                for (const tc of parsed.tool_calls as Array<{ function?: { name?: string; arguments?: string } }>) {
-                  if (tc.function?.name) {
-                    let args = {}
-                    try {
-                      args = JSON.parse(tc.function.arguments ?? "{}")
-                    } catch {}
-                    await toolExecutor(tc.function.name, args)
-                  }
-                }
+            } else if (eventType === "response.output_item.added" && parsed.item?.type === "function_call") {
+              const callId = parsed.item.call_id || parsed.item.id || `call_${receivedToolCalls.length + 1}`
+              const itemId = parsed.item.id || callId
+              receivedToolCalls.push({
+                id: itemId,
+                call_id: callId,
+                name: parsed.item.name || "",
+                arguments: parsed.item.arguments || "",
+              })
+            } else if (eventType === "response.function_call_arguments.delta") {
+              const last = receivedToolCalls[receivedToolCalls.length - 1]
+              if (last && parsed.delta) {
+                last.arguments += parsed.delta
+              }
+            } else if (eventType === "response.function_call_arguments.done") {
+              const target = receivedToolCalls.find((t) => t.call_id === parsed.call_id || t.id === parsed.call_id)
+              if (target && parsed.arguments) {
+                target.arguments = parsed.arguments
               }
             }
           } catch {
@@ -910,7 +985,45 @@ export class ChatGPTAuthService {
         return { valid: false, status: res.status, error: "Stream closed before response.completed was received." }
       }
 
-      return { valid: true, status: res.status, toolCallsCount }
+      // If toolExecutor is provided, execute tool and perform round 2 to verify two-way tool completion (C3)
+      if (toolExecutor && receivedToolCalls.length > 0) {
+        for (const tc of receivedToolCalls) {
+          let args = {}
+          try {
+            args = JSON.parse(tc.arguments || "{}")
+          } catch {}
+          const toolResult = await toolExecutor(tc.name, args)
+
+          // Perform round 2 request proving full tool cycle
+          const secondInput = [
+            ...initialInput,
+            { type: "function_call", name: tc.name, call_id: tc.call_id, arguments: tc.arguments },
+            { type: "function_call_output", call_id: tc.call_id, output: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult ?? "ok") },
+          ]
+
+          const res2 = await this.fetch(OPENAI_RESPONSES_URL, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+            },
+            body: JSON.stringify({
+              model,
+              input: secondInput,
+              store: false,
+              stream: true,
+              tools: tools ?? defaultTools,
+            }),
+          })
+
+          if (!res2.ok) {
+            return { valid: false, status: res2.status, error: `Tool round 2 failed with HTTP ${res2.status}.` }
+          }
+        }
+      }
+
+      return { valid: true, status: res.status, toolCallsCount: receivedToolCalls.length }
     } catch (e) {
       return { valid: false, error: redact((e as Error).message) }
     }

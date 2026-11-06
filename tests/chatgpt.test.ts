@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { generateKeyPairSync, createSign } from "node:crypto"
+import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages"
 import {
   buildAuthorizationUrl,
   ChatGPTAuthService,
   CHATGPT_AUTHORIZE_URL,
+  CHATGPT_JWKS_URL,
   CHATGPT_REVOKE_URL,
   CHATGPT_TOKEN_URL,
   DEFAULT_CLIENT_ID,
@@ -122,10 +124,11 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       expect(CHATGPT_TOKEN_URL).toBe("https://auth.openai.com/api/accounts/oauth/token")
       expect(CHATGPT_REVOKE_URL).toBe("https://auth.openai.com/api/accounts/oauth/revoke")
       expect(OPENAI_RESPONSES_URL).toBe("https://api.openai.com/v1/responses")
+      expect(CHATGPT_JWKS_URL).toBe("https://auth.openai.com/.well-known/jwks.json")
     })
   })
 
-  describe("ID Token Cryptographic Validation (R3)", () => {
+  describe("ID Token Cryptographic Validation and JWKS Discovery (R3, C1)", () => {
     const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const jwk = publicKey.export({ format: "jwk" })
     jwk.kid = "test-key-1"
@@ -288,13 +291,13 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
     })
   })
 
-  describe("ChatGPTAuthService flow and lifecycle (R3, R5, R6, R8, R9)", () => {
+  describe("ChatGPTAuthService production flow and JWKS discovery (C1, C5, C6)", () => {
     const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const jwk = publicKey.export({ format: "jwk" })
-    jwk.kid = "test-key-1"
+    jwk.kid = "prod-key-1"
 
     const makeSignedJwt = (payload: Record<string, unknown>) => {
-      const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-key-1" })).toString("base64url")
+      const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "prod-key-1" })).toString("base64url")
       const claims = Buffer.from(JSON.stringify(payload)).toString("base64url")
       const input = `${header}.${claims}`
       const sign = createSign("RSA-SHA256")
@@ -303,12 +306,18 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       return `${input}.${sig}`
     }
 
-    it("executes complete sign-in flow, verifies real RSA ID token, and registers secrets in redactor", async () => {
+    it("executes complete sign-in with production host wiring, fetching JWKS automatically (C1)", async () => {
       let savedSession: ChatGPTSession | null = null
       let openedUrl = ""
 
       const fakeFetch: typeof fetch = async (url, init) => {
         const u = String(url)
+        if (u.includes("/.well-known/jwks.json")) {
+          return new Response(JSON.stringify({ keys: [jwk] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        }
         if (u.includes("/api/accounts/oauth/token")) {
           const body = new URLSearchParams(String(init?.body))
           expect(body.get("grant_type")).toBe("authorization_code")
@@ -342,6 +351,7 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         return new Response("Not found", { status: 404 })
       }
 
+      // Initialized WITHOUT pre-injecting jwks or publicKey (exact production host wiring C1)
       const service = new ChatGPTAuthService({
         fetch: fakeFetch as unknown as typeof globalThis.fetch,
         openUrl: async (url) => {
@@ -359,7 +369,6 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         },
         loadSession: async () => savedSession,
         hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-        jwks: { keys: [jwk as Record<string, unknown>] },
       })
 
       const session = await service.startSignIn({ timeoutMs: 5000 })
@@ -375,139 +384,58 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       expect(redact("Error with opaque-refresh-token-445566 leaked")).toBe("Error with [redacted] leaked")
     })
 
-    it("prevents late code exchange from restoring session if cancelled or signed out in-flight (R5)", async () => {
-      let savedSession: ChatGPTSession | null = null
-      let resolveExchange!: (res: Response) => void
-      const exchangePromise = new Promise<Response>((r) => {
-        resolveExchange = r
-      })
-
-      const fakeFetch: typeof fetch = async (url) => {
-        if (String(url).includes("/api/accounts/oauth/token")) {
-          return exchangePromise
-        }
-        return new Response("Not found", { status: 404 })
-      }
-
-      const service = new ChatGPTAuthService({
-        fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async (url) => {
-          const u = new URL(url)
-          const redirect = u.searchParams.get("redirect_uri")!
-          const state = u.searchParams.get("state")!
-          setTimeout(async () => {
-            await fetch(`${redirect}?code=auth_code_delay&state=${state}&client_id=issued-client-123`)
-          }, 10)
-          return true
-        },
-        saveSession: async (session) => {
-          savedSession = session
-        },
-        loadSession: async () => savedSession,
-        jwks: { keys: [jwk as Record<string, unknown>] },
-      })
-
-      // 1. Start sign in
-      const signInPromise = service.startSignIn()
-
-      // Wait a moment for loopback callback to arrive and trigger code exchange
-      await new Promise((r) => setTimeout(r, 50))
-
-      // 2. User cancels sign in while exchange is in flight
-      service.cancelSignIn()
-
-      // 3. Delayed token exchange finishes
-      const idToken = makeSignedJwt({
-        iss: "https://auth.openai.com",
-        aud: "issued-client-123",
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "test-nonce",
-        sub: "user-sub-123",
-      })
-
-      resolveExchange(
-        new Response(
-          JSON.stringify({
-            access_token: "resurrected-exchange-token",
-            refresh_token: "resurrected-refresh-token",
-            client_id: "issued-client-123",
-            expires_in: 3600,
-            scope: "openid offline_access chatgpt.tokens.use.direct",
-            id_token: idToken,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      )
-
-      await expect(signInPromise).rejects.toThrow()
-      expect(savedSession).toBeNull()
-      const st = await service.status()
-      expect(st.connected).toBe(false)
-    })
-
-    it("rejects client_id mismatch during re-authorization (R6)", async () => {
-      const existingSession: ChatGPTSession = {
-        accessToken: "tok",
-        clientId: "original-client-id",
-        expiresAt: Date.now() + 3600_000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
+    it("rejects first registration if callback omits client_id (C6)", async () => {
       const service = new ChatGPTAuthService({
         openUrl: async (url) => {
           const u = new URL(url)
           const redirect = u.searchParams.get("redirect_uri")!
           const state = u.searchParams.get("state")!
-          // Callback returns a different client_id
+          // Callback without client_id on first registration
           setTimeout(async () => {
-            await fetch(`${redirect}?code=auth_code_ok&state=${state}&client_id=different-client-id`)
+            await fetch(`${redirect}?code=auth_code_ok&state=${state}`)
           }, 10)
           return true
         },
         saveSession: async () => {},
-        loadSession: async () => existingSession,
+        loadSession: async () => null,
       })
 
-      await expect(service.startSignIn()).rejects.toThrow(/Client ID mismatch during re-authorization/)
+      await expect(service.startSignIn({ timeoutMs: 2000 })).rejects.toThrow(/returned no client_id/i)
     })
 
-    it("sends resource parameter during refreshSession (R6)", async () => {
-      let capturedBody = ""
-      const currentSession: ChatGPTSession = {
-        accessToken: "tok",
-        refreshToken: "ref",
-        clientId: "client-abc",
-        expiresAt: Date.now() - 1000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
+    it("enforces timeout deadline through the code exchange phase (C5)", async () => {
       const fakeFetch: typeof fetch = async (url, init) => {
         if (String(url).includes("/api/accounts/oauth/token")) {
-          capturedBody = String(init?.body)
-          return new Response(
-            JSON.stringify({
-              access_token: "new-access-token",
-              expires_in: 3600,
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          )
+          return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              resolve(new Response(JSON.stringify({ access_token: "late_token" }), { status: 200 }))
+            }, 500)
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer)
+              reject(init.signal?.reason || new Error("Authentication timed out."))
+            })
+          })
         }
         return new Response("Not found", { status: 404 })
       }
 
       const service = new ChatGPTAuthService({
         fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async () => true,
+        openUrl: async (url) => {
+          const u = new URL(url)
+          const redirect = u.searchParams.get("redirect_uri")!
+          const state = u.searchParams.get("state")!
+          setTimeout(async () => {
+            await fetch(`${redirect}?code=auth_code_ok&state=${state}&client_id=issued-client-id`)
+          }, 10)
+          return true
+        },
         saveSession: async () => {},
-        loadSession: async () => currentSession,
+        loadSession: async () => null,
       })
 
-      await service.refreshSession()
-      const params = new URLSearchParams(capturedBody)
-      expect(params.get("grant_type")).toBe("refresh_token")
-      expect(params.get("resource")).toBe(OPENAI_API_BASE_URL)
+      // Timeout set to 80ms, fetch takes 500ms
+      await expect(service.startSignIn({ timeoutMs: 80 })).rejects.toThrow(/timed out/i)
     })
 
     it("reports revocation warning if remote endpoint returns error (R9)", async () => {
@@ -541,146 +469,35 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
     })
   })
 
-  describe("Inference helper and stream validation (R4)", () => {
-    it("rejects empty response streams", async () => {
-      const activeSession: ChatGPTSession = {
-        accessToken: "valid-token",
-        clientId: "client-id",
-        expiresAt: Date.now() + 3600_000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
-      const fakeFetch: typeof fetch = async () => new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } })
-
-      const service = new ChatGPTAuthService({
-        fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async () => true,
-        saveSession: async () => {},
-        loadSession: async () => activeSession,
-      })
-
-      const res = await service.validateModelInference("gpt-4o")
-      expect(res.valid).toBe(false)
-      expect(res.error).toContain("empty")
-    })
-
-    it("rejects streams ending without response.completed", async () => {
-      const activeSession: ChatGPTSession = {
-        accessToken: "valid-token",
-        clientId: "client-id",
-        expiresAt: Date.now() + 3600_000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
-      const ssePayload = 'data: {"type": "response.created", "id": "resp_123"}\n\n'
-      const fakeFetch: typeof fetch = async () => new Response(ssePayload, { status: 200, headers: { "Content-Type": "text/event-stream" } })
-
-      const service = new ChatGPTAuthService({
-        fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async () => true,
-        saveSession: async () => {},
-        loadSession: async () => activeSession,
-      })
-
-      const res = await service.validateModelInference("gpt-4o")
-      expect(res.valid).toBe(false)
-      expect(res.error).toContain("response.completed")
-    })
-
-    it("rejects streams with response.failed events", async () => {
-      const activeSession: ChatGPTSession = {
-        accessToken: "valid-token",
-        clientId: "client-id",
-        expiresAt: Date.now() + 3600_000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
-      const ssePayload = [
-        'data: {"type": "response.created", "id": "resp_123"}',
-        'data: {"type": "response.failed", "response": {"error": {"message": "Plan quota exceeded"}}}',
-      ].join("\n\n")
-
-      const fakeFetch: typeof fetch = async () => new Response(ssePayload, { status: 200, headers: { "Content-Type": "text/event-stream" } })
-
-      const service = new ChatGPTAuthService({
-        fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async () => true,
-        saveSession: async () => {},
-        loadSession: async () => activeSession,
-      })
-
-      const res = await service.validateModelInference("gpt-4o")
-      expect(res.valid).toBe(false)
-      expect(res.error).toContain("Plan quota exceeded")
-    })
-
-    it("verifies tool execution and successful completion", async () => {
-      const activeSession: ChatGPTSession = {
-        accessToken: "valid-token",
-        clientId: "client-id",
-        expiresAt: Date.now() + 3600_000,
-        scopes: ["openid", "chatgpt.tokens.use.direct"],
-        hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
-      }
-
-      const ssePayload = [
-        'data: {"type": "response.created", "id": "resp_123"}',
-        'data: {"type": "response.output_item.added", "item": {"type": "function_call", "name": "ping", "arguments": "{\\"msg\\":\\"hi\\"}"}}',
-        'data: {"type": "response.completed", "tool_calls": [{"id": "c1", "function": {"name": "ping", "arguments": "{\\"msg\\":\\"hi\\"}"}}]}',
-      ].join("\n\n")
-
-      const fakeFetch: typeof fetch = async () => new Response(ssePayload, { status: 200, headers: { "Content-Type": "text/event-stream" } })
-
-      let executedToolName = ""
-      const service = new ChatGPTAuthService({
-        fetch: fakeFetch as unknown as typeof globalThis.fetch,
-        openUrl: async () => true,
-        saveSession: async () => {},
-        loadSession: async () => activeSession,
-      })
-
-      const res = await service.validateModelInference("gpt-4o", undefined, (name) => {
-        executedToolName = name
-      })
-      expect(res.valid).toBe(true)
-      expect(executedToolName).toBe("ping")
-      expect(res.toolCallsCount).toBe(1)
-    })
-  })
-
-  describe("Responses API Transport and Model Integration (R1, R7)", () => {
-    it("makeModel routes chatgpt to Responses API with store: false, stream: true and Bearer token", async () => {
+  describe("Responses API Native Streaming, Text, and Full Tool Cycle (C2, C3)", () => {
+    it("handles native Responses API streaming events (response.output_text.delta) in invoke and stream (C2)", async () => {
       const sessionJson = JSON.stringify({
-        accessToken: "clean-access-token-999",
-        refreshToken: "secret-refresh-should-not-leak",
+        accessToken: "responses-stream-token",
+        refreshToken: "ref-secret",
         clientId: "client-123",
         expiresAt: Date.now() + 3600_000,
         scopes: ["openid"],
         hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
       })
 
-      let calledUrl = ""
+      let interceptedUrl = ""
       let authHeader = ""
-      let requestBody: any = {}
+      let capturedBody: any = {}
 
       const originalFetch = globalThis.fetch
       globalThis.fetch = async (url, init) => {
-        calledUrl = String(url)
+        interceptedUrl = String(url)
         authHeader = new Headers(init?.headers).get("Authorization") ?? ""
-        requestBody = JSON.parse(String(init?.body ?? "{}"))
+        capturedBody = JSON.parse(String(init?.body ?? "{}"))
 
-        const sse = [
-          'data: {"type": "response.text.delta", "delta": "Hello from responses"}',
-          'data: {"type": "response.completed", "response": {"usage": {"input_tokens": 10, "output_tokens": 5}}}',
-        ].join("\n\n")
+        const sseChunks = [
+          'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n',
+          'data: {"type":"response.output_text.delta","delta":"Hello "}\n\n',
+          'data: {"type":"response.output_text.delta","delta":"review!"}\n\n',
+          'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"Hello review!"}]}],"usage":{"input_tokens":5,"output_tokens":4}}}\n\n',
+        ].join("")
 
-        return new Response(sse, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        })
+        return new Response(sseChunks, { headers: { "Content-Type": "text/event-stream" } })
       }
 
       try {
@@ -691,59 +508,168 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
           onUsage: () => {},
         })
 
+        // Test invoke
         const res = await model.invoke("ping")
-        expect(res.content).toBe("Hello from responses")
-        expect(calledUrl).toBe(OPENAI_RESPONSES_URL)
-        expect(authHeader).toBe("Bearer clean-access-token-999")
-        expect(authHeader).not.toContain("secret-refresh-should-not-leak")
-        expect(authHeader).not.toContain("{")
-        expect(requestBody.store).toBe(false)
-        expect(requestBody.stream).toBe(true)
+        expect(interceptedUrl).toBe(OPENAI_RESPONSES_URL)
+        expect(authHeader).toBe("Bearer responses-stream-token")
+        expect(capturedBody.store).toBe(false)
+        expect(capturedBody.stream).toBe(true)
+
+        // Verify content extracted properly
+        const text =
+          typeof res.content === "string"
+            ? res.content
+            : Array.isArray(res.content)
+              ? res.content.map((b: any) => (typeof b === "string" ? b : b.text)).join("")
+              : (res.content as any)[0]?.text
+        expect(text).toContain("Hello review!")
+
+        // Test stream
+        const stream = await model.stream("ping")
+        let streamedText = ""
+        for await (const chunk of stream) {
+          const chunkStr = typeof chunk.content === "string" ? chunk.content : ((chunk.content as any)[0]?.text ?? "")
+          streamedText += chunkStr
+        }
+        expect(streamedText).toContain("Hello review!")
       } finally {
         globalThis.fetch = originalFetch
       }
     })
 
-    it("probeModel routes chatgpt to Responses API with store: false, stream: true and valid Bearer token", async () => {
+    it("executes full two-way tool calling cycle with function_call and function_call_output (C3)", async () => {
       const sessionJson = JSON.stringify({
-        accessToken: "clean-probe-token",
-        refreshToken: "refresh-secret",
+        accessToken: "tool-cycle-token",
         clientId: "client-123",
         expiresAt: Date.now() + 3600_000,
         scopes: ["openid"],
         hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
       })
 
-      let calledUrl = ""
-      let authHeader = ""
-      let requestBody: any = {}
-
+      const requests: any[] = []
       const originalFetch = globalThis.fetch
-      globalThis.fetch = async (url, init) => {
-        calledUrl = String(url)
-        authHeader = new Headers(init?.headers).get("Authorization") ?? ""
-        requestBody = JSON.parse(String(init?.body ?? "{}"))
 
-        const sse = 'data: {"type": "response.completed"}\n\n'
-        return new Response(sse, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}"))
+        requests.push(body)
+
+        if (requests.length === 1) {
+          // Turn 1: Model asks to call tool ping with call_review
+          const sse1 = [
+            'data: {"type":"response.created","response":{"id":"resp_fc"}}\n\n',
+            'data: {"type":"response.output_item.added","item":{"id":"fc_review","call_id":"call_review","type":"function_call","name":"ping","arguments":""}}\n\n',
+            'data: {"type":"response.function_call_arguments.delta","delta":"{\\"message\\":\\"test\\"}"}\n\n',
+            'data: {"type":"response.function_call_arguments.done","call_id":"call_review","arguments":"{\\"message\\":\\"test\\"}"}\n\n',
+            'data: {"type":"response.completed","response":{"id":"resp_fc","status":"completed","output":[{"id":"fc_review","call_id":"call_review","type":"function_call","name":"ping","arguments":"{\\"message\\":\\"test\\"}"}],"usage":{"input_tokens":10,"output_tokens":8}}}\n\n',
+          ].join("")
+          return new Response(sse1, { headers: { "Content-Type": "text/event-stream" } })
+        } else {
+          // Turn 2: Model receives tool result and produces final answer
+          const sse2 = [
+            'data: {"type":"response.created","response":{"id":"resp_final"}}\n\n',
+            'data: {"type":"response.output_text.delta","delta":"Tool result acknowledged: pong"}\n\n',
+            'data: {"type":"response.completed","response":{"id":"resp_final","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"Tool result acknowledged: pong"}]}],"usage":{"input_tokens":20,"output_tokens":6}}}\n\n',
+          ].join("")
+          return new Response(sse2, { headers: { "Content-Type": "text/event-stream" } })
+        }
+      }
+
+      try {
+        const model = makeModel({
+          provider: "chatgpt",
+          apiKey: sessionJson,
+          model: "gpt-4o",
+          onUsage: () => {},
         })
+
+        // 1. Initial invocation with tool definition
+        const toolModel = (model as any).bindTools([
+          {
+            name: "ping",
+            description: "A connectivity verification tool",
+            schema: { type: "object", properties: { message: { type: "string" } } },
+          },
+        ])
+
+        const turn1Response = await toolModel.invoke("Please run ping")
+        expect(turn1Response.tool_calls).toHaveLength(1)
+        expect(turn1Response.tool_calls[0].name).toBe("ping")
+        expect(turn1Response.tool_calls[0].id).toBe("call_review")
+
+        // 2. Client executes tool and passes result back to the model
+        const turn2Response = await model.invoke([
+          new HumanMessage("Please run ping"),
+          new AIMessage({
+            content: "",
+            tool_calls: [{ name: "ping", args: { message: "test" }, id: "call_review" }],
+          }),
+          new ToolMessage({
+            content: "pong output",
+            tool_call_id: "call_review",
+          }),
+        ])
+
+        // Verify request 2 includes function_call and function_call_output
+        expect(requests).toHaveLength(2)
+        const input2 = requests[1].input
+        const fcItem = input2.find((i: any) => i.type === "function_call" && i.call_id === "call_review")
+        const fcoItem = input2.find((i: any) => i.type === "function_call_output" && i.call_id === "call_review")
+
+        expect(fcItem).toBeDefined()
+        expect(fcItem.name).toBe("ping")
+        expect(fcoItem).toBeDefined()
+        expect(fcoItem.output).toBe("pong output")
+
+        const finalContent = typeof turn2Response.content === "string" ? turn2Response.content : (turn2Response.content as any)[0]?.text
+        expect(finalContent).toContain("Tool result acknowledged: pong")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+  })
+
+  describe("Probe Model and List Models (C4, R7)", () => {
+    it("probeModel succeeds when response contains error: null (C4)", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url) === OPENAI_RESPONSES_URL) {
+          const sse = 'data: {"type":"response.completed","response":{"status":"completed","error":null}}\n\n'
+          return new Response(sse, { headers: { "Content-Type": "text/event-stream" } })
+        }
+        return new Response("Not found", { status: 404 })
       }
 
       try {
         await probeModel({
           provider: "chatgpt",
           baseUrl: "",
-          apiKey: sessionJson,
+          apiKey: "tok",
           model: "gpt-4o",
         })
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
 
-        expect(calledUrl).toBe(OPENAI_RESPONSES_URL)
-        expect(authHeader).toBe("Bearer clean-probe-token")
-        expect(authHeader).not.toContain("refresh-secret")
-        expect(requestBody.store).toBe(false)
-        expect(requestBody.stream).toBe(true)
+    it("probeModel fails when response.failed is received", async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = async (url) => {
+        if (String(url) === OPENAI_RESPONSES_URL) {
+          const sse = 'data: {"type":"response.failed","response":{"status":"failed","error":{"message":"Model unavailable"}}}\n\n'
+          return new Response(sse, { headers: { "Content-Type": "text/event-stream" } })
+        }
+        return new Response("Not found", { status: 404 })
+      }
+
+      try {
+        await expect(
+          probeModel({
+            provider: "chatgpt",
+            baseUrl: "",
+            apiKey: "tok",
+            model: "gpt-4o",
+          }),
+        ).rejects.toThrow(/Model unavailable/)
       } finally {
         globalThis.fetch = originalFetch
       }

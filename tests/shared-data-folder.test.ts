@@ -250,6 +250,25 @@ describe("keys (R5.1, R5.2)", () => {
     expect(keyringStore("x", null).available()).toBe(false)
   })
 
+  it("chunks large secrets exceeding platform limits across multiple entries", async () => {
+    const entries = new Map<string, number[]>()
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => void entries.set(`${service}/${name}`, [...b]),
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+    const store = keyringStore("hfr-test", make)
+    const largeSecret = "A".repeat(4500)
+    await store.write("chatgpt.key", largeSecret)
+    expect(entries.has("hfr-test/chatgpt.key#0")).toBe(true)
+    expect(entries.has("hfr-test/chatgpt.key#1")).toBe(true)
+    expect(entries.has("hfr-test/chatgpt.key#2")).toBe(true)
+    expect(await store.read("chatgpt.key")).toBe(largeSecret)
+    await store.write("chatgpt.key", null)
+    expect(await store.read("chatgpt.key")).toBeNull()
+    expect(entries.has("hfr-test/chatgpt.key#0")).toBe(false)
+  })
+
   it("moves the keys of a former store into the shared one, keeping one already there, and removes them", async () => {
     const former = memory({ "openrouter.key": "sk-old-openrouter", "deepseek.key": "sk-old-deepseek" })
     const shared = memory({ "deepseek.key": "sk-shared-deepseek" })
