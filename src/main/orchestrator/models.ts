@@ -1,4 +1,4 @@
-import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, resolveEndpointUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { ChatGPTModelOption } from "@shared/types"
 import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
@@ -143,19 +143,22 @@ export const refusedKey = (e: unknown) => {
   A one-token request to the chosen model (specs/onboarding R1.6): how an OpenAI-compatible server that has no model
   list — many answer 404 to `GET /models` — shows that its endpoint, key and model work. Throws the provider's answer.
 */
-export async function probeModel(o: { provider: ProviderId; baseUrl: string; apiKey: string | null; model: string }): Promise<void> {
+export async function probeModel(o: { provider: ProviderId; baseUrl: string; apiKey: string | null; model: string; protocol?: ModelProtocol }): Promise<void> {
   const base = resolveBaseUrl(o.provider, o.baseUrl)
   if (!base) throw new Error("Set a base URL first.")
   const label = PROVIDERS[o.provider].label
 
-  if (o.provider === "chatgpt") {
-    const token = await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService())
+  if (o.provider === "chatgpt" || o.protocol === "responses") {
+    const isChatGPT = o.provider === "chatgpt"
+    const token = isChatGPT ? await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService()) : o.apiKey
+    const endpoint = isChatGPT ? OPENAI_RESPONSES_URL : resolveEndpointUrl(base, "responses")
     let res: Response
     try {
-      res = await fetch(OPENAI_RESPONSES_URL, {
+      res = await fetch(endpoint, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${token}`,
+          ...attributionHeaders(base),
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
           "content-type": "application/json",
           accept: "text/event-stream",
         },
@@ -168,7 +171,7 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
         signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
       })
     } catch (e) {
-      throw new Error(`Could not reach ${OPENAI_RESPONSES_URL}: ${(e as Error).message}`, { cause: e })
+      throw new Error(`Could not reach ${endpoint}: ${(e as Error).message}`, { cause: e })
     }
 
     if (!res.ok) {
@@ -215,9 +218,10 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
     return
   }
 
+  const chatEndpoint = resolveEndpointUrl(base, "chat/completions")
   let res: Response
   try {
-    res = await fetch(`${base}/chat/completions`, {
+    res = await fetch(chatEndpoint, {
       method: "POST",
       headers: {
         ...attributionHeaders(base),
@@ -229,7 +233,7 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     })
   } catch (e) {
-    throw new Error(`Could not reach ${base}/chat/completions: ${(e as Error).message}`, { cause: e })
+    throw new Error(`Could not reach ${chatEndpoint}: ${(e as Error).message}`, { cause: e })
   }
   if (res.ok) return
   if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429) throw friendlyError({ status: res.status }, label)

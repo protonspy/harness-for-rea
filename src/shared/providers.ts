@@ -7,6 +7,9 @@
 export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "river", "chatgpt", "custom"] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
+export const MODEL_PROTOCOLS = ["chat_completions", "responses"] as const
+export type ModelProtocol = (typeof MODEL_PROTOCOLS)[number]
+
 export interface ProviderPreset {
   id: ProviderId
   label: string
@@ -25,6 +28,10 @@ export interface ProviderPreset {
   signupUrl?: string
   /** what the provider gives the app's users, said beside that link */
   offer?: string
+  /** which model protocols this provider supports */
+  supportedProtocols?: readonly ModelProtocol[]
+  /** default protocol when none is selected */
+  defaultProtocol?: ModelProtocol
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
@@ -42,6 +49,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     signupUrl: "https://withhopper.com/cyber",
     // Requests carry Hopper's client header (attribution.ts), which is what the discount is applied by.
     offer: "20% off for Harness for REA users.",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
   },
   openrouter: {
     id: "openrouter",
@@ -62,6 +71,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
       "minimax/minimax-m3.1-flash",
     ],
     keyPlaceholder: "sk-or-v1-…",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
   },
   river: {
     id: "river",
@@ -83,6 +94,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     keyPlaceholder: "rv-…",
     signupUrl: "https://console.river.ai/keys",
     offer: "API key from the River Console.",
+    supportedProtocols: ["chat_completions", "responses"],
+    defaultProtocol: "chat_completions",
   },
   deepseek: {
     id: "deepseek",
@@ -94,6 +107,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: "deepseek-chat",
     models: ["deepseek-chat"],
     keyPlaceholder: "sk-…",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
   },
   chatgpt: {
     id: "chatgpt",
@@ -107,6 +122,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     keyPlaceholder: "OAuth session token",
     signupUrl: "https://chatgpt.com",
     offer: "Use your ChatGPT Plus or Pro plan via OpenAI token sharing.",
+    supportedProtocols: ["responses"],
+    defaultProtocol: "responses",
   },
   custom: {
     id: "custom",
@@ -118,6 +135,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: "",
     models: [],
     keyPlaceholder: "API key",
+    supportedProtocols: ["chat_completions", "responses"],
+    defaultProtocol: "chat_completions",
   },
 }
 
@@ -132,11 +151,30 @@ export function isProviderId(v: unknown): v is ProviderId {
   return typeof v === "string" && (PROVIDER_IDS as readonly string[]).includes(v)
 }
 
+/** Strips trailing slashes and known endpoints (/chat/completions, /completions, /models, /responses). */
+export function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models|responses)$/, "")
+}
+
 /** The base URL a run uses: the user's for an editable provider, else the preset's. */
 export function resolveBaseUrl(provider: ProviderId, baseUrl: string): string {
   const p = PROVIDERS[provider]
-  // A URL pasted with the endpoint on it — `…/v1/chat/completions`, `…/v1/models` — is the base URL before it.
-  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models)$/, "")
+  const raw = p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl
+  return normalizeBaseUrl(raw)
+}
+
+/**
+  Builds the full URL for a provider endpoint without duplicating path segments like /v1 or endpoints.
+*/
+export function resolveEndpointUrl(base: string, endpoint: "responses" | "chat/completions" | "models"): string {
+  const clean = normalizeBaseUrl(base)
+  if (endpoint === "responses") {
+    return /\/v\d+$/.test(clean) ? `${clean}/responses` : `${clean}/v1/responses`
+  }
+  if (endpoint === "chat/completions") {
+    return `${clean}/chat/completions`
+  }
+  return `${clean}/${endpoint}`
 }
 
 /** The vendors of Chinese models on OpenRouter, whose coding models the model choice lists next. */

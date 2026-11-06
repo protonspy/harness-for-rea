@@ -16,10 +16,13 @@ export const DEFAULT_SETTINGS: Settings = {
   timeoutMinutes: 20,
   orchestratorEffort: "default",
   specialistEffort: "default",
+  orchestratorProtocol: "chat_completions",
   specialistProvider: "hopper",
   specialistModel: HOPPER_MODEL,
+  specialistProtocol: "chat_completions",
   approvalTimeoutMinutes: 30,
   questionTimeoutMinutes: 10,
   setupCompleted: false,
   integrations: {},
+  protocols: { river: "chat_completions", chatgpt: "responses" },
 }

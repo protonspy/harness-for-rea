@@ -24,7 +24,7 @@ import type { EventLog } from "./events/log"
 import type { IntegrationGate } from "./integrations/gate"
 import type { IntegrationRegistry } from "./integrations/registry"
 import { mcpListing, type OfferedIntegration, type TaskIntegrations } from "./integrations/task"
-import { baseUrlFor, needsKey } from "./readiness"
+import { baseUrlFor, needsKey, protocolFor } from "./readiness"
 import { listChatGPTModels } from "./orchestrator/models"
 import {
   agentRunArgs,
@@ -362,6 +362,7 @@ async function startAgent(
       apiKey: deps.apiKey?.(provider) ?? "",
       model: settings.specialistModel.trim(),
       effort: o.effort,
+      protocol: protocolFor(provider, "specialist", settings),
     },
     { ...o.events, systemPrompt: o.system },
   )

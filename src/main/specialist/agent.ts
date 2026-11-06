@@ -5,7 +5,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools"
 import { MemorySaver } from "@langchain/langgraph"
 import { createDeepAgent, type BaseSandbox } from "deepagents"
 import { todoListMiddleware } from "langchain"
-import { PROVIDERS, type ProviderId } from "@shared/providers"
+import { PROVIDERS, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { FileTouch, OrchestratorEffort, SpecialistEffort } from "@shared/types"
 import { toolPolicy } from "../orchestrator/agent"
 import { makeModel, type ModelUsage } from "../orchestrator/model"
@@ -116,6 +116,7 @@ export interface AgentRun {
   apiKey: string
   model: string
   effort: SpecialistEffort
+  protocol?: ModelProtocol
 }
 
 /**
@@ -157,7 +158,15 @@ export async function startAgentSpecialist(
     const s = new AgentSpecialist({
       ...o,
       model: (onUsage) =>
-        makeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: run.apiKey, model: run.model, effort: agentEffort(run.effort), onUsage }),
+        makeModel({
+          provider: run.provider,
+          baseUrl: run.baseUrl,
+          apiKey: run.apiKey,
+          model: run.model,
+          effort: agentEffort(run.effort),
+          protocol: run.protocol,
+          onUsage,
+        }),
       provider: label,
       modelName: run.model,
       backend: new ContainerBackend(run.exec, run.container.name),

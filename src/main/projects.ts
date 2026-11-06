@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs"
 import { copyFile } from "node:fs/promises"
 import { basename, isAbsolute, join, relative } from "node:path"
 import { GOALS, type Goal, type OrchestratorEffort, type ProjectRow, type Push, type SpecialistEffort, type TargetKind } from "@shared/types"
+import type { ModelProtocol } from "@shared/providers"
 import type { ProviderId } from "@shared/providers"
 import { getDb } from "./db"
 import type { EventLog } from "./events/log"
@@ -25,6 +26,8 @@ export interface NewProject {
   model: string
   orchestratorEffort: OrchestratorEffort
   specialistEffort: SpecialistEffort
+  orchestratorProtocol?: ModelProtocol
+  specialistProtocol?: ModelProtocol
   /** a folder the user chose to keep the project under; the app's data folder when absent */
   parentFolder?: string | null
 }
@@ -43,6 +46,8 @@ function projectRow(r: Row): ProjectRow {
     model: String(r.model),
     orchestratorEffort: r.orchestrator_effort as OrchestratorEffort,
     specialistEffort: r.specialist_effort as SpecialistEffort,
+    orchestratorProtocol: (r.orchestrator_protocol as ModelProtocol) ?? "chat_completions",
+    specialistProtocol: (r.specialist_protocol as ModelProtocol) ?? "chat_completions",
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   }
@@ -107,9 +112,25 @@ export class ProjectStore {
       getDb()
         .prepare(
           `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, owns_folder, provider, model,
-            orchestrator_effort, specialist_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+            orchestrator_effort, specialist_effort, orchestrator_protocol, specialist_protocol, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, name, p.goal, target.path, target.kind, sourceRoot, folder, p.provider, p.model, p.orchestratorEffort, p.specialistEffort, at, at)
+        .run(
+          id,
+          name,
+          p.goal,
+          target.path,
+          target.kind,
+          sourceRoot,
+          folder,
+          p.provider,
+          p.model,
+          p.orchestratorEffort,
+          p.specialistEffort,
+          p.orchestratorProtocol ?? "chat_completions",
+          p.specialistProtocol ?? "chat_completions",
+          at,
+          at,
+        )
     } catch (e) {
       removeTree(folder)
       throw new Error(`The project could not be created: ${(e as Error).message}`, { cause: e })
@@ -126,16 +147,27 @@ export class ProjectStore {
   /** Change the provider, model or efforts a project's tasks run with (R1.8). */
   update(
     id: string,
-    patch: { provider?: ProviderId; model?: string; orchestratorEffort?: OrchestratorEffort; specialistEffort?: SpecialistEffort },
+    patch: {
+      provider?: ProviderId
+      model?: string
+      orchestratorEffort?: OrchestratorEffort
+      specialistEffort?: SpecialistEffort
+      orchestratorProtocol?: ModelProtocol
+      specialistProtocol?: ModelProtocol
+    },
   ): ProjectRow {
     const cur = this.get(id)
     getDb()
-      .prepare("UPDATE projects SET provider = ?, model = ?, orchestrator_effort = ?, specialist_effort = ?, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE projects SET provider = ?, model = ?, orchestrator_effort = ?, specialist_effort = ?, orchestrator_protocol = ?, specialist_protocol = ?, updated_at = ? WHERE id = ?",
+      )
       .run(
         patch.provider ?? cur.provider,
         patch.model ?? cur.model,
         patch.orchestratorEffort ?? cur.orchestratorEffort,
         patch.specialistEffort ?? cur.specialistEffort,
+        patch.orchestratorProtocol ?? cur.orchestratorProtocol ?? "chat_completions",
+        patch.specialistProtocol ?? cur.specialistProtocol ?? "chat_completions",
         this.now(),
         id,
       )
@@ -157,7 +189,14 @@ export class ProjectStore {
     Give every task that belongs to no project a project, one per source folder, named after that folder, with the app's
     data folder as its folder so the tasks' files stay where they are (R3.3). Their sandboxes follow their tasks.
   */
-  adopt(defaults: { provider: ProviderId; model: string; orchestratorEffort: OrchestratorEffort; specialistEffort: SpecialistEffort }): number {
+  adopt(defaults: {
+    provider: ProviderId
+    model: string
+    orchestratorEffort: OrchestratorEffort
+    specialistEffort: SpecialistEffort
+    orchestratorProtocol?: ModelProtocol
+    specialistProtocol?: ModelProtocol
+  }): number {
     const roots = (getDb().prepare("SELECT source_root, MIN(created_at) AS at FROM tasks WHERE project_id IS NULL GROUP BY source_root").all() as Row[]).map(
       (r) => ({
         root: String(r.source_root),
@@ -169,7 +208,7 @@ export class ProjectStore {
       getDb()
         .prepare(
           `INSERT INTO projects (id, name, goal, target_path, target_kind, source_root, folder, owns_folder, provider, model,
-            orchestrator_effort, specialist_effort, created_at, updated_at) VALUES (?, ?, 'understand', ?, 'folder', ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+            orchestrator_effort, specialist_effort, orchestrator_protocol, specialist_protocol, created_at, updated_at) VALUES (?, ?, 'understand', ?, 'folder', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -181,6 +220,8 @@ export class ProjectStore {
           defaults.model,
           defaults.orchestratorEffort,
           defaults.specialistEffort,
+          defaults.orchestratorProtocol ?? "chat_completions",
+          defaults.specialistProtocol ?? "chat_completions",
           at,
           this.now(),
         )

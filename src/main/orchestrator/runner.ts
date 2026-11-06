@@ -20,7 +20,7 @@ import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
 import { TaskIntegrations } from "../integrations/task"
-import { baseUrlFor } from "../readiness"
+import { baseUrlFor, protocolFor } from "../readiness"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { answerFromPackage, type Answerer, type ModelReply } from "./answer"
@@ -196,7 +196,7 @@ export class TaskRunner {
       kind: "task.started",
       state: "running",
       summary: "Task started",
-      payload: { input: task.request, model: task.model, gated, auto },
+      payload: { input: task.request, model: task.model, gated, auto, protocol: run.orchestratorProtocol },
     })
     this.userMessage(task.id, task.request)
     live.run = this.drive(task.id, { messages: [new HumanMessage(task.request)] }, live.callbacks)
@@ -212,8 +212,22 @@ export class TaskRunner {
   private runWith(project: ProjectRow | null) {
     const s = this.deps.settings()
     return project
-      ? { provider: project.provider, model: project.model, orchestratorEffort: project.orchestratorEffort, specialistEffort: project.specialistEffort }
-      : { provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort }
+      ? {
+          provider: project.provider,
+          model: project.model,
+          orchestratorEffort: project.orchestratorEffort,
+          specialistEffort: project.specialistEffort,
+          orchestratorProtocol: project.orchestratorProtocol ?? protocolFor(project.provider, "orchestrator", s),
+          specialistProtocol: project.specialistProtocol ?? protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+        }
+      : {
+          provider: s.provider,
+          model: s.model,
+          orchestratorEffort: s.orchestratorEffort,
+          specialistEffort: s.specialistEffort,
+          orchestratorProtocol: protocolFor(s.provider, "orchestrator", s),
+          specialistProtocol: protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+        }
   }
 
   private open(task: TaskRow, auto: boolean, gated: GateableTool[], key?: string): Live {
@@ -237,6 +251,7 @@ export class TaskRunner {
       apiKey,
       model: task.model,
       effort: run.orchestratorEffort,
+      protocol: run.orchestratorProtocol,
       onUsage: (u) => {
         log.append({
           taskId: task.id,

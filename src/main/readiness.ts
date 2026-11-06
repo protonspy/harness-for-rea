@@ -1,5 +1,5 @@
 import { refusedKey } from "./orchestrator/models"
-import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { LoginStatus, Readiness, SandboxStatus, Settings } from "@shared/types"
 
 /*
@@ -46,7 +46,7 @@ async function checkModelAvailability(d: ReadinessDeps, run: RunChoice, label: s
     return { ready: true, reason: "" }
   } catch (e) {
     if (refusedKey(e) || run.provider === "chatgpt") return { ready: false, reason: (e as Error).message }
-    const key = JSON.stringify([run.provider, run.baseUrl, run.model, d.keyHint?.(run.provider) ?? ""])
+    const key = JSON.stringify([run.provider, run.baseUrl, run.model, run.protocol ?? "chat_completions", d.keyHint?.(run.provider) ?? ""])
     if ((probed.get(key) ?? 0) > Date.now()) return { ready: true, reason: "" }
     try {
       await d.probeModel(run)
@@ -66,11 +66,24 @@ export interface RunChoice {
   provider: ProviderId
   model: string
   baseUrl: string
+  protocol?: ModelProtocol
 }
 
 /** A provider's base URL: its own, kept in Settings whichever provider Settings is on, else its default (specs/orchestrator R1.10). */
 export function baseUrlFor(provider: ProviderId, settings: Pick<Settings, "provider" | "baseUrl"> & Partial<Pick<Settings, "baseUrls">>): string {
   return resolveBaseUrl(provider, settings.baseUrls?.[provider] ?? (provider === settings.provider ? settings.baseUrl : ""))
+}
+
+export function protocolFor(
+  provider: ProviderId,
+  role: "orchestrator" | "specialist",
+  settings: Pick<Settings, "provider" | "specialistProvider"> & Partial<Pick<Settings, "protocols" | "orchestratorProtocol" | "specialistProtocol">>,
+): ModelProtocol {
+  if (provider === "chatgpt") return "responses"
+  if (settings.protocols?.[provider]) return settings.protocols[provider]!
+  if (role === "specialist" && settings.specialistProtocol) return settings.specialistProtocol
+  if (role === "orchestrator" && settings.orchestratorProtocol) return settings.orchestratorProtocol
+  return PROVIDERS[provider]?.defaultProtocol ?? "chat_completions"
 }
 
 /** Every provider but a custom endpoint takes a key; a local OpenAI-compatible server may take none. */
@@ -111,7 +124,12 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
     } else if (!settings.specialistModel.trim()) {
       reason = `Choose the specialist's model on ${label}.`
     } else if (sp === "chatgpt" || sp === "river") {
-      const run: RunChoice = { provider: sp, model: settings.specialistModel, baseUrl: baseUrlFor(sp, settings) }
+      const run: RunChoice = {
+        provider: sp,
+        model: settings.specialistModel,
+        baseUrl: baseUrlFor(sp, settings),
+        protocol: protocolFor(sp, "specialist", settings),
+      }
       const res = await checkModelAvailability(d, run, label)
       if (!res.ready) reason = res.reason
     }
@@ -125,7 +143,12 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
   }
 
   const provider = o.run?.provider ?? settings.provider
-  const run: RunChoice = { provider, model: o.run?.model ?? settings.model, baseUrl: baseUrlFor(provider, settings) }
+  const run: RunChoice = {
+    provider,
+    model: o.run?.model ?? settings.model,
+    baseUrl: baseUrlFor(provider, settings),
+    protocol: (o.run as RunChoice)?.protocol ?? protocolFor(provider, "orchestrator", settings),
+  }
   const label = PROVIDERS[provider].label
   let model: Readiness["model"] = { ready: false, reason: "", provider, model: run.model }
   if (needsKey(provider) && !d.keySet(provider)) {
