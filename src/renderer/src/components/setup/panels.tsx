@@ -843,10 +843,28 @@ export function HopperSignInBox({ onKey, onChange }: { onKey(s: KeyStatus): void
 export function ChatGPTOAuthBox({ status, onKey, onChange }: { status: KeyStatus | null; onKey(s: KeyStatus): void; onChange?(): void }) {
   const api = window.hfr.api
   const [authStatus, setAuthStatus] = useState<ChatGPTAuthStatus | null>(null)
+  const statusGeneration = useRef(0)
   const { error, run } = useRun(onChange)
 
   useEffect(() => {
-    void api.chatGPTAuthStatus().then(setAuthStatus)
+    let active = true
+    const refresh = () => {
+      const generation = ++statusGeneration.current
+      void api
+        .chatGPTAuthStatus()
+        .then((s) => {
+          if (active && generation === statusGeneration.current) setAuthStatus(s)
+        })
+        .catch(() => {})
+    }
+    // Poll so the card reflects the session being rotated by the main process
+    // auto-refresh timer instead of freezing on a stale expiry / error.
+    const timer = setInterval(refresh, 30_000)
+    refresh()
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
   }, [api])
 
   return (
@@ -871,6 +889,7 @@ export function ChatGPTOAuthBox({ status, onKey, onChange }: { status: KeyStatus
             onClick={() =>
               run(async () => {
                 const s = await api.chatGPTLogout()
+                statusGeneration.current++
                 setAuthStatus(s)
                 const nextKey = await api.keyStatus("chatgpt")
                 onKey(nextKey)
@@ -891,6 +910,7 @@ export function ChatGPTOAuthBox({ status, onKey, onChange }: { status: KeyStatus
               onClick={() =>
                 run(async () => {
                   const s = await api.startChatGPTAuth()
+                  statusGeneration.current++
                   setAuthStatus(s)
                   const nextKey = await api.keyStatus("chatgpt")
                   onKey(nextKey)

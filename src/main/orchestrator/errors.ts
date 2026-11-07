@@ -34,5 +34,10 @@ export function friendlyError(e: unknown, provider = "OpenRouter"): Error {
       404,
     )
   if (err?.name === "AbortError" || /abort/i.test(msg)) return new OrchestratorError("Cancelled.")
+  if ((provider.toLowerCase() === "river" || /river/i.test(msg)) && (status === 503 || /inference is temporarily unavailable/i.test(msg)))
+    return new OrchestratorError(
+      "River inference is temporarily unavailable. Retry the task shortly or select another River model in Settings. Service status: https://status.river.ai",
+      503,
+    )
   return e instanceof Error ? e : new Error(msg)
 }

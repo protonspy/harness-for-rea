@@ -32,6 +32,12 @@ export const DEFAULT_CLIENT_ID = "dynamic_agent_client"
 
 export const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access", "chatgpt.tokens.use.direct", "resource.invoke"] as const
 
+// Refresh the access token ahead of expiry so a long-running app never reports
+// "Session expired" while the refresh token is still valid (specs/chatgpt-auth R2).
+export const CHATGPT_REFRESH_LEAD_MS = 10 * 60_000
+export const CHATGPT_AUTO_REFRESH_INTERVAL_MS = 5 * 60_000
+export const CHATGPT_STATUS_REFRESH_RETRY_MS = 60_000
+
 export interface ChatGPTSession {
   accessToken: string
   refreshToken?: string
@@ -354,6 +360,9 @@ export class ChatGPTAuthService {
   private currentAttempt: { generation: number; abortController: AbortController } | null = null
   private pendingRefresh: Promise<ChatGPTSession> | null = null
   private inProgress = false
+  private autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+  private lastFailedRefreshAt: number | null = null
+  private lastRefreshErrorType: "transient" | "invalid_grant" | null = null
 
   constructor(deps: ChatGPTAuthServiceDeps) {
     this.fetch = deps.fetch ?? ((url, init) => globalThis.fetch(url, init))
@@ -417,22 +426,30 @@ export class ChatGPTAuthService {
     throw new Error("Failed to fetch official JWKS for ID token verification.")
   }
 
-  /**
-   * Reports active authorization status.
-   */
+  /** Refreshes a recoverable session before reporting its authorization status. */
   async status(): Promise<ChatGPTAuthStatus> {
-    if (!this.currentSession) {
-      this.currentSession = await this.loadSession()
-      if (this.currentSession) {
-        this.registerSessionSecrets(this.currentSession)
-      }
-    }
+    await this.refreshIfNearingExpiry().catch(() => {})
     if (!this.currentSession) {
       return { connected: false, inProgress: this.inProgress, hasTokenSharingScope: false }
     }
 
     const hasTokenSharing = this.currentSession.scopes.includes("chatgpt.tokens.use.direct")
     const expired = Date.now() >= this.currentSession.expiresAt
+
+    let error: string | undefined
+    let warning: string | undefined
+
+    if (expired) {
+      if (!this.currentSession.refreshToken || this.lastRefreshErrorType === "invalid_grant") {
+        error = "Session expired. Please reconnect your account."
+      } else if (this.lastRefreshErrorType === "transient") {
+        warning = "Session renewal temporarily unavailable. Retrying..."
+      } else {
+        error = "Session expired. Please reconnect your account."
+      }
+    } else if (this.lastRefreshErrorType === "transient") {
+      warning = "Session renewal temporarily unavailable. Retrying..."
+    }
 
     return {
       connected: !expired,
@@ -441,8 +458,58 @@ export class ChatGPTAuthService {
       planType: this.currentSession.planType,
       expiresAt: this.currentSession.expiresAt,
       hasTokenSharingScope: hasTokenSharing,
-      error: expired ? "Session expired. Please reconnect your account." : undefined,
+      error,
+      warning,
     }
+  }
+
+  /** Starts background renewal, including a check at startup or after sign-in. */
+  startAutoRefresh(intervalMs = CHATGPT_AUTO_REFRESH_INTERVAL_MS): void {
+    this.stopAutoRefresh()
+    void this.refreshIfNearingExpiry().catch(() => {})
+    this.autoRefreshTimer = setInterval(
+      () => {
+        void this.refreshIfNearingExpiry().catch(() => {})
+      },
+      Math.max(1000, intervalMs),
+    )
+    // Do not hold the process open just for the timer
+    this.autoRefreshTimer.unref?.()
+  }
+
+  /**
+   * Stops the background auto-refresh timer.
+   */
+  stopAutoRefresh(): void {
+    if (this.autoRefreshTimer !== null) {
+      clearInterval(this.autoRefreshTimer)
+      this.autoRefreshTimer = null
+    }
+  }
+
+  /**
+   * Rotates the access token when the current one is expired or within
+   * CHATGPT_REFRESH_LEAD_MS of expiring. Returns the refreshed session, or
+   * null when a refresh was not due. Failures are swallowed by callers.
+   */
+  async refreshIfNearingExpiry(): Promise<ChatGPTSession | null> {
+    if (!this.currentSession) {
+      const generation = this.refreshGeneration
+      const loaded = await this.loadSession()
+      if (generation !== this.refreshGeneration) return null
+      this.currentSession = loaded
+      if (this.currentSession) {
+        this.registerSessionSecrets(this.currentSession)
+      }
+    }
+    if (!this.currentSession?.refreshToken) {
+      return null
+    }
+    if (Date.now() < this.currentSession.expiresAt - CHATGPT_REFRESH_LEAD_MS) {
+      return null
+    }
+    if (this.lastFailedRefreshAt !== null && Date.now() - this.lastFailedRefreshAt < CHATGPT_STATUS_REFRESH_RETRY_MS) return null
+    return await this.refreshSession()
   }
 
   /**
@@ -573,9 +640,14 @@ export class ChatGPTAuthService {
         throw new Error("Authentication cancelled.")
       }
 
+      this.refreshGeneration++
+      this.pendingRefresh = null
       this.currentSession = session
+      this.lastFailedRefreshAt = null
+      this.lastRefreshErrorType = null
       this.registerSessionSecrets(session)
       await this.saveSession(session)
+      this.startAutoRefresh()
       return session
     } finally {
       clearTimeout(timeoutTimer)
@@ -733,55 +805,84 @@ export class ChatGPTAuthService {
     const gen = ++this.refreshGeneration
 
     const refreshPromise = (async () => {
-      const body = new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: current.clientId,
-        refresh_token: current.refreshToken!,
-        ext_agent_host_id: this.hostId,
-        resource: OPENAI_API_BASE_URL,
-      })
+      let classifiedErrorType: "transient" | "invalid_grant" = "transient"
+      try {
+        const body = new URLSearchParams({
+          grant_type: "refresh_token",
+          client_id: current.clientId,
+          refresh_token: current.refreshToken!,
+          ext_agent_host_id: this.hostId,
+          resource: OPENAI_API_BASE_URL,
+        })
 
-      const res = await this.fetch(CHATGPT_TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
-      })
+        let res: Response
+        try {
+          res = await this.fetch(CHATGPT_TOKEN_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+            signal: AbortSignal.timeout(30_000),
+          })
+        } catch (fetchErr: any) {
+          classifiedErrorType = "transient"
+          throw fetchErr
+        }
 
-      const data = (await res.json().catch(() => ({}))) as {
-        access_token?: string
-        refresh_token?: string
-        id_token?: string
-        expires_in?: number
-        scope?: string
-        error?: string
-        error_description?: string
+        const data = (await res.json().catch(() => ({}))) as {
+          access_token?: string
+          refresh_token?: string
+          id_token?: string
+          expires_in?: number
+          scope?: string
+          error?: string
+          error_description?: string
+        }
+
+        if (!res.ok || !data.access_token) {
+          const errCode = (data.error ?? "").toLowerCase()
+          const status = res.status
+          if (status >= 500 || status === 429 || errCode === "temporarily_unavailable" || errCode === "slow_down") {
+            classifiedErrorType = "transient"
+          } else if (status === 400 || status === 401 || errCode === "invalid_grant" || errCode === "invalid_request") {
+            classifiedErrorType = "invalid_grant"
+          } else {
+            classifiedErrorType = "transient"
+          }
+          const err = redact(data.error_description ?? data.error ?? `HTTP ${res.status}`)
+          const refreshError = new Error(`Failed to refresh ChatGPT token: ${err}`)
+          ;(refreshError as any).errorType = classifiedErrorType
+          throw refreshError
+        }
+
+        const expiresInMs = (data.expires_in ?? 3600) * 1000
+        const scopes = data.scope ? data.scope.split(" ").filter(Boolean) : current.scopes
+
+        const updated: ChatGPTSession = {
+          ...current,
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token ?? current.refreshToken,
+          expiresAt: Date.now() + expiresInMs,
+          scopes,
+        }
+
+        this.registerSessionSecrets(updated)
+
+        // Only save if generation matches and session was not signed out during in-flight request
+        if (gen === this.refreshGeneration && this.currentSession !== null) {
+          this.currentSession = updated
+          await this.saveSession(updated)
+          this.lastFailedRefreshAt = null
+          this.lastRefreshErrorType = null
+        }
+
+        return updated
+      } catch (error: any) {
+        if (gen === this.refreshGeneration) {
+          this.lastFailedRefreshAt = Date.now()
+          this.lastRefreshErrorType = error?.errorType ?? classifiedErrorType
+        }
+        throw error
       }
-
-      if (!res.ok || !data.access_token) {
-        const err = redact(data.error_description ?? data.error ?? `HTTP ${res.status}`)
-        throw new Error(`Failed to refresh ChatGPT token: ${err}`)
-      }
-
-      const expiresInMs = (data.expires_in ?? 3600) * 1000
-      const scopes = data.scope ? data.scope.split(" ").filter(Boolean) : current.scopes
-
-      const updated: ChatGPTSession = {
-        ...current,
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token ?? current.refreshToken,
-        expiresAt: Date.now() + expiresInMs,
-        scopes,
-      }
-
-      this.registerSessionSecrets(updated)
-
-      // Only save if generation matches and session was not signed out during in-flight request
-      if (gen === this.refreshGeneration && this.currentSession !== null) {
-        this.currentSession = updated
-        await this.saveSession(updated)
-      }
-
-      return updated
     })().finally(() => {
       if (this.pendingRefresh === refreshPromise) {
         this.pendingRefresh = null
@@ -823,6 +924,9 @@ export class ChatGPTAuthService {
     this.signInGeneration++
     this.refreshGeneration++
     this.inProgress = false
+    this.lastFailedRefreshAt = null
+    this.lastRefreshErrorType = null
+    this.stopAutoRefresh()
 
     if (this.currentAttempt) {
       this.currentAttempt.abortController.abort()

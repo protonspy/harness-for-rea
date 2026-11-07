@@ -42,6 +42,7 @@ import { PRESET_MODEL } from "@shared/defaults"
 import { PROVIDERS, resolveBaseUrl, validateReasoningEffort, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
 import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
+import { fetchRiverResponses, RIVER_INFERENCE_TIMEOUT_MS } from "./river-responses"
 
 /*
   The orchestrator's chat model (specs/orchestrator R1, adr:0014-add-openai-compatible-orchestrator-providers).
@@ -333,8 +334,10 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
     apiKey: isChatGPT ? "managed-chatgpt-token" : o.apiKey || "no-key",
     useResponsesApi: true,
     streaming: true,
+    ...(o.provider === "river" ? { maxRetries: 0, timeout: RIVER_INFERENCE_TIMEOUT_MS } : {}),
     configuration: {
       baseURL,
+      ...(o.provider === "river" ? { maxRetries: 0 } : {}),
       defaultHeaders: attributionHeaders(baseURL),
       fetch: async (url, init) => {
         // Resolve valid access token per request via auth service or session parser for ChatGPT
@@ -407,7 +410,8 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
           }
         }
 
-        const res = await globalThis.fetch(url, {
+        const request = o.provider === "river" ? fetchRiverResponses : globalThis.fetch
+        const res = await request(url, {
           ...init,
           headers,
           body: JSON.stringify(bodyObj),
