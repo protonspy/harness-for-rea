@@ -3,7 +3,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { ChatOpenAI } from "@langchain/openai"
 import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
-import { PROVIDERS, resolveBaseUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, validateReasoningEffort, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
 import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
 
@@ -136,6 +136,7 @@ export function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array
 }
 
 export function createResponsesModel(o: ModelOptions): BaseChatModel {
+  validateReasoningEffort(o.provider, o.model, o.effort)
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {
@@ -178,6 +179,14 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
         // River & Responses Contract: send full history, store:false, stream:true
         bodyObj.store = false
         bodyObj.stream = true
+
+        // Explicit reasoning effort configuration for Responses API; default omits parameter
+        if (effort) {
+          bodyObj.reasoning = { effort }
+        } else {
+          delete bodyObj.reasoning
+        }
+        delete bodyObj.reasoning_effort
 
         // Omit unsupported parameters
         delete bodyObj.temperature
@@ -249,6 +258,7 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
 export const createChatGPTResponsesModel = createResponsesModel
 
 export function makeModel(o: ModelOptions): BaseChatModel {
+  validateReasoningEffort(o.provider, o.model, o.effort)
   const protocol = o.protocol ?? (o.provider === "chatgpt" ? "responses" : "chat_completions")
   if (o.provider === "chatgpt" || protocol === "responses") {
     return createResponsesModel(o)
@@ -269,7 +279,36 @@ export function makeModel(o: ModelOptions): BaseChatModel {
     return new ChatOpenAI({
       model: o.model,
       apiKey: o.apiKey,
-      configuration: { baseURL, defaultHeaders: attributionHeaders(baseURL) },
+      configuration: {
+        baseURL,
+        defaultHeaders: attributionHeaders(baseURL),
+        fetch: async (url, init) => {
+          if (init?.body) {
+            try {
+              const bodyObj = JSON.parse(String(init.body))
+              // Preserve reasoning_content and tool calls on assistant history messages without confusing reasoning with final content
+              if (Array.isArray(bodyObj.messages)) {
+                for (const m of bodyObj.messages) {
+                  if (m && m.role === "assistant") {
+                    if (m.reasoning_content !== undefined && (m.content === null || m.content === undefined)) {
+                      m.content = ""
+                    }
+                  }
+                }
+              }
+              if (effort) {
+                bodyObj.reasoning_effort = effort
+              } else {
+                delete bodyObj.reasoning_effort
+              }
+              init = { ...init, body: JSON.stringify(bodyObj) }
+            } catch {
+              // Non-JSON body, proceed unchanged
+            }
+          }
+          return globalThis.fetch(url, init)
+        },
+      },
       temperature: 0.2,
       streamUsage: true,
       ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),

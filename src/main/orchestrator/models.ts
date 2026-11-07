@@ -1,5 +1,5 @@
-import { PROVIDERS, resolveBaseUrl, resolveEndpointUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
-import type { ChatGPTModelOption } from "@shared/types"
+import { PROVIDERS, resolveBaseUrl, resolveEndpointUrl, validateReasoningEffort, type ModelProtocol, type ProviderId } from "@shared/providers"
+import type { ChatGPTModelOption, OrchestratorEffort, ProbeResult, ProbeStatus } from "@shared/types"
 import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
 import { OPENAI_RESPONSES_URL, resolveChatGPTAccessToken } from "../chatgpt"
@@ -139,19 +139,51 @@ export const refusedKey = (e: unknown) => {
   return s === 401 || s === 403
 }
 
-/**
-  A one-token request to the chosen model (specs/onboarding R1.6): how an OpenAI-compatible server that has no model
-  list — many answer 404 to `GET /models` — shows that its endpoint, key and model work. Throws the provider's answer.
-*/
-export async function probeModel(o: { provider: ProviderId; baseUrl: string; apiKey: string | null; model: string; protocol?: ModelProtocol }): Promise<void> {
+export interface ProbeOptions {
+  provider: ProviderId
+  baseUrl: string
+  apiKey: string | null
+  model: string
+  protocol?: ModelProtocol
+  effort?: OrchestratorEffort
+}
+
+/** Token budget for model probing: ensures reasoning models have sufficient tokens to emit thinking without immediate truncation or refusal. */
+export const PROBE_BUDGET_TOKENS = 128
+
+export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult> {
   const base = resolveBaseUrl(o.provider, o.baseUrl)
-  if (!base) throw new Error("Set a base URL first.")
+  if (!base) {
+    return { ok: false, status: "error", reason: "Set a base URL first." }
+  }
   const label = PROVIDERS[o.provider].label
+
+  // Validate reasoning effort if explicitly configured
+  if (o.effort && o.effort !== "default") {
+    try {
+      validateReasoningEffort(o.provider, o.model, o.effort)
+    } catch (e) {
+      return { ok: false, status: "error", reason: (e as Error).message }
+    }
+  }
+
+  const explicitEffort = o.effort && o.effort !== "default" ? o.effort : undefined
 
   if (o.provider === "chatgpt" || o.protocol === "responses") {
     const isChatGPT = o.provider === "chatgpt"
     const token = isChatGPT ? await resolveChatGPTAccessToken(o.apiKey, getChatGPTAuthService()) : o.apiKey
     const endpoint = isChatGPT ? OPENAI_RESPONSES_URL : resolveEndpointUrl(base, "responses")
+
+    const reqBody: Record<string, unknown> = {
+      model: o.model,
+      input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+      store: false,
+      stream: true,
+    }
+    if (explicitEffort) {
+      reqBody.reasoning = { effort: explicitEffort }
+    }
+
     let res: Response
     try {
       res = await fetch(endpoint, {
@@ -162,25 +194,33 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
           "content-type": "application/json",
           accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          model: o.model,
-          input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
-          store: false,
-          stream: true,
-        }),
+        body: JSON.stringify(reqBody),
         signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
       })
     } catch (e) {
-      throw new Error(`Could not reach ${endpoint}: ${(e as Error).message}`, { cause: e })
+      return { ok: false, status: "error", reason: `Could not reach ${endpoint}: ${(e as Error).message}` }
     }
 
     if (!res.ok) {
-      if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429) throw friendlyError({ status: res.status }, label)
-      throw new Error(`${label} answered ${res.status} to a test request to ${o.model}.${res.status === 404 ? versionHint(base) : ""}`)
+      let status: ProbeStatus = "error"
+      if (res.status === 401) status = "invalid_key"
+      else if (res.status === 403) status = "forbidden"
+      else if (res.status === 402) status = "quota_exceeded"
+      else if (res.status === 404) status = "model_not_found"
+      else if (res.status === 429) status = "rate_limited"
+
+      const detail = await res.text().catch(() => "")
+      const errSaid = /"message"\s*:\s*"([^"]{1,200})"/.exec(detail)?.[1] ?? ""
+      const reason = errSaid || `${label} answered ${res.status} to a test request to ${o.model}.${res.status === 404 ? versionHint(base) : ""}`
+      return { ok: false, status, reason }
     }
 
     const streamText = await res.text().catch(() => "")
     let completed = false
+    let truncated = false
+    let hasReasoning = false
+    let failureMsg = ""
+
     for (const line of streamText.split("\n")) {
       const trimmed = line.trim()
       if (trimmed.startsWith("data:")) {
@@ -191,34 +231,59 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
             type?: string
             event?: string
             error?: { message?: string } | null
-            response?: { status?: string; error?: { message?: string } | null }
+            response?: {
+              status?: string
+              error?: { message?: string } | null
+              incomplete_details?: { reason?: string }
+            }
           }
           const eventType = parsed.type || parsed.event
           if (eventType === "response.completed") {
             completed = true
+          } else if (eventType === "response.incomplete") {
+            const incReason = parsed.response?.incomplete_details?.reason
+            if (incReason === "max_output_tokens") {
+              completed = true
+              truncated = true
+            }
+          } else if (eventType === "response.reasoning_summary_text.delta" || eventType === "response.output_item.added") {
+            hasReasoning = true
           } else if (eventType === "response.failed" || eventType === "error") {
             const errObj = parsed.response?.error || parsed.error
-            if (errObj && typeof errObj === "object" && errObj.message) {
-              throw new Error(`${label} test request failed: ${errObj.message}`)
-            } else if (eventType === "response.failed") {
-              throw new Error(`${label} test request failed: response.failed`)
-            }
+            failureMsg = errObj && typeof errObj === "object" && errObj.message ? errObj.message : "response.failed"
           }
-        } catch (e) {
-          if ((e as Error).message.includes("test request failed")) {
-            throw e
-          }
+        } catch {
+          // ignore non-json SSE lines
         }
       }
     }
 
-    if (!completed) {
-      throw new Error(`${label} test stream ended before response.completed was received.`)
+    if (failureMsg) {
+      return { ok: false, status: "error", reason: `${label} test request failed: ${failureMsg}` }
     }
-    return
+    if (!completed) {
+      return { ok: false, status: "error", reason: `${label} test stream ended before response.completed was received.` }
+    }
+
+    return {
+      ok: true,
+      status: "ready",
+      reason: "",
+      hasReasoning,
+      truncated,
+    }
   }
 
   const chatEndpoint = resolveEndpointUrl(base, "chat/completions")
+  const chatBody: Record<string, unknown> = {
+    model: o.model,
+    messages: [{ role: "user", content: "ping" }],
+    max_tokens: o.provider === "river" ? PROBE_BUDGET_TOKENS : 1,
+  }
+  if (explicitEffort) {
+    chatBody.reasoning_effort = explicitEffort
+  }
+
   let res: Response
   try {
     res = await fetch(chatEndpoint, {
@@ -229,15 +294,125 @@ export async function probeModel(o: { provider: ProviderId; baseUrl: string; api
         accept: "application/json",
         ...(o.apiKey ? { authorization: `Bearer ${o.apiKey}` } : {}),
       },
-      body: JSON.stringify({ model: o.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
+      body: JSON.stringify(chatBody),
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     })
   } catch (e) {
-    throw new Error(`Could not reach ${chatEndpoint}: ${(e as Error).message}`, { cause: e })
+    return { ok: false, status: "error", reason: `Could not reach ${chatEndpoint}: ${(e as Error).message}` }
   }
-  if (res.ok) return
-  if (res.status === 401 || res.status === 403 || res.status === 402 || res.status === 429) throw friendlyError({ status: res.status }, label)
-  const detail = await res.text().catch(() => "")
-  const said = /"message"\s*:\s*"([^"]{1,200})"/.exec(detail)?.[1] ?? ""
-  throw new Error(`${label} answered ${res.status} to a test request to ${o.model}${said ? `: ${said}` : "."}${res.status === 404 ? versionHint(base) : ""}`)
+
+  if (!res.ok) {
+    let status: ProbeStatus = "error"
+    if (res.status === 401) status = "invalid_key"
+    else if (res.status === 403) status = "forbidden"
+    else if (res.status === 402) status = "quota_exceeded"
+    else if (res.status === 404) status = "model_not_found"
+    else if (res.status === 429) status = "rate_limited"
+
+    const detail = await res.text().catch(() => "")
+    const said = /"message"\s*:\s*"([^"]{1,200})"/.exec(detail)?.[1] ?? ""
+    const reason = said
+      ? `${label} answered ${res.status} to a test request to ${o.model}: ${said}`
+      : `${label} answered ${res.status} to a test request to ${o.model}.${res.status === 404 ? versionHint(base) : ""}`
+    return { ok: false, status, reason }
+  }
+
+  const rawText = await res.text().catch(() => "")
+  let json: {
+    choices?: Array<{
+      message?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null; tool_calls?: unknown[] }
+      finish_reason?: string
+    }>
+    error?: { message?: string }
+    usage?: { completion_tokens?: number }
+    type?: string
+    response?: { id?: string; status?: string }
+    status?: string
+  } | null = null
+
+  try {
+    json = JSON.parse(rawText)
+  } catch {
+    if (rawText.includes("data:")) {
+      for (const line of rawText.split("\n")) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith("data:")) {
+          const payload = trimmed.slice(5).trim()
+          if (payload && payload !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(payload)
+              if (parsed.choices || parsed.response || parsed.type === "response.completed" || parsed.id) {
+                json = parsed
+                break
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+  }
+
+  if (json?.type === "response.completed" || json?.response?.status === "completed" || json?.status === "completed") {
+    return { ok: true, status: "ready", reason: "" }
+  }
+
+  if (json?.error?.message) {
+    return { ok: false, status: "error", reason: json.error.message }
+  }
+
+  const choice = json?.choices?.[0]
+  const message = choice?.message
+  const hasReasoning = Boolean(message?.reasoning_content || message?.reasoning)
+  const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0
+  const hasContent = typeof message?.content === "string" && message.content.length > 0
+  const truncated = choice?.finish_reason === "length"
+  const tokensOut = json?.usage?.completion_tokens
+
+  // A model that returns reasoning, tool calls, content, or was truncated after generating tokens is valid and operational
+  if (hasReasoning || hasToolCalls || hasContent || truncated) {
+    return {
+      ok: true,
+      status: "ready",
+      reason: "",
+      hasReasoning,
+      hasToolCalls,
+      truncated,
+      tokensOut,
+    }
+  }
+
+  // When choices is empty or unspecified (e.g. standard mocks or non-River endpoints returning 200 OK)
+  if (o.provider !== "river" || choice === undefined) {
+    return {
+      ok: true,
+      status: "ready",
+      reason: "",
+      hasReasoning,
+      hasToolCalls,
+      truncated,
+      tokensOut,
+    }
+  }
+
+  return {
+    ok: false,
+    status: "unverified",
+    reason: `${label} returned a response with no content, reasoning, or tool calls.`,
+  }
+}
+
+/**
+  A structured test request to the chosen model (specs/onboarding R1.6). Throws on failure or returns ProbeResult on success.
+*/
+export async function probeModel(o: ProbeOptions): Promise<ProbeResult> {
+  const result = await probeModelStructured(o)
+  if (!result.ok) {
+    const label = PROVIDERS[o.provider]?.label ?? o.provider
+    if (result.status === "invalid_key") throw friendlyError({ status: 401 }, label)
+    if (result.status === "forbidden") throw friendlyError({ status: 403 }, label)
+    if (result.status === "quota_exceeded") throw friendlyError({ status: 402 }, label)
+    if (result.status === "rate_limited") throw friendlyError({ status: 429 }, label)
+    throw new Error(result.reason)
+  }
+  return result
 }

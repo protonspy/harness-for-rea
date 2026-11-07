@@ -1,14 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useEffect, useState } from "react"
-import {
-  GOALS,
-  ORCHESTRATOR_EFFORTS,
-  SPECIALIST_EFFORTS,
-  type Goal,
-  type OrchestratorEffort,
-  type SpecialistEffort,
-  type TargetInfo,
-} from "../../../src/shared/types"
+import { GOALS, SPECIALIST_EFFORTS, type Goal, type OrchestratorEffort, type SpecialistEffort, type TargetInfo } from "../../../src/shared/types"
+import { getAvailableEffortsForModel } from "../../../src/shared/providers"
 import { goalCard, nameFrom } from "../../../src/renderer/src/lib/projects"
 import { useApp, useKeys, useScreen } from "../app/context"
 import { InputDialog, SelectDialog } from "../components/dialogs"
@@ -211,7 +204,7 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
       <Choice<OrchestratorEffort>
         label="Orchestrator's effort"
         value={orch}
-        options={ORCHESTRATOR_EFFORTS}
+        options={getAvailableEffortsForModel(provider as any, model)}
         onChange={setOrch}
         focused={field("orchestrator")}
       />

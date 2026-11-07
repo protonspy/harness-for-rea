@@ -25,6 +25,11 @@ export interface ReadinessDeps {
 const probed = new Map<string, number>()
 const PROBE_FOR_MS = 10 * 60_000
 
+export function clearProbeCache(key?: string): void {
+  if (key) probed.delete(key)
+  else probed.clear()
+}
+
 async function checkModelAvailability(d: ReadinessDeps, run: RunChoice, label: string): Promise<{ ready: boolean; reason: string }> {
   try {
     const listed = await d.listModels(run)
