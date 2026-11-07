@@ -1,16 +1,7 @@
 import { Bug, Check, Code2, FileSearch, FolderOpen, FolderTree, Map as MapIcon, Plug, Rocket, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
-import { PROVIDERS } from "@shared/providers"
-import {
-  ORCHESTRATOR_EFFORTS,
-  SPECIALIST_EFFORTS,
-  type Goal,
-  type OrchestratorEffort,
-  type ProjectRow,
-  type Settings,
-  type SpecialistEffort,
-  type TargetInfo,
-} from "@shared/types"
+import { PROVIDERS, getAvailableEffortsForModel } from "@shared/providers"
+import { SPECIALIST_EFFORTS, type Goal, type OrchestratorEffort, type ProjectRow, type Settings, type SpecialistEffort, type TargetInfo } from "@shared/types"
 import { ErrorText, Field } from "@/components/common"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { EffortSelect, message } from "@/components/setup/panels"
@@ -160,7 +151,11 @@ export function NewProject({ onCreated }: { onCreated(p: ProjectRow): void }) {
             {settings && <ModelPicker provider={settings.provider} value={model} listed={models} onChange={setModel} />}
           </Field>
           <Field label="Orchestrator effort">
-            <EffortSelect value={orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => setOrchestratorEffort(v)} />
+            <EffortSelect
+              value={orchestratorEffort}
+              options={settings ? getAvailableEffortsForModel(settings.provider, model) : []}
+              onChange={(v) => setOrchestratorEffort(v)}
+            />
           </Field>
           <Field label="Specialist effort" hint="Higher thinks longer and uses more of your Claude plan.">
             <EffortSelect value={specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => setSpecialistEffort(v)} />

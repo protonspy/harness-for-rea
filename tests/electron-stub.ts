@@ -5,8 +5,11 @@ export const stub = { encryption: true }
 
 export const safeStorage = {
   isEncryptionAvailable: () => stub.encryption,
+  isAsyncEncryptionAvailable: async () => stub.encryption,
   encryptString: (s: string) => Buffer.from(`enc:${s}`),
   decryptString: (b: Buffer) => b.toString().replace(/^enc:/, ""),
+  encryptStringAsync: async (s: string) => Buffer.from(`enc:${s}`),
+  decryptStringAsync: async (b: Buffer) => ({ result: b.toString().replace(/^enc:/, ""), shouldReEncrypt: false }),
 }
 
 export const app = { getVersion: () => "test", getPath: () => ".", isPackaged: false, getAppPath: () => process.cwd() }

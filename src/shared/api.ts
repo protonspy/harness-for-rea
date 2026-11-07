@@ -1,10 +1,12 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
 import { IntegrationIdSchema, IntegrationSettingsSchema, type IntegrationActionResult, type IntegrationStatus, type IntegrationView } from "./integrations"
-import { PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
+import { MODEL_PROTOCOLS, PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
 import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
+  ChatGPTAuthStatus,
+  ChatGPTModelOption,
   KeyStatus,
   HopperSignIn,
   LoginStatus,
@@ -18,6 +20,7 @@ import type {
   TaskHistory,
   UnknownRow,
   TaskRow,
+  ProbeResult,
 } from "./types"
 
 /*
@@ -28,6 +31,7 @@ import type {
 const id = z.string().uuid()
 
 const Provider = z.enum(PROVIDER_IDS)
+const Protocol = z.enum(MODEL_PROTOCOLS)
 
 /** A model's name as a provider lists it: no control characters, which a hostile endpoint's list could carry. */
 const ModelName = z
@@ -39,6 +43,8 @@ const ModelName = z
 
 const SettingsPatch = z
   .object({
+    expectedProvider: Provider.optional(),
+    expectedSpecialistProvider: z.enum(SPECIALIST_PROVIDERS).optional(),
     provider: Provider,
     // Empty clears it; otherwise an http(s) URL with no credentials in it.
     baseUrl: z
@@ -54,16 +60,24 @@ const SettingsPatch = z
           return false
         }
       }, "Enter a full http(s) URL"),
-    model: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
+    model: z.union([
+      z.literal(""),
+      z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9._\-/:]{3,120}$/),
+    ]),
     timeoutMinutes: z.number().int().min(1).max(240),
     orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
     specialistEffort: z.enum(SPECIALIST_EFFORTS),
     specialistProvider: z.enum(SPECIALIST_PROVIDERS),
     // Empty until one is chosen; the readiness check asks for it (specs/specialist-providers R1.3).
     specialistModel: z.union([z.literal(""), ModelName]),
+    orchestratorProtocol: Protocol,
+    specialistProtocol: Protocol,
+    orchestratorProtocols: z.record(Provider, Protocol.optional()),
+    specialistProtocols: z.record(Provider, Protocol.optional()),
+    protocols: z.record(Provider, Protocol.optional()),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
     questionTimeoutMinutes: z.number().int().min(1).max(1440),
     // Each integration's whole settings; the main process holds them to the integration the app carries (specs/mcp-integrations R1.5).
@@ -75,10 +89,21 @@ const SettingsPatch = z
 export const API_SCHEMAS = {
   getSettings: z.tuple([]),
   saveSettings: z.tuple([SettingsPatch]),
+  testConnection: z.tuple([
+    z
+      .object({
+        provider: Provider.optional(),
+        baseUrl: z.string().optional(),
+        model: ModelName.optional(),
+        protocol: Protocol.optional(),
+      })
+      .optional(),
+  ]),
   keyStatus: z.tuple([Provider.optional()]),
   saveKey: z.tuple([z.string().trim().min(8).max(512), Provider.optional()]),
   clearKey: z.tuple([Provider.optional()]),
-  listModels: z.tuple([]),
+  listModels: z.tuple([Provider.optional()]),
+  listChatGPTModels: z.tuple([]),
   sandboxStatus: z.tuple([]),
   readiness: z.tuple([]),
   completeSetup: z.tuple([]),
@@ -95,6 +120,10 @@ export const API_SCHEMAS = {
   startHopperSignIn: z.tuple([z.string().trim().email().max(254)]),
   hopperSignInStatus: z.tuple([]),
   cancelHopperSignIn: z.tuple([]),
+  startChatGPTAuth: z.tuple([]),
+  chatGPTAuthStatus: z.tuple([]),
+  cancelChatGPTAuth: z.tuple([]),
+  chatGPTLogout: z.tuple([]),
   pickFolder: z.tuple([]),
   startTask: z.tuple([
     z
@@ -119,6 +148,8 @@ export const API_SCHEMAS = {
         model: z.string().trim().min(1).max(200),
         orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
         specialistEffort: z.enum(SPECIALIST_EFFORTS),
+        orchestratorProtocol: Protocol.optional(),
+        specialistProtocol: Protocol.optional(),
         parentFolder: z.string().trim().min(1).max(1000).nullable().optional(),
       })
       .strict(),
@@ -133,6 +164,8 @@ export const API_SCHEMAS = {
         model: ModelName,
         orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
         specialistEffort: z.enum(SPECIALIST_EFFORTS),
+        orchestratorProtocol: Protocol,
+        specialistProtocol: Protocol,
       })
       .partial()
       .strict(),
@@ -175,10 +208,12 @@ export const API_METHODS = Object.keys(API_SCHEMAS) as ApiMethod[]
 export interface ApiResults {
   getSettings: Settings
   saveSettings: Settings
+  testConnection: ProbeResult
   keyStatus: KeyStatus
   saveKey: KeyStatus
   clearKey: KeyStatus
   listModels: string[]
+  listChatGPTModels: ChatGPTModelOption[]
   sandboxStatus: SandboxStatus
   readiness: Readiness
   completeSetup: Readiness
@@ -193,6 +228,10 @@ export interface ApiResults {
   startHopperSignIn: HopperSignIn
   hopperSignInStatus: HopperSignIn
   cancelHopperSignIn: HopperSignIn
+  startChatGPTAuth: ChatGPTAuthStatus
+  chatGPTAuthStatus: ChatGPTAuthStatus
+  cancelChatGPTAuth: ChatGPTAuthStatus
+  chatGPTLogout: ChatGPTAuthStatus
   pickFolder: string | null
   startTask: TaskRow
   listProjects: ProjectRow[]

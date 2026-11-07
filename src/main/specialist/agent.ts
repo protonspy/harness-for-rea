@@ -5,7 +5,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools"
 import { MemorySaver } from "@langchain/langgraph"
 import { createDeepAgent, type BaseSandbox } from "deepagents"
 import { todoListMiddleware } from "langchain"
-import { PROVIDERS, type ProviderId } from "@shared/providers"
+import { PROVIDERS, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { FileTouch, OrchestratorEffort, SpecialistEffort } from "@shared/types"
 import { toolPolicy } from "../orchestrator/agent"
 import { makeModel, type ModelUsage } from "../orchestrator/model"
@@ -55,9 +55,11 @@ export function classifyAgentFailure(e: unknown, provider: string): SpecialistEr
   const text = clean((e as Error)?.message ?? e).slice(0, 400)
   // The client's status, or the one LangChain leaves at the start of its message.
   const status = err?.statusCode ?? err?.status ?? err?.cause?.status ?? Number(/^(\d{3}) /.exec(text)?.[1])
-  if (status === 401 || status === 403 || /invalid api key|unauthori[sz]ed|incorrect api key/i.test(text))
+  if (status === 401 || /invalid api key|unauthori[sz]ed|incorrect api key/i.test(text))
     return new SpecialistError("auth", `${provider} refused the specialist's API key. Set a valid key in Settings.`)
-  if (status === 402 || /insufficient[_ ]quota|insufficient credits/i.test(text))
+  if (status === 403 || /forbidden|permission denied|access denied/i.test(text))
+    return new SpecialistError("auth", `Your ${provider} account does not have access or permissions for this endpoint or model.`)
+  if (status === 402 || /insufficient[_ ]quota|insufficient credits|credit quota/i.test(text))
     return new SpecialistError("limit", `${provider} has no credit left for the specialist. Add credit to your ${provider} account.`)
   if (status === 429 || /rate.?limit/i.test(text))
     return new SpecialistError("limit", `${provider} is limiting the specialist's requests for now. Try again shortly.`)
@@ -98,7 +100,7 @@ export interface AgentSpecialistOptions {
 
 /** The specialist's effort as the orchestrator's reasoning effort, which the provider's model takes (R1.2). */
 export function agentEffort(effort: SpecialistEffort): OrchestratorEffort {
-  return effort === "max" ? "xhigh" : effort
+  return effort as OrchestratorEffort
 }
 
 /** Where the agent runs and on what: the container its tools use, and the provider's endpoint, key and model. */
@@ -114,6 +116,7 @@ export interface AgentRun {
   apiKey: string
   model: string
   effort: SpecialistEffort
+  protocol?: ModelProtocol
 }
 
 /**
@@ -155,7 +158,15 @@ export async function startAgentSpecialist(
     const s = new AgentSpecialist({
       ...o,
       model: (onUsage) =>
-        makeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: run.apiKey, model: run.model, effort: agentEffort(run.effort), onUsage }),
+        makeModel({
+          provider: run.provider,
+          baseUrl: run.baseUrl,
+          apiKey: run.apiKey,
+          model: run.model,
+          effort: agentEffort(run.effort),
+          protocol: run.protocol,
+          onUsage,
+        }),
       provider: label,
       modelName: run.model,
       backend: new ContainerBackend(run.exec, run.container.name),

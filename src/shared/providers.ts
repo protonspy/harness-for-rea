@@ -1,11 +1,15 @@
+import { ORCHESTRATOR_EFFORTS, type OrchestratorEffort } from "./types"
 /*
   The orchestrator's model providers (adr:0014-add-openai-compatible-orchestrator-providers). OpenRouter
   keeps its own client for its routing extras; every other provider speaks the OpenAI chat API, so it
   is a base URL, a key and a model name. Adding one is one entry here.
 */
 
-export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "custom"] as const
+export const PROVIDER_IDS = ["hopper", "openrouter", "deepseek", "river", "chatgpt", "custom"] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
+
+export const MODEL_PROTOCOLS = ["chat_completions", "responses"] as const
+export type ModelProtocol = (typeof MODEL_PROTOCOLS)[number]
 
 export interface ProviderPreset {
   id: ProviderId
@@ -25,6 +29,10 @@ export interface ProviderPreset {
   signupUrl?: string
   /** what the provider gives the app's users, said beside that link */
   offer?: string
+  /** which model protocols this provider supports */
+  supportedProtocols?: readonly ModelProtocol[]
+  /** default protocol when none is selected */
+  defaultProtocol?: ModelProtocol
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
@@ -42,6 +50,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     signupUrl: "https://withhopper.com/cyber",
     // Requests carry Hopper's client header (attribution.ts), which is what the discount is applied by.
     offer: "20% off for Harness for REA users.",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
   },
   openrouter: {
     id: "openrouter",
@@ -62,6 +72,31 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
       "minimax/minimax-m3.1-flash",
     ],
     keyPlaceholder: "sk-or-v1-…",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
+  },
+  river: {
+    id: "river",
+    label: "River",
+    kind: "openai",
+    baseUrl: "https://api.river.ai/v1",
+    editableBaseUrl: false,
+    keyRequired: true,
+    defaultModel: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    models: [
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "GLM-5.3",
+      "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+      "zai-org/GLM-5.3-Flash",
+      "Qwen/Qwen3.8-27B-FP8",
+      "deepseek-ai/DeepSeek-V4.1-Flash",
+      "moonshotai/Kimi-K3",
+    ],
+    keyPlaceholder: "rv-…",
+    signupUrl: "https://console.river.ai/keys",
+    offer: "API key from the River Console.",
+    supportedProtocols: ["chat_completions", "responses"],
+    defaultProtocol: "chat_completions",
   },
   deepseek: {
     id: "deepseek",
@@ -73,6 +108,23 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: "deepseek-chat",
     models: ["deepseek-chat"],
     keyPlaceholder: "sk-…",
+    supportedProtocols: ["chat_completions"],
+    defaultProtocol: "chat_completions",
+  },
+  chatgpt: {
+    id: "chatgpt",
+    label: "ChatGPT (Codex)",
+    kind: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    editableBaseUrl: false,
+    keyRequired: true,
+    defaultModel: "",
+    models: [],
+    keyPlaceholder: "OAuth session token",
+    signupUrl: "https://chatgpt.com",
+    offer: "Use your ChatGPT Plus or Pro plan via OpenAI token sharing.",
+    supportedProtocols: ["responses"],
+    defaultProtocol: "responses",
   },
   custom: {
     id: "custom",
@@ -84,6 +136,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: "",
     models: [],
     keyPlaceholder: "API key",
+    supportedProtocols: ["chat_completions", "responses"],
+    defaultProtocol: "chat_completions",
   },
 }
 
@@ -98,11 +152,30 @@ export function isProviderId(v: unknown): v is ProviderId {
   return typeof v === "string" && (PROVIDER_IDS as readonly string[]).includes(v)
 }
 
+/** Strips trailing slashes and known endpoints (/chat/completions, /completions, /models, /responses). */
+export function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models|responses)$/, "")
+}
+
 /** The base URL a run uses: the user's for an editable provider, else the preset's. */
 export function resolveBaseUrl(provider: ProviderId, baseUrl: string): string {
   const p = PROVIDERS[provider]
-  // A URL pasted with the endpoint on it — `…/v1/chat/completions`, `…/v1/models` — is the base URL before it.
-  return (p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl).replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models)$/, "")
+  const raw = p.editableBaseUrl && baseUrl.trim() ? baseUrl.trim() : p.baseUrl
+  return normalizeBaseUrl(raw)
+}
+
+/**
+  Builds the full URL for a provider endpoint without duplicating path segments like /v1 or endpoints.
+*/
+export function resolveEndpointUrl(base: string, endpoint: "responses" | "chat/completions" | "models"): string {
+  const clean = normalizeBaseUrl(base)
+  if (endpoint === "responses") {
+    return /\/v\d+$/.test(clean) ? `${clean}/responses` : `${clean}/v1/responses`
+  }
+  if (endpoint === "chat/completions") {
+    return `${clean}/chat/completions`
+  }
+  return `${clean}/${endpoint}`
 }
 
 /** The vendors of Chinese models on OpenRouter, whose coding models the model choice lists next. */
@@ -134,6 +207,22 @@ export interface ModelGroup {
   out: a task needs answers now.
 */
 export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[] {
+  if (provider === "chatgpt") {
+    const unique = [...new Set(listed)]
+    return unique.length ? [{ label: "Models", models: unique }] : []
+  }
+  if (provider === "river") {
+    if (listed.length > 0) {
+      const presets = PROVIDERS.river.models
+      const availablePresets = presets.filter((m) => listed.includes(m))
+      const extra = [...new Set(listed)].filter((m) => !presets.includes(m) && !m.endsWith(":batch")).sort()
+      return [
+        { label: "Recommended", models: availablePresets },
+        { label: "Models", models: extra },
+      ].filter((g) => g.models.length)
+    }
+    return [{ label: "Recommended", models: [...PROVIDERS.river.models] }]
+  }
   const recommended = [...PROVIDERS[provider].models]
   const rest = [...new Set(listed)].filter((m) => !recommended.includes(m) && !m.endsWith(":batch"))
   if (provider !== "openrouter")
@@ -150,4 +239,84 @@ export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[
     { label: "Chinese coding models", models: chinese },
     { label: "Other models with tool calling", models: others },
   ].filter((g) => g.models.length)
+}
+
+export type ReasoningEffortLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+
+export interface ModelReasoningProfile {
+  supportedEfforts: readonly ("none" | "low" | "medium" | "high" | "xhigh" | "max")[]
+  defaultEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"
+  mandatoryReasoning: boolean
+}
+
+export const RIVER_MODEL_REASONING: Record<string, ModelReasoningProfile> = {
+  "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "none",
+    mandatoryReasoning: false,
+  },
+  "deepseek-ai/DeepSeek-V4.1-Flash": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "none",
+    mandatoryReasoning: false,
+  },
+  "moonshotai/Kimi-K3": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: false,
+  },
+  "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4": {
+    supportedEfforts: ["none", "medium", "high"],
+    defaultEffort: "high",
+    mandatoryReasoning: false,
+  },
+  "GLM-5.3": {
+    supportedEfforts: ["low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: true,
+  },
+  "zai-org/GLM-5.3-Flash": {
+    supportedEfforts: ["low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: true,
+  },
+  "Qwen/Qwen3.8-27B-FP8": {
+    supportedEfforts: ["none", "low", "medium", "xhigh"],
+    defaultEffort: "xhigh",
+    mandatoryReasoning: false,
+  },
+}
+
+export function getRiverModelReasoning(model: string): ModelReasoningProfile | undefined {
+  if (!model) return undefined
+  if (RIVER_MODEL_REASONING[model]) return RIVER_MODEL_REASONING[model]
+  const lower = model.toLowerCase().trim()
+  for (const [key, profile] of Object.entries(RIVER_MODEL_REASONING)) {
+    if (key.toLowerCase() === lower) return profile
+    const keyWithoutOrg = key.includes("/") ? key.split("/")[1]!.toLowerCase() : key.toLowerCase()
+    if (keyWithoutOrg === lower) return profile
+  }
+  return undefined
+}
+
+export function getAvailableEffortsForModel(provider: ProviderId, model: string): readonly OrchestratorEffort[] {
+  if (provider === "river") {
+    const profile = getRiverModelReasoning(model)
+    if (profile) {
+      return ["default", ...profile.supportedEfforts]
+    }
+  }
+  return ORCHESTRATOR_EFFORTS
+}
+
+export function validateReasoningEffort(provider: ProviderId, model: string, effort: string | undefined): void {
+  if (!effort || effort === "default") return
+  if (provider === "river") {
+    const profile = getRiverModelReasoning(model)
+    if (profile) {
+      if (!profile.supportedEfforts.includes(effort as any)) {
+        throw new Error(`Model "${model}" on River does not support reasoning effort "${effort}". Supported efforts: ${profile.supportedEfforts.join(", ")}.`)
+      }
+    }
+  }
 }

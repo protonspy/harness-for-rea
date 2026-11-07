@@ -1,6 +1,6 @@
 import { TextAttributes } from "@opentui/core"
 import { useCallback, useEffect, useState } from "react"
-import { PROVIDERS } from "../../../src/shared/providers"
+import { PROVIDERS, getAvailableEffortsForModel } from "../../../src/shared/providers"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "../../../src/shared/types"
 import { useApp, useKeys, useScreen } from "../app/context"
 import { Choice, Field } from "../components/ui"
@@ -88,14 +88,14 @@ export function SettingsScreen() {
       <Choice<(typeof ORCHESTRATOR_EFFORTS)[number]>
         label="Orchestrator's effort"
         value={s.orchestratorEffort}
-        options={ORCHESTRATOR_EFFORTS}
+        options={getAvailableEffortsForModel(s.provider, s.model)}
         onChange={(v) => void save({ orchestratorEffort: v }, `Orchestrator's effort: ${v}.`)}
         focused={on("orchestrator")}
       />
       <Choice<(typeof SPECIALIST_EFFORTS)[number]>
         label="Specialist's effort"
         value={s.specialistEffort}
-        options={SPECIALIST_EFFORTS}
+        options={s.specialistProvider === "claude" ? SPECIALIST_EFFORTS : (getAvailableEffortsForModel(s.specialistProvider, s.specialistModel) as any)}
         onChange={(v) => void save({ specialistEffort: v }, `Specialist's effort: ${v}.`)}
         focused={on("specialist")}
       />

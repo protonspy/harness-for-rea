@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { defaultDataDir, LOCKS_DIR, LockHeld, Locks, projectLockName, type Holder } from "../src/main/lock"
+import { defaultDataDir, LOCKS_DIR, LockHeld, Locks, projectLockName, slotLockName, type Holder } from "../src/main/lock"
 
 /* specs/shared-data-folder R1: a project held by one app at a time, a stale lock taken over. */
 
@@ -93,5 +93,48 @@ describe("the locks of a shared data folder", () => {
     )
     expect(defaultDataDir("darwin", {}, "/Users/u")).toBe(join("/Users/u", "Library", "Application Support", "Harness for REA"))
     expect(defaultDataDir("linux", {}, "/home/u")).toBe(join("/home/u", ".config", "Harness for REA"))
+  })
+
+  it("preserves mutual exclusion across processes while owner is live, prevents release from clearing another owner's lock, and safely takes over when dead (F1)", async () => {
+    const d = dir()
+    let aAlive = true
+    const a = new Locks(d, desktop, () => aAlive)
+    const b = new Locks(d, tui, (h) => (h.pid === 1001 ? aAlive : h.pid !== 9999))
+    const name = slotLockName("chatgpt.key")
+
+    // 1. Process A takes the lock and remains alive
+    const releaseA = await a.acquire(name, 1000)
+    expect(a.holder(name)).toBeNull()
+    expect(b.holder(name)).toEqual(desktop)
+
+    // 2. Process B attempts to acquire while A is live; times out and throws LockHeld
+    await expect(b.acquire(name, 80, 10)).rejects.toThrow(LockHeld)
+
+    // 3. Process A finishes and releases; Process B acquires successfully
+    releaseA()
+    expect(existsSync(file(d, name))).toBe(false)
+    const releaseB = await b.acquire(name, 500, 10)
+    expect(b.holder(name)).toBeNull()
+
+    // 4. Stale/misbehaving release from A must NEVER delete B's active lock
+    releaseA()
+    expect(existsSync(file(d, name))).toBe(true)
+    expect(a.holder(name)).toEqual(tui)
+
+    // Clean up B's lock
+    releaseB()
+    expect(existsSync(file(d, name))).toBe(false)
+
+    // 5. Safe recovery when owner process is dead
+    const deadProcess: Holder = { app: "desktop", pid: 9999, since: 1 }
+    const deadLocks = new Locks(d, deadProcess, () => false)
+    await deadLocks.acquire(name, 1000)
+    expect(b.holder(name)).toBeNull()
+
+    // Process B detects dead process and safely takes over
+    const recoveredRelease = await b.acquire(name, 500, 10)
+    expect(JSON.parse(readFileSync(file(d, name), "utf8"))).toMatchObject(tui)
+    recoveredRelease()
+    expect(existsSync(file(d, name))).toBe(false)
   })
 })

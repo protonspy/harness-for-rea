@@ -174,6 +174,11 @@ const MIGRATIONS: string[] = [
   CREATE INDEX steps_updated ON steps(updated_at);
   CREATE INDEX projects_updated ON projects(updated_at);
   `,
+  // Explicit protocol selection for each role and task: Chat Completions or Responses.
+  `
+  ALTER TABLE projects ADD COLUMN orchestrator_protocol TEXT DEFAULT 'chat_completions';
+  ALTER TABLE projects ADD COLUMN specialist_protocol TEXT DEFAULT 'chat_completions';
+  `,
 ]
 
 /** The schema this app knows. */

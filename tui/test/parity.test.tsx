@@ -121,6 +121,10 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
         getSettings: () => ({ ...DEFAULT_SETTINGS, setupCompleted: true }),
         startHopperSignIn: () => ({ inProgress: true, done: false, code: "123456", url: "https://withhopper.com/claim", error: "" }),
         hopperSignInStatus: () => ({ inProgress: false, done: true, code: "", url: "", error: "" }),
+        startChatGPTAuth: () => ({ connected: true, hasTokenSharingScope: true }),
+        chatGPTAuthStatus: () => ({ connected: true, hasTokenSharingScope: true }),
+        chatGPTLogout: () => ({ connected: false, hasTokenSharingScope: true }),
+        listChatGPTModels: () => [{ slug: "gpt-4o", displayName: "GPT-4o" }],
       },
       { kind: "setup" },
       async (s) => {
@@ -138,6 +142,10 @@ describe("parity with the desktop app (plans/tui-revamp 1.6)", () => {
           "/hopper-login me@example.com",
           "/hopper-cancel",
           "/base-url https://x.dev/v1",
+          "/chatgpt-status",
+          "/chatgpt-login",
+          "/chatgpt-models",
+          "/chatgpt-logout",
           "/done",
         ])
           await run(s, c)

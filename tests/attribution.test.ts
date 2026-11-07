@@ -26,7 +26,7 @@ describe("Hopper client attribution", () => {
     vi.stubGlobal("fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const req = new Request(input, init)
       seen.push(req)
-      return Response.json(req.url.endsWith("/models") ? { data: [{ id: model }] } : { choices: [] })
+      return Response.json(req.url.endsWith("/models") ? { data: [{ id: model }] } : { choices: [{ message: { content: "pong" } }] })
     })
     const options = { provider: "custom" as const, baseUrl, apiKey: "test-key", model }
     expect(await listModels(options)).toEqual([model])

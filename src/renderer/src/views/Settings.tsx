@@ -1,6 +1,7 @@
 import { Wand2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "@shared/types"
+import { getAvailableEffortsForModel } from "@shared/providers"
+import { type Settings } from "@shared/types"
 import { ErrorText, Field, PanelHeader } from "@/components/common"
 import { IntegrationsPanel } from "@/components/setup/IntegrationsPanel"
 import { ClaudePanel, EffortSelect, message, ModelPanel, SandboxPanel, SpecialistPanel } from "@/components/setup/panels"
@@ -66,7 +67,11 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
                     label="Reasoning effort"
                     hint={`Sent as ${s.provider === "openrouter" ? "OpenRouter's reasoning.effort" : "reasoning_effort"}; models without reasoning ignore it. Default sends nothing.`}
                   >
-                    <EffortSelect value={s.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => void saveModel({ orchestratorEffort: v })} />
+                    <EffortSelect
+                      value={s.orchestratorEffort}
+                      options={getAvailableEffortsForModel(s.provider, s.model)}
+                      onChange={(v) => void saveModel({ orchestratorEffort: v })}
+                    />
                   </Field>
                 )}
               </ModelPanel>
@@ -107,7 +112,15 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
                   label="Effort"
                   hint="For every delegation: Claude Code's --effort on the plan, the reasoning effort on a provider (max as xhigh). Higher effort thinks longer and costs more. Default passes nothing."
                 >
-                  <EffortSelect value={settings.specialistEffort} options={SPECIALIST_EFFORTS} onChange={(v) => save({ specialistEffort: v })} />
+                  <EffortSelect
+                    value={settings.specialistEffort}
+                    options={
+                      settings.specialistProvider === "claude"
+                        ? ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
+                        : (getAvailableEffortsForModel(settings.specialistProvider, settings.specialistModel) as any)
+                    }
+                    onChange={(v) => save({ specialistEffort: v })}
+                  />
                 </Field>
               </SpecialistPanel>
             </div>
