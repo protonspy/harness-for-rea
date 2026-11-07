@@ -23,7 +23,7 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
   const [checking, setChecking] = useState(false)
   const checkSeqRef = useRef(0)
 
-  const check = useCallback(() => {
+  const queryReadiness = useCallback(() => {
     const seq = ++checkSeqRef.current
     return api.readiness().then(
       (nextR) => {
@@ -42,25 +42,28 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
     )
   }, [api])
 
-  const triggerCheck = useCallback(() => {
+  const check = useCallback(() => {
     setChecking(true)
-    void check()
-  }, [check])
+    return queryReadiness()
+  }, [queryReadiness])
 
-  const onSettingsChange = useCallback((updated: Settings) => {
-    setSettings(updated)
-    setKeyRev((k) => k + 1)
-    triggerCheck()
-  }, [triggerCheck])
+  const onSettingsChange = useCallback(
+    (updated: Settings) => {
+      setSettings(updated)
+      setKeyRev((k) => k + 1)
+      void check()
+    },
+    [check],
+  )
 
   useEffect(() => {
     void api.getSettings().then(setSettings)
-    void check()
+    void queryReadiness()
     // The image build and the sign-in report as they move; each report may change a step.
     return window.hfr.onPush((p) => {
-      if (p.type === "sandbox" || p.type === "login") void check()
+      if (p.type === "sandbox" || p.type === "login") void queryReadiness()
     })
-  }, [api, check])
+  }, [api, queryReadiness])
 
   const finish = async () => {
     setError("")
@@ -101,9 +104,7 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
         step={
           r?.claude &&
           settings?.specialistProvider &&
-          (settings.specialistProvider === "claude"
-            ? !r.claude.provider
-            : r.claude.provider === settings.specialistProvider)
+          (settings.specialistProvider === "claude" ? !r.claude.provider : r.claude.provider === settings.specialistProvider)
             ? r.claude
             : undefined
         }
@@ -116,7 +117,7 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
           keyRev={keyRev}
           onChange={() => {
             setKeyRev((k) => k + 1)
-            triggerCheck()
+            void check()
           }}
           claude={<ClaudePanel onChange={check} />}
         />
@@ -135,7 +136,7 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
           keyRev={keyRev}
           onChange={() => {
             setKeyRev((k) => k + 1)
-            triggerCheck()
+            void check()
           }}
         />
       </Step>

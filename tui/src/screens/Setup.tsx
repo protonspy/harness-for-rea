@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { PROVIDER_IDS, PROVIDERS, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "../../../src/shared/providers"
 import type { KeyStatus, LoginStatus, Readiness, SandboxStatus, Settings } from "../../../src/shared/types"
 import type { Command } from "../app/commands"
@@ -191,10 +191,7 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Set the provider's base URL",
       args: "<url>",
       run: async (url) => {
-        await app.attempt(
-          () => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }),
-          "Base URL saved.",
-        )
+        await app.attempt(() => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }), "Base URL saved.")
         refresh()
       },
     },
@@ -304,8 +301,6 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
   ]
 }
 
-let tuiCheckSeq = 0
-
 export function SetupScreen({ then }: { then?: Route }) {
   const app = useApp()
   const { api, theme } = app
@@ -314,33 +309,38 @@ export function SetupScreen({ then }: { then?: Route }) {
   const [login, setLogin] = useState<LoginStatus | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
+  const checkSeqRef = useRef(0)
 
   const { toast } = app
-  const refresh = useCallback(() => {
-    const seq = ++tuiCheckSeq
-    void api.readiness().then(
+  const checkReadiness = useCallback(() => {
+    const seq = ++checkSeqRef.current
+    return api.readiness().then(
       (nextR) => {
-        if (seq === tuiCheckSeq) setR(nextR)
+        if (seq === checkSeqRef.current) setR(nextR)
       },
       (e: unknown) => {
-        if (seq === tuiCheckSeq) toast((e as Error).message, "error")
+        if (seq === checkSeqRef.current) toast((e as Error).message, "error")
       },
     )
+  }, [api, toast])
+
+  const refresh = useCallback(() => {
+    void checkReadiness()
     void api.sandboxStatus().then(setSandbox, () => undefined)
     void api.loginStatus().then(setLogin, () => undefined)
     void api.getSettings().then((s) => {
       setSettings(s)
       return api.keyStatus(s.provider).then(setKey)
     })
-  }, [api, toast])
+  }, [api, checkReadiness])
   useEffect(refresh, [refresh])
   usePush((p) => {
     if (p.type === "sandbox") {
       setSandbox(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     } else if (p.type === "login") {
       setLogin(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     }
   })
 
@@ -365,7 +365,9 @@ export function SetupScreen({ then }: { then?: Route }) {
     },
     { name: "cancel-login", title: "Cancel the sign-in", run: () => void app.attempt(() => api.cancelLogin()).then((s) => s && setLogin(s)) },
     { name: "logout", title: "Sign Claude out", run: () => void app.attempt(() => api.logout(), "Signed out.").then((s) => s && setLogin(s)) },
+    // oxlint-disable-next-line react/refs
     ...providerCommands(app, settings, refresh),
+    // oxlint-disable-next-line react/refs
     ...specialistCommands(app, settings, refresh),
     { name: "refresh", title: "Check every step again", run: refresh },
     {

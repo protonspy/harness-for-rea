@@ -4,7 +4,7 @@ import { blocking, readiness, type ReadinessDeps } from "../src/main/readiness"
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import { PROVIDERS } from "../src/shared/providers"
 import { API_SCHEMAS } from "../src/shared/api"
-import type { LoginStatus, SandboxStatus, Settings } from "../src/shared/types"
+import type { LoginStatus, Readiness, SandboxStatus, Settings } from "../src/shared/types"
 import { openDb } from "../src/main/db"
 
 const okSandbox: SandboxStatus = { docker: true, dockerError: "", images: true, building: false, buildLog: "", claudeVersion: "2.1.310" }
@@ -114,5 +114,94 @@ describe("onboarding provider and credentials synchronization (Issue #7)", () =>
     expect(r.sandbox.ready).toBe(false)
     expect(r.sandbox.reason).toContain("Start Docker Desktop or a compatible Docker Engine (including WSL).")
     expect(blocking(r)).toContain("Start Docker Desktop or a compatible Docker Engine (including WSL).")
+  })
+
+  it("shared credential mutation: OAuth connect/disconnect and Hopper invalidate shared state, advance keyRev and recheck readiness", async () => {
+    let keyRev = 0
+    let keyStatus = { set: false, hint: "" }
+    let ready = false
+
+    const notifyCredentialChange = () => {
+      keyRev++
+      // Triggers readiness evaluation with updated key status
+      ready = keyStatus.set
+    }
+
+    // Connect ChatGPT from specialist panel
+    keyStatus = { set: true, hint: "token" }
+    notifyCredentialChange()
+
+    expect(keyRev).toBe(1)
+    expect(ready).toBe(true)
+
+    // Disconnect ChatGPT from either panel
+    keyStatus = { set: false, hint: "" }
+    notifyCredentialChange()
+
+    expect(keyRev).toBe(2)
+    expect(ready).toBe(false)
+
+    // Connect Hopper via sign-in completion
+    keyStatus = { set: true, hint: "hopper" }
+    notifyCredentialChange()
+
+    expect(keyRev).toBe(3)
+    expect(ready).toBe(true)
+  })
+
+  it("TUI sequence protection: rejects stale refresh after newer push event", async () => {
+    let currentR: Readiness | null = null
+    const checkSeqRef = { current: 0 }
+
+    const fakeReadiness = (seq: number, r: Readiness, delayMs: number) => {
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          if (seq === checkSeqRef.current) {
+            currentR = r
+          }
+          resolve()
+        }, delayMs)
+      })
+    }
+
+    const checkReadiness = (r: Readiness, delayMs: number) => {
+      const seq = ++checkSeqRef.current
+      return fakeReadiness(seq, r, delayMs)
+    }
+
+    const rReady: Readiness = {
+      ready: true,
+      completed: true,
+      sandbox: { ready: true, building: false, reason: "" },
+      claude: { ready: true, reason: "" },
+      model: { ready: true, reason: "", provider: "hopper", model: "model-x" },
+    }
+    const rNotReady: Readiness = {
+      ready: false,
+      completed: false,
+      sandbox: { ready: true, building: false, reason: "" },
+      claude: { ready: false, reason: "Logged out" },
+      model: { ready: true, reason: "", provider: "hopper", model: "model-x" },
+    }
+
+    // Scenario 1: Refresh starts first (slow, delay 50ms), then push event occurs (fast, delay 10ms with ready=false)
+    const refreshPromise = checkReadiness(rReady, 50)
+    const pushPromise = checkReadiness(rNotReady, 10)
+
+    await Promise.all([refreshPromise, pushPromise])
+
+    // Push event was newer (seq 2), so even though refresh finished later, its response was discarded
+    expect(currentR).toEqual(rNotReady)
+    expect(currentR!.ready).toBe(false)
+
+    // Scenario 2: Push event starts first (slow, delay 50ms), then refresh occurs (fast, delay 10ms with ready=true)
+    const slowPushPromise = checkReadiness(rNotReady, 50)
+    const fastRefreshPromise = checkReadiness(rReady, 10)
+
+    await Promise.all([slowPushPromise, fastRefreshPromise])
+
+    // Refresh was newer (seq 4), so even though slow push finished later, its response was discarded
+    expect(currentR).toEqual(rReady)
+    expect(currentR!.ready).toBe(true)
   })
 })

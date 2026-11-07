@@ -65,9 +65,7 @@ export function saveSettings(patch: Partial<Settings>): Settings {
   const baseUrls = {
     ...current.baseUrls,
     ...(patch.baseUrl !== undefined ? { [provider]: patch.baseUrl } : {}),
-    ...(patch.specialistBaseUrl !== undefined && specialistProvider !== "claude"
-      ? { [specialistProvider as ProviderId]: patch.specialistBaseUrl }
-      : {}),
+    ...(patch.specialistBaseUrl !== undefined && specialistProvider !== "claude" ? { [specialistProvider as ProviderId]: patch.specialistBaseUrl } : {}),
   }
 
   const orchestratorProtocols: Partial<Record<ProviderId, ModelProtocol>> = {

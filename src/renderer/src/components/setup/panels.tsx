@@ -54,7 +54,8 @@ export function SandboxPanel({ onChange, children }: { onChange?(): void; childr
       </div>
       {!sandbox.docker && (
         <p className="text-sm text-muted-foreground">
-          Start Docker Desktop or a compatible Docker Engine (including WSL), then check again. The specialist never runs outside its container. ({sandbox.dockerError})
+          Start Docker Desktop or a compatible Docker Engine (including WSL), then check again. The specialist never runs outside its container. (
+          {sandbox.dockerError})
         </p>
       )}
       <div className="flex items-center gap-3">
@@ -88,10 +89,16 @@ export function ClaudePanel({ onChange, children }: { onChange?(): void; childre
     void api.loginStatus().then(setLogin)
     void api.sandboxStatus().then((s) => setImages(s.images))
     return window.hfr.onPush((p) => {
-      if (p.type === "login") setLogin(p.status)
-      if (p.type === "sandbox") setImages(p.status.images)
+      if (p.type === "login") {
+        setLogin(p.status)
+        onChange?.()
+      }
+      if (p.type === "sandbox") {
+        setImages(p.status.images)
+        onChange?.()
+      }
     })
-  }, [api])
+  }, [api, onChange])
   if (!login) return null
   return (
     <div className="flex flex-col gap-3">
@@ -339,7 +346,20 @@ export function ModelPanel({
           {settings.provider === "custom" && !resolveBaseUrl("custom", settings.baseUrl) && <ErrorText>Set a base URL.</ErrorText>}
         </Field>
       )}
-      <ProviderKeyField provider={settings.provider} status={key} onStatus={setKey} run={run} />
+      <ProviderKeyField
+        provider={settings.provider}
+        status={key}
+        onStatus={(nextKey) => {
+          setKey(nextKey)
+          if (!nextKey.set && settings.provider === "chatgpt") {
+            setModels([])
+            void save({ model: "" })
+          }
+          onChange?.()
+        }}
+        onChange={onChange}
+        run={run}
+      />
       <Field
         label="Model"
         hint={
@@ -417,12 +437,14 @@ export function ProviderKeyField({
   provider,
   status,
   onStatus,
+  onChange,
   run,
   label,
 }: {
   provider: ProviderId
   status: KeyStatus | null
   onStatus(s: KeyStatus): void
+  onChange?(): void
   run(fn: () => Promise<unknown>): Promise<void>
   label?: string
 }) {
@@ -441,7 +463,7 @@ export function ProviderKeyField({
             : "Sign in with your personal ChatGPT Plus or Pro account via official Token Sharing without an API key."
         }
       >
-        <ChatGPTOAuthBox status={status} onKey={onStatus} />
+        <ChatGPTOAuthBox status={status} onKey={onStatus} onChange={onChange} />
       </Field>
     )
   }
@@ -462,15 +484,26 @@ export function ProviderKeyField({
           disabled={input.trim().length < 8}
           onClick={() =>
             run(async () => {
-              onStatus(await api.saveKey(input, provider))
+              const nextKey = await api.saveKey(input, provider)
+              onStatus(nextKey)
               setInput("")
+              onChange?.()
             })
           }
         >
           <KeyRound size={14} /> Save
         </Button>
         {status?.set && (
-          <Button variant="destructive" onClick={() => run(async () => onStatus(await api.clearKey(provider)))}>
+          <Button
+            variant="destructive"
+            onClick={() =>
+              run(async () => {
+                const nextKey = await api.clearKey(provider)
+                onStatus(nextKey)
+                onChange?.()
+              })
+            }
+          >
             Clear
           </Button>
         )}
@@ -484,7 +517,7 @@ export function ProviderKeyField({
           {p.offer ? ` ${p.offer}` : ""}
         </p>
       )}
-      {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} />}
+      {provider === "hopper" && !status?.set && <HopperSignInBox onKey={onStatus} onChange={onChange} />}
     </Field>
   )
 }
@@ -639,11 +672,7 @@ export function SpecialistPanel({
     p !== sp &&
     save({
       specialistProvider: p,
-      ...(p === "claude"
-        ? {}
-        : p === "chatgpt" || p === "custom"
-          ? { specialistModel: "" }
-          : { specialistModel: PROVIDERS[p].defaultModel || "" }),
+      ...(p === "claude" ? {} : p === "chatgpt" || p === "custom" ? { specialistModel: "" } : { specialistModel: PROVIDERS[p].defaultModel || "" }),
     })
   return (
     <div className="flex flex-col gap-4">
@@ -670,9 +699,11 @@ export function SpecialistPanel({
               setKey(nextKey)
               if (!nextKey.set && sp === "chatgpt") {
                 setModels([])
-                save({ specialistModel: "" })
+                void save({ specialistModel: "" })
               }
+              onChange?.()
             }}
+            onChange={onChange}
             run={run}
             label={sp === "chatgpt" ? "ChatGPT account / Your ChatGPT plan" : `${PROVIDERS[sp].label} API key, shared with the orchestrator`}
           />
@@ -696,9 +727,7 @@ export function SpecialistPanel({
                   }
                 }}
               />
-              {sp === "custom" && !resolveBaseUrl("custom", settings.baseUrls?.[sp] ?? "") && (
-                <ErrorText>Set a base URL.</ErrorText>
-              )}
+              {sp === "custom" && !resolveBaseUrl("custom", settings.baseUrls?.[sp] ?? "") && <ErrorText>Set a base URL.</ErrorText>}
             </Field>
           )}
           <Field
@@ -756,11 +785,11 @@ export function SpecialistPanel({
   Hopper's key without pasting it (specs/specialist-providers R3): the user's email goes to Hopper's registration, Hopper's
   page opens with a code to confirm, and the key comes back into the OS keychain.
 */
-export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
+export function HopperSignInBox({ onKey, onChange }: { onKey(s: KeyStatus): void; onChange?(): void }) {
   const api = window.hfr.api
   const [email, setEmail] = useState("")
   const [state, setState] = useState<HopperSignIn | null>(null)
-  const { error, run } = useRun()
+  const { error, run } = useRun(onChange)
   const waiting = state?.inProgress ?? false
   useEffect(() => {
     void api.hopperSignInStatus().then(setState)
@@ -770,11 +799,15 @@ export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
     const timer = setInterval(() => {
       void api.hopperSignInStatus().then(async (s) => {
         setState(s)
-        if (s.done) onKey(await api.keyStatus("hopper"))
+        if (s.done) {
+          const nextKey = await api.keyStatus("hopper")
+          onKey(nextKey)
+          onChange?.()
+        }
       })
     }, 2000)
     return () => clearInterval(timer)
-  }, [api, waiting, onKey])
+  }, [api, waiting, onKey, onChange])
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-md border border-border p-3">
       {waiting && state ? (
@@ -807,10 +840,10 @@ export function HopperSignInBox({ onKey }: { onKey(s: KeyStatus): void }) {
   )
 }
 
-export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; onKey(s: KeyStatus): void }) {
+export function ChatGPTOAuthBox({ status, onKey, onChange }: { status: KeyStatus | null; onKey(s: KeyStatus): void; onChange?(): void }) {
   const api = window.hfr.api
   const [authStatus, setAuthStatus] = useState<ChatGPTAuthStatus | null>(null)
-  const { error, run } = useRun()
+  const { error, run } = useRun(onChange)
 
   useEffect(() => {
     void api.chatGPTAuthStatus().then(setAuthStatus)
@@ -839,7 +872,9 @@ export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; o
               run(async () => {
                 const s = await api.chatGPTLogout()
                 setAuthStatus(s)
-                onKey(await api.keyStatus("chatgpt"))
+                const nextKey = await api.keyStatus("chatgpt")
+                onKey(nextKey)
+                onChange?.()
               })
             }
           >
@@ -857,7 +892,9 @@ export function ChatGPTOAuthBox({ status, onKey }: { status: KeyStatus | null; o
                 run(async () => {
                   const s = await api.startChatGPTAuth()
                   setAuthStatus(s)
-                  onKey(await api.keyStatus("chatgpt"))
+                  const nextKey = await api.keyStatus("chatgpt")
+                  onKey(nextKey)
+                  onChange?.()
                 })
               }
             >

@@ -108,7 +108,10 @@ describe("the setup's steps", () => {
   it("says why the sandbox is not ready, and waits for it before reading the sign-in (R1.3, R1.7)", async () => {
     const down = deps({ sandbox: async () => ({ ...okSandbox, docker: false, dockerError: "pipe not found" }) })
     const r = await readiness(down)
-    expect(r.sandbox).toMatchObject({ ready: false, reason: expect.stringMatching(/Docker is not running \(pipe not found\)\. Start Docker Desktop or a compatible Docker Engine/) })
+    expect(r.sandbox).toMatchObject({
+      ready: false,
+      reason: expect.stringMatching(/Docker is not running \(pipe not found\)\. Start Docker Desktop or a compatible Docker Engine/),
+    })
     expect(r.claude).toMatchObject({ ready: false, reason: expect.stringMatching(/Ready the sandbox first/) })
     expect(down.logins).toBe(0)
     expect((await readiness(deps({ sandbox: async () => ({ ...okSandbox, images: false }) }))).sandbox.reason).toMatch(/not prepared yet\. Prepare them/)

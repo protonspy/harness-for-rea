@@ -394,7 +394,8 @@ export async function removeLegacy(exec: Exec): Promise<void> {
 */
 export async function preflight(exec: Exec): Promise<string | null> {
   const s = await dockerState(exec)
-  if (!s.docker) return `Docker is unavailable (${s.dockerError}). Start Docker Desktop or a compatible Docker Engine (including WSL); the specialist never runs outside its container.`
+  if (!s.docker)
+    return `Docker is unavailable (${s.dockerError}). Start Docker Desktop or a compatible Docker Engine (including WSL); the specialist never runs outside its container.`
   if (!s.images)
     return `The sandbox image is missing or out of date for Claude Code ${CLAUDE_CODE_VERSION}. The app prepares it at start; prepare it again from Settings.`
   return null

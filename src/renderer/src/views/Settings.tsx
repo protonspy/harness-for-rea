@@ -21,6 +21,7 @@ import { FIRST_SECTION, SETTINGS_SECTIONS, type SettingsSection } from "@/lib/se
 export function SettingsView({ onSetup }: { onSetup(): void }) {
   const api = window.hfr.api
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [keyRev, setKeyRev] = useState(0)
   const [section, setSection] = useState<SettingsSection>(FIRST_SECTION)
   const [error, setError] = useState("")
   useEffect(() => {
@@ -61,7 +62,7 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
           <Card>
             <PanelHeader title="Orchestrator model" />
             <div className="p-4">
-              <ModelPanel settings={settings} onSettingsChange={setSettings}>
+              <ModelPanel settings={settings} onSettingsChange={setSettings} keyRev={keyRev} onChange={() => setKeyRev((k) => k + 1)}>
                 {(s, saveModel) => (
                   <Field
                     label="Reasoning effort"
@@ -107,7 +108,13 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
           <Card>
             <PanelHeader title="Specialist" />
             <div className="p-4">
-              <SpecialistPanel settings={settings} onSettingsChange={setSettings} claude={<ClaudePanel />}>
+              <SpecialistPanel
+                settings={settings}
+                onSettingsChange={setSettings}
+                keyRev={keyRev}
+                onChange={() => setKeyRev((k) => k + 1)}
+                claude={<ClaudePanel />}
+              >
                 <Field
                   label="Effort"
                   hint="For every delegation: Claude Code's --effort on the plan, the reasoning effort on a provider (max as xhigh). Higher effort thinks longer and costs more. Default passes nothing."
