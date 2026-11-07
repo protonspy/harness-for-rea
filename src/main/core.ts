@@ -530,7 +530,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     // A project is created only once the setup is completed (specs/projects R4.4).
     createProject: async (input) => {
       if (!getSettings().setupCompleted) throw new Error("Finish the setup before creating a project.")
-      return projects.create(input)
+      const s = getSettings()
+      const orchestratorProtocol = input.orchestratorProtocol ?? protocolFor(input.provider, "orchestrator", s)
+      const sp = s.specialistProvider === "claude" ? input.provider : (s.specialistProvider as ProviderId)
+      const specialistProtocol = input.specialistProtocol ?? protocolFor(sp, "specialist", s)
+      return projects.create({
+        ...input,
+        orchestratorProtocol,
+        specialistProtocol,
+      })
     },
     // Refused while a task of it runs; then its tasks, its sandboxes and the folder the app made for it (R3.1, R3.2).
     deleteProject: async (id) => (free(id), await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),

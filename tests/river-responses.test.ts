@@ -7,6 +7,8 @@ import { protocolFor, readiness, type ReadinessDeps, type RunChoice } from "../s
 import { DEFAULT_SETTINGS } from "../src/shared/defaults"
 import { getSettings, saveSettings } from "../src/main/settings"
 import { openDb, closeDb } from "../src/main/db"
+import { startCore } from "../src/main/core"
+import type { KeyStore } from "../src/main/credentials"
 import { ProjectStore } from "../src/main/projects"
 import type { LoginStatus, ProjectRow, SandboxStatus, Settings } from "../src/shared/types"
 import type { ModelProtocol, ProviderId } from "../src/shared/providers"
@@ -497,23 +499,37 @@ describe("River Responses Transport & Protocol Negotiation (Issue #4)", () => {
   })
 
   describe("R2 - Project UI payload, lifecycle and delegation propagation", () => {
-    it("completes omitted protocols from settings when created through UI payload", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "hfr-r2-proj-"))
+    it("completes omitted protocols from settings when created through core.handlers.createProject", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "hfr-r2-core-"))
+      const targetDir = mkdtempSync(join(tmpdir(), "target-r2-"))
+      const targetFile = join(targetDir, "test.bin")
+      writeFileSync(targetFile, "dummy content")
+
+      const memory = (): KeyStore => ({
+        available: () => true,
+        read: async () => null,
+        write: async () => {},
+      })
+
+      const core = await startCore({
+        app: "desktop",
+        version: "1.0.0",
+        dataDir,
+        sandboxDir: dataDir,
+        push: () => {},
+        keys: memory(),
+      })
+
       try {
-        openDb(join(dataDir, "test.db"))
-        saveSettings({
+        await core.handlers.saveSettings({
           provider: "river",
           orchestratorProtocol: "responses",
           specialistProvider: "river",
           specialistProtocol: "responses",
-          setupCompleted: true,
         })
+        saveSettings({ setupCompleted: true })
 
-        const targetDir = mkdtempSync(join(tmpdir(), "target-r2-"))
-        const targetFile = join(targetDir, "test.bin")
-        writeFileSync(targetFile, "dummy content")
-
-        // Simulate UI payload (which omits orchestratorProtocol and specialistProtocol)
+        // Real UI payload omitting orchestratorProtocol and specialistProtocol
         const uiPayload = {
           name: "UI Project",
           goal: "understand" as const,
@@ -524,22 +540,19 @@ describe("River Responses Transport & Protocol Negotiation (Issue #4)", () => {
           specialistEffort: "medium" as const,
         }
 
-        // Using handler logic from core
-        const s = getSettings()
-        const projectStore = new ProjectStore(dataDir)
-        const project = await projectStore.create({
-          ...uiPayload,
-          orchestratorProtocol: (uiPayload as any).orchestratorProtocol ?? protocolFor(uiPayload.provider, "orchestrator", s),
-          specialistProtocol: (uiPayload as any).specialistProtocol ?? protocolFor(s.specialistProvider as ProviderId, "specialist", s),
-        })
+        const project = await core.handlers.createProject(uiPayload)
 
         expect(project.orchestratorProtocol).toBe("responses")
         expect(project.specialistProtocol).toBe("responses")
 
-        rmSync(targetDir, { recursive: true, force: true })
+        // Also verify persisted row in DB
+        const fetched = await core.handlers.getProject(project.id)
+        expect(fetched.project.orchestratorProtocol).toBe("responses")
+        expect(fetched.project.specialistProtocol).toBe("responses")
       } finally {
         closeDb()
         rmSync(dataDir, { recursive: true, force: true })
+        rmSync(targetDir, { recursive: true, force: true })
       }
     })
 
