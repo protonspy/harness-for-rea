@@ -19,7 +19,7 @@ function isEmptyPreludeEvent(event: any): boolean {
   }
   if (type === "response.content_part.added") {
     const part = event.part
-    return !part?.text && !part?.content
+    return part?.type === "output_text" && (part.text === "" || part.text === undefined || part.text === null)
   }
   return false
 }

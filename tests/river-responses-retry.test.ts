@@ -250,4 +250,24 @@ describe("River transient Responses failures", () => {
     expect(text).toContain("response.completed")
     expect(fetch).toHaveBeenCalledOnce()
   })
+
+  it("treats refusal content parts as output and prohibits replay if followed by failure", async () => {
+    const emptyOutputItem = {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: "item_1", type: "message", role: "assistant", status: "in_progress", content: [] },
+    }
+    const refusalContentPart = {
+      type: "response.content_part.added",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "refusal", refusal: "I cannot help with that request." },
+    }
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => stream(emptyOutputItem, refusalContentPart, failed))
+    const response = await fetchRiverResponses(endpoint)
+    const text = await response.text()
+    expect(text).toContain("I cannot help with that request.")
+    expect(text).toContain("Inference is temporarily unavailable")
+    expect(fetch).toHaveBeenCalledOnce()
+  })
 })
