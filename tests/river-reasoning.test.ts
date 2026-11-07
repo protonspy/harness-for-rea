@@ -499,6 +499,36 @@ describe("River Model Reasoning Validation and Probing (Issue #5)", () => {
       }
     })
 
+    it("omits max_output_tokens for ChatGPT SIWC probe while keeping it for River Responses", async () => {
+      const originalFetch = globalThis.fetch
+      let capturedBody: any = null
+
+      globalThis.fetch = async (_url: any, init?: any) => {
+        capturedBody = JSON.parse(init?.body as string)
+        return new Response('data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        })
+      }
+
+      try {
+        const res = await probeModelStructured({
+          provider: "chatgpt",
+          model: "gpt-4o",
+          baseUrl: "https://chatgpt.com",
+          apiKey: "test-token",
+        })
+
+        expect(res.ok).toBe(true)
+        expect(res.status).toBe("ready")
+        expect(capturedBody).toBeDefined()
+        expect(capturedBody.max_output_tokens).toBeUndefined()
+        expect(capturedBody.store).toBe(false)
+        expect(capturedBody.stream).toBe(true)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     it("recognizes Responses response.incomplete with max_output_tokens as truncated ready", async () => {
       const originalFetch = globalThis.fetch
       globalThis.fetch = async () => {

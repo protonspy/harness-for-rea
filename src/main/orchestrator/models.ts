@@ -179,7 +179,9 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
       input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
       store: false,
       stream: true,
-      max_output_tokens: PROBE_BUDGET_TOKENS,
+    }
+    if (!isChatGPT) {
+      reqBody.max_output_tokens = PROBE_BUDGET_TOKENS
     }
     if (explicitEffort) {
       reqBody.reasoning = { effort: explicitEffort }
