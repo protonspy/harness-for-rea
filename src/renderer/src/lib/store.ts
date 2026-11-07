@@ -75,9 +75,9 @@ export function addUsage(usage: AgentUsage[], e: EventRow): AgentUsage[] {
 
   const nextKnownCalls = nextReportedCalls + nextEstimatedCalls
   const nextHasUnknown = nextUnknownCalls > 0 || cur.hasUnknownCost === true || isUnknown
-  const nextIsEstimate = nextEstimatedCalls > 0 || cur.estimate || isEstimated || (nextHasUnknown && nextKnownCalls > 0)
+  const nextIsEstimate = nextEstimatedCalls > 0 || cur.estimate || isEstimated
 
-  const nextCostStatus: CostStatus = nextKnownCalls === 0 ? "unknown" : nextEstimatedCalls > 0 || nextHasUnknown ? "estimated" : "reported"
+  const nextCostStatus: CostStatus = nextKnownCalls === 0 ? "unknown" : nextEstimatedCalls > 0 ? "estimated" : "reported"
 
   const nextCostUsd = cur.costUsd + (isUnknown ? 0 : callCost)
 

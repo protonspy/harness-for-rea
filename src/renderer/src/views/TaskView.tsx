@@ -286,7 +286,7 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
               <Mono>
                 {usage.length > 0 && usage.every((u) => u.costStatus === "unknown")
                   ? "—"
-                  : usage.some((u) => u.hasUnknownCost || u.costStatus === "unknown") && task.costUsd + task.specialistCostUsd > 0
+                  : usage.some((u) => u.hasUnknownCost || u.costStatus === "unknown")
                     ? `${usd(task.costUsd + task.specialistCostUsd)} (partial)`
                     : usage.some((u) => u.estimate || u.costStatus === "estimated")
                       ? `${usd(task.costUsd + task.specialistCostUsd)} est.`

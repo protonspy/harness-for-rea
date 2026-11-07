@@ -12,6 +12,7 @@ import { usageOf } from "../src/main/orchestrator/model"
 import { EventLog } from "../src/main/events/log"
 import { openDb } from "../src/main/db"
 import { usageByAgent } from "../src/renderer/src/lib/store"
+import { usd } from "../src/renderer/src/lib/format"
 import type { EventRow } from "../src/shared/types"
 
 describe("River Pricing Catalog (Issue #6)", () => {
@@ -648,7 +649,7 @@ describe("Unknown vs Reported vs Estimated cost aggregation and fold (R2)", () =
     expect(storeUsage[0]!.hasUnknownCost).toBe(false)
   })
 
-  it("handles mixture of unknown + reported calls and preserves order invariance", () => {
+  it("handles mixture of unknown + reported calls, preserving reported status, false estimate and order invariance", () => {
     // Order 1: reported then unknown
     const events1: EventRow[] = [
       {
@@ -677,8 +678,8 @@ describe("Unknown vs Reported vs Estimated cost aggregation and fold (R2)", () =
       },
     ]
     const u1 = usageByAgent(events1)[0]!
-    expect(u1.costStatus).toBe("estimated")
-    expect(u1.estimate).toBe(true)
+    expect(u1.costStatus).toBe("reported")
+    expect(u1.estimate).toBe(false)
     expect(u1.hasUnknownCost).toBe(true)
     expect(u1.costUsd).toBe(0.05)
 
@@ -710,10 +711,125 @@ describe("Unknown vs Reported vs Estimated cost aggregation and fold (R2)", () =
       },
     ]
     const u2 = usageByAgent(events2)[0]!
-    expect(u2.costStatus).toBe("estimated")
-    expect(u2.estimate).toBe(true)
+    expect(u2.costStatus).toBe("reported")
+    expect(u2.estimate).toBe(false)
     expect(u2.hasUnknownCost).toBe(true)
     expect(u2.costUsd).toBe(0.05)
+  })
+
+  it("handles reported zero cost + unknown in both orders with full SQL/fold parity and renders partial label (R2)", () => {
+    // 1. In SQLite / EventLog.usage
+    const log = new EventLog(":memory:")
+    const task = log.createTask({ request: "zero plus unknown", sourceRoot: "/src", model: "m" })
+
+    // Call 1: reported zero cost (e.g. free model)
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "call 1 free",
+      payload: { costStatus: "reported", costUsd: 0 },
+    })
+
+    // Call 2: unknown pricing
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "call 2 unknown",
+      payload: { costStatus: "unknown", costUsd: 0 },
+    })
+
+    const sqlUsage = log.usage(task.id)[0]!
+    expect(sqlUsage.costStatus).toBe("reported")
+    expect(sqlUsage.estimate).toBe(false)
+    expect(sqlUsage.hasUnknownCost).toBe(true)
+    expect(sqlUsage.costUsd).toBe(0)
+
+    // 2. In fold / store (Order: reported/0 then unknown/0)
+    const eventsA: EventRow[] = [
+      {
+        id: 1,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "c1",
+        truncated: false,
+        payload: { costStatus: "reported", costUsd: 0 },
+      },
+      {
+        id: 2,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "c2",
+        truncated: false,
+        payload: { costStatus: "unknown", costUsd: 0 },
+      },
+    ]
+    const foldUsageA = usageByAgent(eventsA)[0]!
+    expect(foldUsageA.costStatus).toBe("reported")
+    expect(foldUsageA.estimate).toBe(false)
+    expect(foldUsageA.hasUnknownCost).toBe(true)
+    expect(foldUsageA.costUsd).toBe(0)
+
+    // 3. In fold / store (Order: unknown/0 then reported/0)
+    const eventsB: EventRow[] = [
+      {
+        id: 1,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "c1",
+        truncated: false,
+        payload: { costStatus: "unknown", costUsd: 0 },
+      },
+      {
+        id: 2,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "c2",
+        truncated: false,
+        payload: { costStatus: "reported", costUsd: 0 },
+      },
+    ]
+    const foldUsageB = usageByAgent(eventsB)[0]!
+    expect(foldUsageB.costStatus).toBe("reported")
+    expect(foldUsageB.estimate).toBe(false)
+    expect(foldUsageB.hasUnknownCost).toBe(true)
+    expect(foldUsageB.costUsd).toBe(0)
+
+    // 4. TaskView render expression evaluation helper
+    const renderTotal = (usage: (typeof sqlUsage)[], totalCost: number) => {
+      if (usage.length > 0 && usage.every((u) => u.costStatus === "unknown")) return "—"
+      if (usage.some((u) => u.hasUnknownCost || u.costStatus === "unknown")) return `${usd(totalCost)} (partial)`
+      if (usage.some((u) => u.estimate || u.costStatus === "estimated")) return `${usd(totalCost)} est.`
+      return usd(totalCost)
+    }
+
+    // Both live fold and reloaded SQL must render "$0.00 (partial)"
+    expect(renderTotal([foldUsageA], 0)).toBe("$0.00 (partial)")
+    expect(renderTotal([foldUsageB], 0)).toBe("$0.00 (partial)")
+    expect(renderTotal([sqlUsage], 0)).toBe("$0.00 (partial)")
+
+    // Contrast with purely unknown:
+    expect(renderTotal([{ ...sqlUsage, costStatus: "unknown" }], 0)).toBe("—")
+
+    // Contrast with purely free:
+    expect(renderTotal([{ ...sqlUsage, costStatus: "reported", hasUnknownCost: false }], 0)).toBe("$0.00")
   })
 })
 
