@@ -785,7 +785,7 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       }
     })
 
-    it("adapts request body to SIWC preview restrictions omitting forbidden fields and presenting tools via additional_tools (D1)", async () => {
+    it("adapts request body for ChatGPT Responses API keeping tools top-level and ensuring all input items have roles", async () => {
       const sessionJson = JSON.stringify({
         accessToken: "siwc-policy-token",
         clientId: "client-123",
@@ -801,24 +801,28 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         const body = JSON.parse(String(init?.body ?? "{}"))
         interceptedBody = body
 
-        // Strict transport validation reflecting official SIWC preview limitations
+        // Strict transport validation reflecting official OpenAI Responses API schema
         if (body.temperature !== undefined) {
-          return new Response(JSON.stringify({ error: { message: "temperature is not supported on SIWC routes" } }), { status: 400 })
-        }
-        if (body.tools !== undefined) {
-          return new Response(JSON.stringify({ error: { message: "tools must be grouped in namespaces or provided via additional_tools" } }), { status: 400 })
+          return new Response(JSON.stringify({ error: { message: "temperature is not supported on Responses routes" } }), { status: 400 })
         }
         if (Array.isArray(body.input)) {
+          // Every input item must have a role
+          for (let idx = 0; idx < body.input.length; idx++) {
+            const item = body.input[idx]
+            if (!item?.role) {
+              return new Response(JSON.stringify({ error: { message: `Missing required parameter: 'input[${idx}].role'` } }), { status: 400 })
+            }
+          }
           const hasSystem = body.input.some((i: any) => i && i.type === "message" && i.role === "system")
           if (hasSystem) {
-            return new Response(JSON.stringify({ error: { message: "system role is not permitted; use developer or instructions" } }), { status: 400 })
+            return new Response(JSON.stringify({ error: { message: "system role is not permitted; use developer" } }), { status: 400 })
           }
         }
 
         const sse = [
           'data: {"type":"response.created","response":{"id":"resp_siwc"}}\n\n',
-          'data: {"type":"response.output_text.delta","delta":"SIWC constraints verified"}\n\n',
-          'data: {"type":"response.completed","response":{"id":"resp_siwc","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"SIWC constraints verified"}]}],"usage":{"input_tokens":5,"output_tokens":3}}}\n\n',
+          'data: {"type":"response.output_text.delta","delta":"Responses API constraints verified"}\n\n',
+          'data: {"type":"response.completed","response":{"id":"resp_siwc","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"Responses API constraints verified"}]}],"usage":{"input_tokens":5,"output_tokens":3}}}\n\n',
         ].join("")
 
         return new Response(sse, { headers: { "Content-Type": "text/event-stream" } })
@@ -840,9 +844,9 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
           },
         ])
 
-        const res = await toolModel.invoke([new SystemMessage("You are a system reviewer"), new HumanMessage("Verify SIWC compliance")])
+        const res = await toolModel.invoke([new SystemMessage("You are a system reviewer"), new HumanMessage("Verify Responses API compliance")])
 
-        // Verify body conformed to SIWC restrictions
+        // Verify body conformed to Responses API restrictions
         expect(interceptedBody.temperature).toBeUndefined()
         expect(interceptedBody.top_p).toBeUndefined()
         expect(interceptedBody.store).toBe(false)
@@ -853,14 +857,18 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         expect(devMsg).toBeDefined()
         expect(devMsg.content).toContain("You are a system reviewer")
 
-        // Tools passed via additional_tools input item
-        expect(interceptedBody.tools).toBeUndefined()
-        const additionalToolsItem = interceptedBody.input.find((i: any) => i.type === "additional_tools")
-        expect(additionalToolsItem).toBeDefined()
-        expect(additionalToolsItem.tools[0].name).toBe("test_tool")
+        // Tools must remain at the top level, never injected into input without role
+        expect(Array.isArray(interceptedBody.tools)).toBe(true)
+        expect(interceptedBody.tools[0].name).toBe("test_tool")
+        expect(interceptedBody.tools[0].strict).toBeUndefined()
+
+        // Input must only contain messages with a role
+        for (let idx = 0; idx < interceptedBody.input.length; idx++) {
+          expect(interceptedBody.input[idx].role).toBeDefined()
+        }
 
         const text = typeof res.content === "string" ? res.content : (res.content as any)[0]?.text
-        expect(text).toContain("SIWC constraints verified")
+        expect(text).toContain("Responses API constraints verified")
       } finally {
         globalThis.fetch = originalFetch
       }

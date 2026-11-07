@@ -389,7 +389,7 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
         delete bodyObj.previous_response_id
 
         if (isChatGPT) {
-          // SIWC message restrictions: use developer role instead of system message (D1)
+          // ChatGPT Responses API message restrictions: map system messages to developer role
           if (Array.isArray(bodyObj.input)) {
             for (const item of bodyObj.input) {
               if (item && item.type === "message" && item.role === "system") {
@@ -398,15 +398,14 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
             }
           }
 
-          // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
-          if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
-            const tools = bodyObj.tools
-            delete bodyObj.tools
-            bodyObj.input = bodyObj.input || []
-            bodyObj.input.unshift({
-              type: "additional_tools",
-              tools,
-            })
+          // In OpenAI Responses API, tools remain at top-level bodyObj.tools.
+          // Clean null strict fields from tool definitions so strict mode does not fail validation.
+          if (Array.isArray(bodyObj.tools)) {
+            for (const tool of bodyObj.tools) {
+              if (tool && tool.strict === null) {
+                delete tool.strict
+              }
+            }
           }
         }
 
