@@ -1527,6 +1527,70 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         expect(s2.connected).toBe(false)
       })
 
+      it("differentiates transient 503 failure from invalid_grant on expired session status", async () => {
+        let refreshAttempts = 0
+        const expiredSession: ChatGPTSession = {
+          scopes: ["chatgpt.tokens.use.direct"],
+          hostId: "urn:uuid:00000000-0000-4000-8000-000000000001",
+          clientId: "client_123",
+          accessToken: "expired_token",
+          refreshToken: "good_refresh",
+          accountEmail: "user@example.com",
+          planType: "plus",
+          expiresAt: Date.now() - 1000,
+        }
+
+        const fakeFetch = async () => {
+          refreshAttempts++
+          return new Response(JSON.stringify({ error: "temporarily_unavailable" }), { status: 503 })
+        }
+
+        const service = new ChatGPTAuthService({
+          fetch: fakeFetch as unknown as typeof globalThis.fetch,
+          openUrl: async () => true,
+          saveSession: async () => {},
+          loadSession: async () => expiredSession,
+        })
+
+        const status = await service.status()
+        expect(refreshAttempts).toBe(1)
+        expect(status.connected).toBe(false)
+        expect(status.warning).toContain("Session renewal temporarily unavailable")
+        expect(status.error).toBeUndefined()
+      })
+
+      it("reports error when refresh fails with invalid_grant", async () => {
+        let refreshAttempts = 0
+        const expiredSession: ChatGPTSession = {
+          scopes: ["chatgpt.tokens.use.direct"],
+          hostId: "urn:uuid:00000000-0000-4000-8000-000000000001",
+          clientId: "client_123",
+          accessToken: "expired_token",
+          refreshToken: "revoked_refresh",
+          accountEmail: "user@example.com",
+          planType: "plus",
+          expiresAt: Date.now() - 1000,
+        }
+
+        const fakeFetch = async () => {
+          refreshAttempts++
+          return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })
+        }
+
+        const service = new ChatGPTAuthService({
+          fetch: fakeFetch as unknown as typeof globalThis.fetch,
+          openUrl: async () => true,
+          saveSession: async () => {},
+          loadSession: async () => expiredSession,
+        })
+
+        const status = await service.status()
+        expect(refreshAttempts).toBe(1)
+        expect(status.connected).toBe(false)
+        expect(status.error).toContain("Session expired. Please reconnect your account.")
+        expect(status.warning).toBeUndefined()
+      })
+
       it("startAutoRefresh sets background timer and stopAutoRefresh clears it", async () => {
         expect(CHATGPT_AUTO_REFRESH_INTERVAL_MS).toBe(300_000)
         expect(CHATGPT_STATUS_REFRESH_RETRY_MS).toBe(60_000)

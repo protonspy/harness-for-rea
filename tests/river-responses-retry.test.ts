@@ -174,4 +174,80 @@ describe("River transient Responses failures", () => {
     expect(error.message).toContain("https://status.river.ai")
     expect(error.message).not.toContain("API key")
   })
+
+  it("maintains the river deadline during stream consumption and aborts if stream hangs after the first delta", async () => {
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.timeout(50))
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(sse(textDelta)))
+              // Never closes — hangs after first delta
+            },
+            cancel() {},
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    )
+    const model = makeModel({ provider: "river", apiKey: "rv-test", model: "deepseek-ai/DeepSeek-V4.1-Flash-1017", protocol: "responses", onUsage: vi.fn() })
+    await expect(model.invoke("ping")).rejects.toThrow()
+  })
+
+  it("continues prelude inspection across empty message metadata and recovers upon failure across multiple byte chunks", async () => {
+    const emptyOutputItem = {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: "item_1", type: "message", role: "assistant", status: "in_progress", content: [] },
+    }
+    const emptyContentPart = {
+      type: "response.content_part.added",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }
+    const encoder = new TextEncoder()
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(encoder.encode(sse({ type: "response.created" })))
+                controller.enqueue(encoder.encode(sse(emptyOutputItem)))
+                controller.enqueue(encoder.encode(sse(emptyContentPart)))
+                controller.enqueue(encoder.encode(sse(failed)))
+                controller.close()
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+      )
+      .mockImplementationOnce(async () => stream(completed))
+
+    const response = await fetchRiverResponses(endpoint)
+    expect(await response.text()).toContain("response.completed")
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it("terminates prelude inspection and preserves stream when empty message metadata is followed by text delta", async () => {
+    const emptyOutputItem = {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: "item_1", type: "message", role: "assistant", status: "in_progress", content: [] },
+    }
+    const emptyContentPart = {
+      type: "response.content_part.added",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    }
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () => stream(emptyOutputItem, emptyContentPart, textDelta, completed))
+    const response = await fetchRiverResponses(endpoint)
+    const text = await response.text()
+    expect(text).toContain("Recovered")
+    expect(text).toContain("response.completed")
+    expect(fetch).toHaveBeenCalledOnce()
+  })
 })
