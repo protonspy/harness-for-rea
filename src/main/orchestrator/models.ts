@@ -4,6 +4,7 @@ import { attributionHeaders } from "./attribution"
 import { friendlyError } from "./errors"
 import { OPENAI_RESPONSES_URL, resolveChatGPTAccessToken } from "../chatgpt"
 import { getChatGPTAuthService } from "./model"
+import { fetchRiverResponses } from "./river-responses"
 
 /*
   The models a provider offers, read from its `GET {baseUrl}/models` (the OpenAI list endpoint that
@@ -189,7 +190,8 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
 
     let res: Response
     try {
-      res = await fetch(endpoint, {
+      const request = o.provider === "river" ? fetchRiverResponses : globalThis.fetch
+      res = await request(endpoint, {
         method: "POST",
         headers: {
           ...attributionHeaders(base),
@@ -198,7 +200,7 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
           accept: "text/event-stream",
         },
         body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(o.provider === "river" ? 90_000 : TEST_TIMEOUT_MS),
       })
     } catch (e) {
       return { ok: false, status: "error", reason: `Could not reach ${endpoint}: ${(e as Error).message}` }
@@ -415,7 +417,7 @@ export async function probeModel(o: ProbeOptions): Promise<ProbeResult> {
     if (result.status === "forbidden") throw friendlyError({ status: 403 }, label)
     if (result.status === "quota_exceeded") throw friendlyError({ status: 402 }, label)
     if (result.status === "rate_limited") throw friendlyError({ status: 429 }, label)
-    throw new Error(result.reason)
+    throw friendlyError(new Error(result.reason), label)
   }
   return result
 }

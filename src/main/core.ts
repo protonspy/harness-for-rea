@@ -297,6 +297,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
 
   setChatGPTAuthService(chatgpt)
 
+  // Keep the ChatGPT session alive while the app runs: rotate the access token
+  // ahead of expiry instead of forcing a manual reconnect every ~1h (issue #21).
+  chatgpt.startAutoRefresh()
+
   let chatgptSessionGen = 0
   let chatgptModelsCache: { gen: number; fingerprint: string; models: ChatGPTModelOption[]; timestamp: number } | null = null
 
@@ -461,6 +465,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
     listChatGPTModels: async () => {
       const callGen = chatgptSessionGen
       const st = await chatgpt.status()
+      if (callGen !== chatgptSessionGen) {
+        throw new Error("ChatGPT session changed during model discovery.")
+      }
       if (!st.connected) {
         throw new Error("Connect your ChatGPT account to list available models.")
       }
@@ -669,6 +676,7 @@ export async function startCore(host: CoreHost): Promise<Core> {
     log,
     shutdown: async () => {
       watcher?.stop()
+      chatgpt.stopAutoRefresh()
       try {
         await runner.stopAll()
       } finally {

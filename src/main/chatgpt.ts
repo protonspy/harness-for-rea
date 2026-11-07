@@ -32,6 +32,12 @@ export const DEFAULT_CLIENT_ID = "dynamic_agent_client"
 
 export const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access", "chatgpt.tokens.use.direct", "resource.invoke"] as const
 
+// Refresh the access token ahead of expiry so a long-running app never reports
+// "Session expired" while the refresh token is still valid (specs/chatgpt-auth R2).
+export const CHATGPT_REFRESH_LEAD_MS = 10 * 60_000
+export const CHATGPT_AUTO_REFRESH_INTERVAL_MS = 5 * 60_000
+export const CHATGPT_STATUS_REFRESH_RETRY_MS = 60_000
+
 export interface ChatGPTSession {
   accessToken: string
   refreshToken?: string
@@ -354,6 +360,8 @@ export class ChatGPTAuthService {
   private currentAttempt: { generation: number; abortController: AbortController } | null = null
   private pendingRefresh: Promise<ChatGPTSession> | null = null
   private inProgress = false
+  private autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+  private lastFailedRefreshAt: number | null = null
 
   constructor(deps: ChatGPTAuthServiceDeps) {
     this.fetch = deps.fetch ?? ((url, init) => globalThis.fetch(url, init))
@@ -417,16 +425,9 @@ export class ChatGPTAuthService {
     throw new Error("Failed to fetch official JWKS for ID token verification.")
   }
 
-  /**
-   * Reports active authorization status.
-   */
+  /** Refreshes a recoverable session before reporting its authorization status. */
   async status(): Promise<ChatGPTAuthStatus> {
-    if (!this.currentSession) {
-      this.currentSession = await this.loadSession()
-      if (this.currentSession) {
-        this.registerSessionSecrets(this.currentSession)
-      }
-    }
+    await this.refreshIfNearingExpiry().catch(() => {})
     if (!this.currentSession) {
       return { connected: false, inProgress: this.inProgress, hasTokenSharingScope: false }
     }
@@ -443,6 +444,55 @@ export class ChatGPTAuthService {
       hasTokenSharingScope: hasTokenSharing,
       error: expired ? "Session expired. Please reconnect your account." : undefined,
     }
+  }
+
+  /** Starts background renewal, including a check at startup or after sign-in. */
+  startAutoRefresh(intervalMs = CHATGPT_AUTO_REFRESH_INTERVAL_MS): void {
+    this.stopAutoRefresh()
+    void this.refreshIfNearingExpiry().catch(() => {})
+    this.autoRefreshTimer = setInterval(
+      () => {
+        void this.refreshIfNearingExpiry().catch(() => {})
+      },
+      Math.max(1000, intervalMs),
+    )
+    // Do not hold the process open just for the timer
+    this.autoRefreshTimer.unref?.()
+  }
+
+  /**
+   * Stops the background auto-refresh timer.
+   */
+  stopAutoRefresh(): void {
+    if (this.autoRefreshTimer !== null) {
+      clearInterval(this.autoRefreshTimer)
+      this.autoRefreshTimer = null
+    }
+  }
+
+  /**
+   * Rotates the access token when the current one is expired or within
+   * CHATGPT_REFRESH_LEAD_MS of expiring. Returns the refreshed session, or
+   * null when a refresh was not due. Failures are swallowed by callers.
+   */
+  async refreshIfNearingExpiry(): Promise<ChatGPTSession | null> {
+    if (!this.currentSession) {
+      const generation = this.refreshGeneration
+      const loaded = await this.loadSession()
+      if (generation !== this.refreshGeneration) return null
+      this.currentSession = loaded
+      if (this.currentSession) {
+        this.registerSessionSecrets(this.currentSession)
+      }
+    }
+    if (!this.currentSession?.refreshToken) {
+      return null
+    }
+    if (Date.now() < this.currentSession.expiresAt - CHATGPT_REFRESH_LEAD_MS) {
+      return null
+    }
+    if (this.lastFailedRefreshAt !== null && Date.now() - this.lastFailedRefreshAt < CHATGPT_STATUS_REFRESH_RETRY_MS) return null
+    return await this.refreshSession()
   }
 
   /**
@@ -573,9 +623,13 @@ export class ChatGPTAuthService {
         throw new Error("Authentication cancelled.")
       }
 
+      this.refreshGeneration++
+      this.pendingRefresh = null
       this.currentSession = session
+      this.lastFailedRefreshAt = null
       this.registerSessionSecrets(session)
       await this.saveSession(session)
+      this.startAutoRefresh()
       return session
     } finally {
       clearTimeout(timeoutTimer)
@@ -745,6 +799,7 @@ export class ChatGPTAuthService {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
+        signal: AbortSignal.timeout(30_000),
       })
 
       const data = (await res.json().catch(() => ({}))) as {
@@ -779,14 +834,20 @@ export class ChatGPTAuthService {
       if (gen === this.refreshGeneration && this.currentSession !== null) {
         this.currentSession = updated
         await this.saveSession(updated)
+        this.lastFailedRefreshAt = null
       }
 
       return updated
-    })().finally(() => {
-      if (this.pendingRefresh === refreshPromise) {
-        this.pendingRefresh = null
-      }
-    })
+    })()
+      .catch((error) => {
+        if (gen === this.refreshGeneration) this.lastFailedRefreshAt = Date.now()
+        throw error
+      })
+      .finally(() => {
+        if (this.pendingRefresh === refreshPromise) {
+          this.pendingRefresh = null
+        }
+      })
 
     this.pendingRefresh = refreshPromise
     return refreshPromise
@@ -823,6 +884,8 @@ export class ChatGPTAuthService {
     this.signInGeneration++
     this.refreshGeneration++
     this.inProgress = false
+    this.lastFailedRefreshAt = null
+    this.stopAutoRefresh()
 
     if (this.currentAttempt) {
       this.currentAttempt.abortController.abort()
