@@ -1,9 +1,44 @@
 import { attributionHeaders } from "./attribution"
+import { AsyncLocalStorage } from "node:async_hooks"
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
+import type { BaseMessage } from "@langchain/core/messages"
 import { ChatOpenAI } from "@langchain/openai"
+
+const activeMessagesStorage = new AsyncLocalStorage<readonly BaseMessage[] | BaseMessage[]>()
+
+class ReasoningChatOpenAI extends ChatOpenAI {
+  constructor(fields?: ConstructorParameters<typeof ChatOpenAI>[0]) {
+    super(fields)
+    const completionsAny = (this as any).completions
+    if (completionsAny) {
+      if (typeof completionsAny["_generate"] === "function") {
+        const origGen = completionsAny["_generate"].bind(completionsAny)
+        completionsAny["_generate"] = (messages: any, options: any, runManager: any) => {
+          return activeMessagesStorage.run(messages, () => origGen(messages, options, runManager))
+        }
+      }
+      if (typeof completionsAny["_streamResponseChunks"] === "function") {
+        const origStream = completionsAny["_streamResponseChunks"].bind(completionsAny)
+        completionsAny["_streamResponseChunks"] = async function* (messages: any, options: any, runManager: any) {
+          yield* activeMessagesStorage.run(messages, () => origStream(messages, options, runManager))
+        }
+      }
+    }
+  }
+
+  override async invoke(input: any, options?: any) {
+    const messages = Array.isArray(input) ? input : input?.messages ? input.messages : [input]
+    return activeMessagesStorage.run(messages, () => super.invoke(input, options))
+  }
+
+  override async stream(input: any, options?: any) {
+    const messages = Array.isArray(input) ? input : input?.messages ? input.messages : [input]
+    return activeMessagesStorage.run(messages, () => super.stream(input, options))
+  }
+}
 import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
-import { PROVIDERS, resolveBaseUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, validateReasoningEffort, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
 import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
 
@@ -136,6 +171,7 @@ export function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array
 }
 
 export function createResponsesModel(o: ModelOptions): BaseChatModel {
+  validateReasoningEffort(o.provider, o.model, o.effort)
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {
@@ -178,6 +214,14 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
         // River & Responses Contract: send full history, store:false, stream:true
         bodyObj.store = false
         bodyObj.stream = true
+
+        // Explicit reasoning effort configuration for Responses API; default omits parameter
+        if (effort) {
+          bodyObj.reasoning = { effort }
+        } else {
+          delete bodyObj.reasoning
+        }
+        delete bodyObj.reasoning_effort
 
         // Omit unsupported parameters
         delete bodyObj.temperature
@@ -249,6 +293,7 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
 export const createChatGPTResponsesModel = createResponsesModel
 
 export function makeModel(o: ModelOptions): BaseChatModel {
+  validateReasoningEffort(o.provider, o.model, o.effort)
   const protocol = o.protocol ?? (o.provider === "chatgpt" ? "responses" : "chat_completions")
   if (o.provider === "chatgpt" || protocol === "responses") {
     return createResponsesModel(o)
@@ -266,10 +311,52 @@ export function makeModel(o: ModelOptions): BaseChatModel {
   // An empty base URL would send the key to the client library's own default endpoint.
   if (PROVIDERS[o.provider].kind === "openai" && !baseURL) throw new Error(`Set the base URL of your ${PROVIDERS[o.provider].label} first.`)
   if (PROVIDERS[o.provider].kind === "openai")
-    return new ChatOpenAI({
+    return new ReasoningChatOpenAI({
       model: o.model,
       apiKey: o.apiKey,
-      configuration: { baseURL, defaultHeaders: attributionHeaders(baseURL) },
+      configuration: {
+        baseURL,
+        defaultHeaders: attributionHeaders(baseURL),
+        fetch: async (url, init) => {
+          if (init?.body) {
+            try {
+              const bodyObj = JSON.parse(String(init.body))
+              const origMessages = activeMessagesStorage.getStore()
+
+              // Preserve reasoning_content and tool calls on assistant history messages without confusing reasoning with final content
+              if (Array.isArray(bodyObj.messages)) {
+                let aiIdx = 0
+                const aiMessages = origMessages
+                  ? (origMessages as any[]).filter((m) => m?.getType?.() === "ai" || m?.constructor?.name?.includes("AI") || m?.role === "assistant")
+                  : []
+
+                for (const m of bodyObj.messages) {
+                  if (m && m.role === "assistant") {
+                    const match = aiMessages[aiIdx++]
+                    const reasoning =
+                      match?.additional_kwargs?.reasoning_content ?? match?.additional_kwargs?.reasoning ?? match?.reasoning_content ?? m.reasoning_content
+                    if (reasoning !== undefined) {
+                      m.reasoning_content = reasoning
+                    }
+                    if (m.content === null || m.content === undefined) {
+                      m.content = ""
+                    }
+                  }
+                }
+              }
+              if (effort) {
+                bodyObj.reasoning_effort = effort
+              } else {
+                delete bodyObj.reasoning_effort
+              }
+              init = { ...init, body: JSON.stringify(bodyObj) }
+            } catch {
+              // Non-JSON body, proceed unchanged
+            }
+          }
+          return globalThis.fetch(url, init)
+        },
+      },
       temperature: 0.2,
       streamUsage: true,
       ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),

@@ -1,3 +1,4 @@
+import { ORCHESTRATOR_EFFORTS, type OrchestratorEffort } from "./types"
 /*
   The orchestrator's model providers (adr:0014-add-openai-compatible-orchestrator-providers). OpenRouter
   keeps its own client for its routing extras; every other provider speaks the OpenAI chat API, so it
@@ -238,4 +239,84 @@ export function groupModels(provider: ProviderId, listed: string[]): ModelGroup[
     { label: "Chinese coding models", models: chinese },
     { label: "Other models with tool calling", models: others },
   ].filter((g) => g.models.length)
+}
+
+export type ReasoningEffortLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+
+export interface ModelReasoningProfile {
+  supportedEfforts: readonly ("none" | "low" | "medium" | "high" | "xhigh" | "max")[]
+  defaultEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"
+  mandatoryReasoning: boolean
+}
+
+export const RIVER_MODEL_REASONING: Record<string, ModelReasoningProfile> = {
+  "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "none",
+    mandatoryReasoning: false,
+  },
+  "deepseek-ai/DeepSeek-V4.1-Flash": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "none",
+    mandatoryReasoning: false,
+  },
+  "moonshotai/Kimi-K3": {
+    supportedEfforts: ["none", "low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: false,
+  },
+  "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4": {
+    supportedEfforts: ["none", "medium", "high"],
+    defaultEffort: "high",
+    mandatoryReasoning: false,
+  },
+  "GLM-5.3": {
+    supportedEfforts: ["low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: true,
+  },
+  "zai-org/GLM-5.3-Flash": {
+    supportedEfforts: ["low", "high", "max"],
+    defaultEffort: "max",
+    mandatoryReasoning: true,
+  },
+  "Qwen/Qwen3.8-27B-FP8": {
+    supportedEfforts: ["none", "low", "medium", "xhigh"],
+    defaultEffort: "xhigh",
+    mandatoryReasoning: false,
+  },
+}
+
+export function getRiverModelReasoning(model: string): ModelReasoningProfile | undefined {
+  if (!model) return undefined
+  if (RIVER_MODEL_REASONING[model]) return RIVER_MODEL_REASONING[model]
+  const lower = model.toLowerCase().trim()
+  for (const [key, profile] of Object.entries(RIVER_MODEL_REASONING)) {
+    if (key.toLowerCase() === lower) return profile
+    const keyWithoutOrg = key.includes("/") ? key.split("/")[1]!.toLowerCase() : key.toLowerCase()
+    if (keyWithoutOrg === lower) return profile
+  }
+  return undefined
+}
+
+export function getAvailableEffortsForModel(provider: ProviderId, model: string): readonly OrchestratorEffort[] {
+  if (provider === "river") {
+    const profile = getRiverModelReasoning(model)
+    if (profile) {
+      return ["default", ...profile.supportedEfforts]
+    }
+  }
+  return ORCHESTRATOR_EFFORTS
+}
+
+export function validateReasoningEffort(provider: ProviderId, model: string, effort: string | undefined): void {
+  if (!effort || effort === "default") return
+  if (provider === "river") {
+    const profile = getRiverModelReasoning(model)
+    if (profile) {
+      if (!profile.supportedEfforts.includes(effort as any)) {
+        throw new Error(`Model "${model}" on River does not support reasoning effort "${effort}". Supported efforts: ${profile.supportedEfforts.join(", ")}.`)
+      }
+    }
+  }
 }

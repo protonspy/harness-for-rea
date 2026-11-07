@@ -100,7 +100,7 @@ export interface AgentSpecialistOptions {
 
 /** The specialist's effort as the orchestrator's reasoning effort, which the provider's model takes (R1.2). */
 export function agentEffort(effort: SpecialistEffort): OrchestratorEffort {
-  return effort === "max" ? "xhigh" : effort
+  return effort as OrchestratorEffort
 }
 
 /** Where the agent runs and on what: the container its tools use, and the provider's endpoint, key and model. */

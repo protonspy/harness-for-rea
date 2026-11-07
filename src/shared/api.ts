@@ -20,6 +20,7 @@ import type {
   TaskHistory,
   UnknownRow,
   TaskRow,
+  ProbeResult,
 } from "./types"
 
 /*
@@ -88,6 +89,16 @@ const SettingsPatch = z
 export const API_SCHEMAS = {
   getSettings: z.tuple([]),
   saveSettings: z.tuple([SettingsPatch]),
+  testConnection: z.tuple([
+    z
+      .object({
+        provider: Provider.optional(),
+        baseUrl: z.string().optional(),
+        model: ModelName.optional(),
+        protocol: Protocol.optional(),
+      })
+      .optional(),
+  ]),
   keyStatus: z.tuple([Provider.optional()]),
   saveKey: z.tuple([z.string().trim().min(8).max(512), Provider.optional()]),
   clearKey: z.tuple([Provider.optional()]),
@@ -197,6 +208,7 @@ export const API_METHODS = Object.keys(API_SCHEMAS) as ApiMethod[]
 export interface ApiResults {
   getSettings: Settings
   saveSettings: Settings
+  testConnection: ProbeResult
   keyStatus: KeyStatus
   saveKey: KeyStatus
   clearKey: KeyStatus

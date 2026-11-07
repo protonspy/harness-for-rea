@@ -1,6 +1,7 @@
 import { Bug, Code2, FileSearch, Lightbulb, Lock, Map as MapIcon, Play, Plug, Trash2, type LucideIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type AnalysisSummary, type Goal, type ProjectRow, type TaskRow, type UnknownRow } from "@shared/types"
+import { getAvailableEffortsForModel } from "@shared/providers"
+import { SPECIALIST_EFFORTS, type AnalysisSummary, type Goal, type ProjectRow, type TaskRow, type UnknownRow } from "@shared/types"
 import { ModelPicker } from "@/components/setup/ModelPicker"
 import { ErrorText, Mono } from "@/components/common"
 import { EffortSelect, message } from "@/components/setup/panels"
@@ -117,7 +118,11 @@ export function ProjectView({ id, onOpenTask, onDeleted }: { id: string; onOpenT
           <ModelPicker key={project.model} provider={project.provider} value={project.model} listed={models} onChange={(m) => change({ model: m })} />
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             Orchestrator's effort
-            <EffortSelect value={project.orchestratorEffort} options={ORCHESTRATOR_EFFORTS} onChange={(v) => change({ orchestratorEffort: v })} />
+            <EffortSelect
+              value={project.orchestratorEffort}
+              options={getAvailableEffortsForModel(project.provider, project.model)}
+              onChange={(v) => change({ orchestratorEffort: v })}
+            />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             Specialist's effort

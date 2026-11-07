@@ -232,10 +232,23 @@ export interface Settings {
   protocols?: Partial<Record<ProviderId, ModelProtocol>>
 }
 
-export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const
+export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type OrchestratorEffort = (typeof ORCHESTRATOR_EFFORTS)[number]
-export const SPECIALIST_EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"] as const
+export const SPECIALIST_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type SpecialistEffort = (typeof SPECIALIST_EFFORTS)[number]
+
+export type ProbeStatus = "ready" | "invalid_key" | "forbidden" | "quota_exceeded" | "model_not_found" | "rate_limited" | "truncated" | "unverified" | "error"
+
+export interface ProbeResult {
+  ok: boolean
+  status: ProbeStatus
+  reason: string
+  hasReasoning?: boolean
+  hasToolCalls?: boolean
+  truncated?: boolean
+  tokensOut?: number
+  latencyMs?: number
+}
 
 export interface KeyStatus {
   set: boolean

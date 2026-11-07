@@ -4,7 +4,7 @@ import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
-import { PROVIDERS, type ProviderId } from "@shared/providers"
+import { PROVIDERS, validateReasoningEffort, type ProviderId } from "@shared/providers"
 import type { ChatGPTModelOption, ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
@@ -24,7 +24,7 @@ import { ProcessRegistry } from "./processes"
 import { listChatGPTModels, listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
-import { baseUrlFor, blocking, protocolFor, readiness } from "./readiness"
+import { baseUrlFor, blocking, clearProbeCache, protocolFor, readiness } from "./readiness"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { SandboxRegistry, SpecialistBoxes } from "./sandbox/specialistbox"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
@@ -323,8 +323,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
           run.provider === "chatgpt"
             ? (await handlers.listChatGPTModels()).map((m) => m.slug)
             : listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
-        probeModel: (run) =>
-          probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model, protocol: run.protocol }),
+        probeModel: async (run) => {
+          await probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model, protocol: run.protocol })
+        },
         keyHint: (provider) => keyStatus(provider).hint,
       },
       o,
@@ -340,6 +341,22 @@ export async function startCore(host: CoreHost): Promise<Core> {
       if (blocked) throw new Error(blocked)
       saveSettings({ setupCompleted: true })
       return { ...r, completed: true }
+    },
+    testConnection: async (o) => {
+      const current = getSettings()
+      const provider = o?.provider ?? current.provider
+      const model = o?.model ?? (provider === current.provider ? current.model : (PROVIDERS[provider]?.defaultModel ?? ""))
+      const baseUrl = o?.baseUrl ?? baseUrlFor(provider, current)
+      const protocol = o?.protocol ?? protocolFor(provider, "orchestrator", current)
+      const key = readKey(provider)
+      clearProbeCache()
+      return probeModel({
+        provider,
+        baseUrl,
+        apiKey: key,
+        model,
+        protocol,
+      })
     },
     saveSettings: async ({ integrations: wanted, expectedProvider, expectedSpecialistProvider, ...patch }) => {
       const current = getSettings()
@@ -380,6 +397,12 @@ export async function startCore(host: CoreHost): Promise<Core> {
             throw new Error(`A model must be provided for ${PROVIDERS[targetSpecialistProvider].label}.`)
           }
         }
+      }
+      if (patch.orchestratorEffort !== undefined) {
+        validateReasoningEffort(targetProvider, patch.model ?? current.model, patch.orchestratorEffort)
+      }
+      if (patch.specialistEffort !== undefined && targetSpecialistProvider !== "claude") {
+        validateReasoningEffort(targetSpecialistProvider, patch.specialistModel ?? current.specialistModel, patch.specialistEffort)
       }
       const savedIntegrations = wanted ? await saveIntegrations(integrationRegistry, getSettings(), wanted) : undefined
       const latest = getSettings()
@@ -531,6 +554,10 @@ export async function startCore(host: CoreHost): Promise<Core> {
     createProject: async (input) => {
       if (!getSettings().setupCompleted) throw new Error("Finish the setup before creating a project.")
       const s = getSettings()
+      validateReasoningEffort(input.provider, input.model, input.orchestratorEffort)
+      if (input.specialistEffort && s.specialistProvider !== "claude") {
+        validateReasoningEffort(s.specialistProvider, s.specialistModel, input.specialistEffort)
+      }
       const orchestratorProtocol = input.orchestratorProtocol ?? protocolFor(input.provider, "orchestrator", s)
       const sp = s.specialistProvider === "claude" ? input.provider : (s.specialistProvider as ProviderId)
       const specialistProtocol = input.specialistProtocol ?? protocolFor(sp, "specialist", s)
@@ -547,6 +574,16 @@ export async function startCore(host: CoreHost): Promise<Core> {
       free(id)
       const running = log.projectTasks(id).filter((t) => ["pending", "running", "waiting"].includes(t.state))
       if (running.length) throw new Error("A task of the project is running; stop it before changing the project's model.")
+      const cur = projects.get(id)
+      if (patch.orchestratorEffort !== undefined) {
+        validateReasoningEffort(patch.provider ?? cur.provider, patch.model ?? cur.model, patch.orchestratorEffort)
+      }
+      if (patch.specialistEffort !== undefined) {
+        const s = getSettings()
+        if (s.specialistProvider !== "claude") {
+          validateReasoningEffort(s.specialistProvider, s.specialistModel, patch.specialistEffort)
+        }
+      }
       const p = projects.update(id, patch)
       if (patch.model || patch.provider) for (const t of log.projectTasks(id)) runner.setModel(t.id, p.model)
       return withHolder(p)

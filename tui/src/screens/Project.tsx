@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useCallback, useEffect, useState } from "react"
-import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type AnalysisSummary, type ProjectRow, type TaskRow, type UnknownRow } from "../../../src/shared/types"
+import { SPECIALIST_EFFORTS, type AnalysisSummary, type ProjectRow, type TaskRow, type UnknownRow } from "../../../src/shared/types"
+import { getAvailableEffortsForModel } from "../../../src/shared/providers"
 import { tone, usd, when } from "../../../src/renderer/src/lib/format"
 import { goalCard, heldLabel } from "../../../src/renderer/src/lib/projects"
 import { useApp, useKeys, usePush, useScreen } from "../app/context"
@@ -84,7 +85,12 @@ export function ProjectScreen({ id }: { id: string }) {
         title: "Change the orchestrator's effort",
         run: async () => {
           if (!data) return
-          const v = await pickOne(app, "Orchestrator's effort", ORCHESTRATOR_EFFORTS, data.project.orchestratorEffort)
+          const v = await pickOne(
+            app,
+            "Orchestrator's effort",
+            getAvailableEffortsForModel(data.project.provider, data.project.model),
+            data.project.orchestratorEffort,
+          )
           if (v && (await app.attempt(() => api.updateProject(id, { orchestratorEffort: v })))) load()
         },
       },
