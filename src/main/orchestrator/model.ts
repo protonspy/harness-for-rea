@@ -389,7 +389,7 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
         delete bodyObj.previous_response_id
 
         if (isChatGPT) {
-          // SIWC message restrictions: use developer role instead of system message (D1)
+          // ChatGPT Responses API message restrictions: map system messages to developer role
           if (Array.isArray(bodyObj.input)) {
             for (const item of bodyObj.input) {
               if (item && item.type === "message" && item.role === "system") {
@@ -398,15 +398,43 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
             }
           }
 
-          // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
+          // SIWC / ChatGPT plan token sharing restrictions: pass tools via additional_tools input item with role: "developer"
           if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
             const tools = bodyObj.tools
             delete bodyObj.tools
+            for (const tool of tools) {
+              if (tool && tool.strict === null) {
+                delete tool.strict
+              }
+            }
             bodyObj.input = bodyObj.input || []
-            bodyObj.input.unshift({
+            const existingIdx = bodyObj.input.findIndex((i: any) => i && i.type === "additional_tools")
+            const additionalToolsItem = {
               type: "additional_tools",
+              role: "developer" as const,
               tools,
-            })
+            }
+            if (existingIdx >= 0) {
+              bodyObj.input[existingIdx] = additionalToolsItem
+            } else {
+              bodyObj.input.unshift(additionalToolsItem)
+            }
+          }
+
+          // Guarantee any existing additional_tools item carries role: "developer" and sanitized schemas
+          if (Array.isArray(bodyObj.input)) {
+            for (const item of bodyObj.input) {
+              if (item && item.type === "additional_tools") {
+                item.role = "developer"
+                if (Array.isArray(item.tools)) {
+                  for (const tool of item.tools) {
+                    if (tool && tool.strict === null) {
+                      delete tool.strict
+                    }
+                  }
+                }
+              }
+            }
           }
         }
 

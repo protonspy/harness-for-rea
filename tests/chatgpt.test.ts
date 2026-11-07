@@ -785,7 +785,58 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
       }
     })
 
-    it("adapts request body to SIWC preview restrictions omitting forbidden fields and presenting tools via additional_tools (D1)", async () => {
+    function validateResponsesApiContract(body: any): Response | null {
+      if (body.temperature !== undefined) {
+        return new Response(JSON.stringify({ error: { message: "temperature is not supported on SIWC routes" } }), { status: 400 })
+      }
+      if (body.top_p !== undefined) {
+        return new Response(JSON.stringify({ error: { message: "top_p is not supported on SIWC routes" } }), { status: 400 })
+      }
+      if (body.tools !== undefined) {
+        return new Response(JSON.stringify({ error: { message: "tools must be grouped in namespaces or provided via additional_tools" } }), { status: 400 })
+      }
+      if (!Array.isArray(body.input)) {
+        return new Response(JSON.stringify({ error: { message: "input must be an array" } }), { status: 400 })
+      }
+
+      for (let idx = 0; idx < body.input.length; idx++) {
+        const item = body.input[idx]
+        if (!item || typeof item !== "object") continue
+
+        if (item.type === "additional_tools") {
+          if (item.role !== "developer") {
+            return new Response(JSON.stringify({ error: { message: `Missing required parameter: 'input[${idx}].role'` } }), { status: 400 })
+          }
+          if (!Array.isArray(item.tools)) {
+            return new Response(JSON.stringify({ error: { message: `Missing required parameter: 'input[${idx}].tools'` } }), { status: 400 })
+          }
+          for (const t of item.tools) {
+            if (t.strict === null) {
+              return new Response(JSON.stringify({ error: { message: "Tool strict cannot be null" } }), { status: 400 })
+            }
+          }
+        } else if (item.type === "message") {
+          if (item.role === "system") {
+            return new Response(JSON.stringify({ error: { message: "system role is not permitted; use developer" } }), { status: 400 })
+          }
+          if (!item.role) {
+            return new Response(JSON.stringify({ error: { message: `Missing required parameter: 'input[${idx}].role'` } }), { status: 400 })
+          }
+        } else if (item.type === "function_call") {
+          if (!item.call_id || !item.name) {
+            return new Response(JSON.stringify({ error: { message: `Invalid function_call at input[${idx}]` } }), { status: 400 })
+          }
+        } else if (item.type === "function_call_output") {
+          if (!item.call_id || item.output === undefined) {
+            return new Response(JSON.stringify({ error: { message: `Invalid function_call_output at input[${idx}]` } }), { status: 400 })
+          }
+        }
+      }
+
+      return null
+    }
+
+    it("adapts request body to SIWC restrictions using additional_tools with role 'developer' and executes two-turn tool calling cycle (D1, C3)", async () => {
       const sessionJson = JSON.stringify({
         accessToken: "siwc-policy-token",
         clientId: "client-123",
@@ -794,34 +845,35 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
         hostId: "urn:uuid:11111111-2222-3333-4444-555555555555",
       })
 
-      let interceptedBody: any = null
+      const requests: any[] = []
       const originalFetch = globalThis.fetch
 
       globalThis.fetch = async (_url, init) => {
         const body = JSON.parse(String(init?.body ?? "{}"))
-        interceptedBody = body
+        requests.push(body)
 
-        // Strict transport validation reflecting official SIWC preview limitations
-        if (body.temperature !== undefined) {
-          return new Response(JSON.stringify({ error: { message: "temperature is not supported on SIWC routes" } }), { status: 400 })
-        }
-        if (body.tools !== undefined) {
-          return new Response(JSON.stringify({ error: { message: "tools must be grouped in namespaces or provided via additional_tools" } }), { status: 400 })
-        }
-        if (Array.isArray(body.input)) {
-          const hasSystem = body.input.some((i: any) => i && i.type === "message" && i.role === "system")
-          if (hasSystem) {
-            return new Response(JSON.stringify({ error: { message: "system role is not permitted; use developer or instructions" } }), { status: 400 })
-          }
-        }
+        const errorResponse = validateResponsesApiContract(body)
+        if (errorResponse) return errorResponse
 
-        const sse = [
-          'data: {"type":"response.created","response":{"id":"resp_siwc"}}\n\n',
-          'data: {"type":"response.output_text.delta","delta":"SIWC constraints verified"}\n\n',
-          'data: {"type":"response.completed","response":{"id":"resp_siwc","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"SIWC constraints verified"}]}],"usage":{"input_tokens":5,"output_tokens":3}}}\n\n',
-        ].join("")
-
-        return new Response(sse, { headers: { "Content-Type": "text/event-stream" } })
+        if (requests.length === 1) {
+          // Turn 1: Model responds with a function call request
+          const sse1 = [
+            'data: {"type":"response.created","response":{"id":"resp_turn1"}}\n\n',
+            'data: {"type":"response.output_item.added","item":{"id":"fc_1","call_id":"call_calc_42","type":"function_call","name":"calculate","arguments":""}}\n\n',
+            'data: {"type":"response.function_call_arguments.delta","delta":"{\\"expression\\":\\"21*2\\"}"}\n\n',
+            'data: {"type":"response.function_call_arguments.done","call_id":"call_calc_42","arguments":"{\\"expression\\":\\"21*2\\"}"}\n\n',
+            'data: {"type":"response.completed","response":{"id":"resp_turn1","status":"completed","output":[{"id":"fc_1","call_id":"call_calc_42","type":"function_call","name":"calculate","arguments":"{\\"expression\\":\\"21*2\\"}"}],"usage":{"input_tokens":12,"output_tokens":10}}}\n\n',
+          ].join("")
+          return new Response(sse1, { headers: { "Content-Type": "text/event-stream" } })
+        } else {
+          // Turn 2: Model receives tool output and responds with final text
+          const sse2 = [
+            'data: {"type":"response.created","response":{"id":"resp_turn2"}}\n\n',
+            'data: {"type":"response.output_text.delta","delta":"Calculation result is 42."}\n\n',
+            'data: {"type":"response.completed","response":{"id":"resp_turn2","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"Calculation result is 42."}]}],"usage":{"input_tokens":25,"output_tokens":8}}}\n\n',
+          ].join("")
+          return new Response(sse2, { headers: { "Content-Type": "text/event-stream" } })
+        }
       }
 
       try {
@@ -834,36 +886,92 @@ describe("ChatGPT / Codex OAuth provider with token sharing (ADR 0030, Issue #2)
 
         const toolModel = (model as any).bindTools([
           {
-            name: "test_tool",
-            description: "A test tool",
-            schema: { type: "object", properties: { q: { type: "string" } } },
+            name: "calculate",
+            description: "Math calculator",
+            schema: { type: "object", properties: { expression: { type: "string" } } },
           },
         ])
 
-        const res = await toolModel.invoke([new SystemMessage("You are a system reviewer"), new HumanMessage("Verify SIWC compliance")])
+        // Turn 1: user initiates task with system prompt and message
+        const turn1Res = await toolModel.invoke([new SystemMessage("You are an analytical assistant"), new HumanMessage("What is 21 * 2?")])
 
-        // Verify body conformed to SIWC restrictions
-        expect(interceptedBody.temperature).toBeUndefined()
-        expect(interceptedBody.top_p).toBeUndefined()
-        expect(interceptedBody.store).toBe(false)
-        expect(interceptedBody.stream).toBe(true)
+        expect(turn1Res.tool_calls).toHaveLength(1)
+        expect(turn1Res.tool_calls[0].name).toBe("calculate")
+        expect(turn1Res.tool_calls[0].id).toBe("call_calc_42")
 
-        // System message mapped to developer role
-        const devMsg = interceptedBody.input.find((i: any) => i.type === "message" && i.role === "developer")
-        expect(devMsg).toBeDefined()
-        expect(devMsg.content).toContain("You are a system reviewer")
+        // Turn 2: continuation with tool execution result
+        const turn2Res = await toolModel.invoke([
+          new SystemMessage("You are an analytical assistant"),
+          new HumanMessage("What is 21 * 2?"),
+          new AIMessage({
+            content: "",
+            tool_calls: [{ name: "calculate", args: { expression: "21*2" }, id: "call_calc_42" }],
+          }),
+          new ToolMessage({
+            content: "42",
+            tool_call_id: "call_calc_42",
+          }),
+        ])
 
-        // Tools passed via additional_tools input item
-        expect(interceptedBody.tools).toBeUndefined()
-        const additionalToolsItem = interceptedBody.input.find((i: any) => i.type === "additional_tools")
-        expect(additionalToolsItem).toBeDefined()
-        expect(additionalToolsItem.tools[0].name).toBe("test_tool")
+        // Verify requests passed contract validation
+        expect(requests).toHaveLength(2)
 
-        const text = typeof res.content === "string" ? res.content : (res.content as any)[0]?.text
-        expect(text).toContain("SIWC constraints verified")
+        // Turn 1 validation
+        const req1 = requests[0]
+        expect(req1.tools).toBeUndefined()
+        const addTools1 = req1.input.find((i: any) => i.type === "additional_tools")
+        expect(addTools1).toBeDefined()
+        expect(addTools1.role).toBe("developer")
+        expect(addTools1.tools[0].name).toBe("calculate")
+        expect(addTools1.tools[0].strict).toBeUndefined()
+
+        // Turn 2 validation: function_call and function_call_output preserved without requiring role
+        const req2 = requests[1]
+        expect(req2.tools).toBeUndefined()
+        const addTools2 = req2.input.find((i: any) => i.type === "additional_tools")
+        expect(addTools2).toBeDefined()
+        expect(addTools2.role).toBe("developer")
+
+        const fcItem = req2.input.find((i: any) => i.type === "function_call" && i.call_id === "call_calc_42")
+        expect(fcItem).toBeDefined()
+        expect(fcItem.name).toBe("calculate")
+        expect(fcItem.role).toBeUndefined()
+
+        const fcoItem = req2.input.find((i: any) => i.type === "function_call_output" && i.call_id === "call_calc_42")
+        expect(fcoItem).toBeDefined()
+        expect(fcoItem.output).toBe("42")
+        expect(fcoItem.role).toBeUndefined()
+
+        const finalContent = typeof turn2Res.content === "string" ? turn2Res.content : (turn2Res.content as any)[0]?.text
+        expect(finalContent).toContain("Calculation result is 42.")
       } finally {
         globalThis.fetch = originalFetch
       }
+    })
+
+    it("fails upstream contract validation when additional_tools lacks role 'developer' (negative case)", async () => {
+      const invalidPayload = {
+        model: "gpt-4o",
+        store: false,
+        stream: true,
+        input: [
+          {
+            type: "additional_tools",
+            tools: [{ type: "function", name: "test_tool" }],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "probe" }],
+          },
+        ],
+      }
+
+      const rejection = validateResponsesApiContract(invalidPayload)
+      expect(rejection).not.toBeNull()
+      expect(rejection?.status).toBe(400)
+      const data = await rejection?.json()
+      expect(data.error.message).toContain("Missing required parameter: 'input[0].role'")
     })
 
     it("rejects invoke and stream when stream ends with EOF without response.completed (D2)", async () => {
