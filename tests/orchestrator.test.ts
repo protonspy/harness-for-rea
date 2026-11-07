@@ -95,7 +95,7 @@ beforeAll(() => {
         id: `gen-${requests.length}`,
         model: body.model,
         choices: [{ message, finish_reason: r.tool_calls ? "tool_calls" : "stop" }],
-        usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.001 },
+        usage: { prompt_tokens: 100, completion_tokens: 20, ...(String(url).includes("deepseek") ? {} : { cost: 0.001 }) },
       }),
       { headers: { "content-type": "application/json" } },
     )

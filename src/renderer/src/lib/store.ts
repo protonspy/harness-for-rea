@@ -1,4 +1,4 @@
-import type { AgentUsage, EventRow, PatchView, Push, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
+import type { AgentUsage, CostStatus, EventRow, PatchView, Push, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 
 /*
   The renderer's state, folded from pushed messages: the loaded task's history and the task list.
@@ -56,7 +56,7 @@ export function addUsage(usage: AgentUsage[], e: EventRow): AgentUsage[] {
   }
 
   const isEstimated = e.payload.costStatus === "estimated" || e.payload.estimate === true
-  const isUnknown = e.payload.costStatus === "unknown" || (e.payload.costUsd === undefined && !isEstimated)
+  const isUnknown = e.payload.costStatus === "unknown" || (e.payload.costStatus === undefined && e.payload.costUsd === undefined && !isEstimated)
   const isReported = e.payload.costStatus === "reported" || (!isEstimated && !isUnknown && typeof e.payload.costUsd === "number")
 
   const callCost = typeof e.payload.costUsd === "number" ? e.payload.costUsd : 0
@@ -65,23 +65,39 @@ export function addUsage(usage: AgentUsage[], e: EventRow): AgentUsage[] {
   // prompt_tokens includes cache; do not add cacheTokens again if promptTokensIncludesCache or model.call
   const totalIn = e.payload.promptTokensIncludesCache || e.kind === "model.call" ? (e.payload.tokensIn ?? 0) : (e.payload.tokensIn ?? 0) + cacheIn
 
+  const prevReportedCalls = (cur as any).reportedCalls ?? (cur.costStatus === "reported" ? cur.calls : 0)
+  const prevEstimatedCalls = (cur as any).estimatedCalls ?? (cur.costStatus === "estimated" && !cur.hasUnknownCost ? cur.calls : 0)
+  const prevUnknownCalls = (cur as any).unknownCalls ?? (cur.costStatus === "unknown" ? cur.calls : cur.hasUnknownCost ? 1 : 0)
+
+  const nextReportedCalls = prevReportedCalls + (isReported ? 1 : 0)
+  const nextEstimatedCalls = prevEstimatedCalls + (isEstimated ? 1 : 0)
+  const nextUnknownCalls = prevUnknownCalls + (isUnknown ? 1 : 0)
+
+  const nextKnownCalls = nextReportedCalls + nextEstimatedCalls
+  const nextHasUnknown = nextUnknownCalls > 0 || cur.hasUnknownCost === true || isUnknown
+  const nextIsEstimate = nextEstimatedCalls > 0 || cur.estimate || isEstimated || (nextHasUnknown && nextKnownCalls > 0)
+
+  const nextCostStatus: CostStatus = nextKnownCalls === 0 ? "unknown" : nextEstimatedCalls > 0 || nextHasUnknown ? "estimated" : "reported"
+
+  const nextCostUsd = cur.costUsd + (isUnknown ? 0 : callCost)
+
   const next: AgentUsage = {
     ...cur,
     calls: cur.calls + 1,
     tokensIn: cur.tokensIn + totalIn,
     tokensOut: cur.tokensOut + (e.payload.tokensOut ?? 0),
     cacheTokens: (cur.cacheTokens ?? 0) + cacheIn,
-    costUsd: cur.costUsd + callCost,
-    estimate: cur.estimate || isEstimated,
-    costStatus: isUnknown && cur.calls === 0 ? "unknown" : isEstimated ? "estimated" : "reported",
+    costUsd: nextCostUsd,
+    estimate: nextIsEstimate,
+    costStatus: nextCostStatus,
     reportedCostUsd: (cur.reportedCostUsd ?? 0) + (isReported ? callCost : 0),
     estimatedCostUsd: (cur.estimatedCostUsd ?? 0) + (isEstimated ? callCost : 0),
-    hasUnknownCost: cur.hasUnknownCost || isUnknown,
+    hasUnknownCost: nextHasUnknown,
+    ...({ reportedCalls: nextReportedCalls, estimatedCalls: nextEstimatedCalls, unknownCalls: nextUnknownCalls } as any),
   }
   return usage.some((u) => u.agent === e.agent) ? usage.map((u) => (u.agent === e.agent ? next : u)) : [...usage, next]
 }
 
-/** Tokens and cost per agent, from the orchestrator's model calls and the specialist's results. */
 export function usageByAgent(events: EventRow[]): AgentUsage[] {
   return events.reduce(addUsage, [] as AgentUsage[])
 }

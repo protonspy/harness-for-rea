@@ -361,3 +361,419 @@ describe("Persistence, Aggregation & Old Tasks Migration (Issue #6)", () => {
     expect(usage[0]!.estimate).toBe(true)
   })
 })
+
+describe("Envelope cost extraction and precedence in usageOf (R3)", () => {
+  it("extracts cost from llmOutput.usage and marks costStatus as reported without running catalog estimation", () => {
+    const usage = usageOf(
+      {
+        llmOutput: {
+          usage: {
+            input_tokens: 1000,
+            output_tokens: 100,
+            cost: 7,
+          },
+        } as any,
+      },
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "river",
+    )
+
+    expect(usage.costUsd).toBe(7)
+    expect(usage.costStatus).toBe("reported")
+    expect(usage.estimate).toBe(false)
+  })
+
+  it("extracts cost from response_metadata.usage.cost", () => {
+    const usage = usageOf(
+      {
+        generations: [
+          [
+            {
+              message: {
+                response_metadata: {
+                  model: "GLM-5.3",
+                  usage: {
+                    prompt_tokens: 2000,
+                    completion_tokens: 200,
+                    cost: 3.5,
+                  },
+                },
+              },
+            },
+          ],
+        ],
+      },
+      "GLM-5.3",
+      "river",
+    )
+
+    expect(usage.costUsd).toBe(3.5)
+    expect(usage.costStatus).toBe("reported")
+    expect(usage.estimate).toBe(false)
+  })
+
+  it("extracts cost from response_metadata.cost directly", () => {
+    const usage = usageOf(
+      {
+        generations: [
+          [
+            {
+              message: {
+                response_metadata: {
+                  model: "GLM-5.3",
+                  cost: 1.25,
+                },
+              },
+            },
+          ],
+        ],
+      },
+      "GLM-5.3",
+      "river",
+    )
+
+    expect(usage.costUsd).toBe(1.25)
+    expect(usage.costStatus).toBe("reported")
+    expect(usage.estimate).toBe(false)
+  })
+
+  it("preserves zero reported cost (free model) as reported and does not turn into estimated or unknown", () => {
+    const usage = usageOf(
+      {
+        llmOutput: {
+          tokenUsage: {
+            prompt_tokens: 500,
+            completion_tokens: 50,
+            cost: 0,
+          },
+        },
+      },
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "river",
+    )
+
+    expect(usage.costUsd).toBe(0)
+    expect(usage.costStatus).toBe("reported")
+    expect(usage.estimate).toBe(false)
+  })
+
+  it("rejects non-finite costs (NaN, Infinity) and falls back to pricing catalog or unknown", () => {
+    const usage = usageOf(
+      {
+        llmOutput: {
+          tokenUsage: {
+            prompt_tokens: 1_000_000,
+            completion_tokens: 100_000,
+            cost: NaN,
+          },
+        },
+      },
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "river",
+    )
+
+    // Falls back to catalog estimation for DeepSeek
+    expect(usage.costUsd).toBeCloseTo(0.168, 4)
+    expect(usage.costStatus).toBe("estimated")
+    expect(usage.estimate).toBe(true)
+  })
+})
+
+describe("Unknown vs Reported vs Estimated cost aggregation and fold (R2)", () => {
+  it("keeps costStatus as unknown across 1 and 2 unknown events without defaulting to reported/0 in EventLog.usage", () => {
+    const log = new EventLog(":memory:")
+    const task = log.createTask({ request: "test unknown", sourceRoot: "/src", model: "unknown-model" })
+
+    // 1 unknown call
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "unknown call 1",
+      payload: {
+        model: "unknown-model",
+        tokensIn: 500,
+        tokensOut: 50,
+        costStatus: "unknown",
+        costUsd: 0,
+      },
+    })
+
+    let usage = log.usage(task.id)
+    expect(usage[0]!.calls).toBe(1)
+    expect(usage[0]!.costStatus).toBe("unknown")
+    expect(usage[0]!.costUsd).toBe(0)
+    expect(usage[0]!.hasUnknownCost).toBe(true)
+    expect(usage[0]!.estimate).toBe(false)
+
+    // 2 unknown calls: must STILL be unknown!
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "unknown call 2",
+      payload: {
+        model: "unknown-model",
+        tokensIn: 300,
+        tokensOut: 30,
+        costStatus: "unknown",
+        costUsd: 0,
+      },
+    })
+
+    usage = log.usage(task.id)
+    expect(usage[0]!.calls).toBe(2)
+    expect(usage[0]!.costStatus).toBe("unknown")
+    expect(usage[0]!.costUsd).toBe(0)
+    expect(usage[0]!.hasUnknownCost).toBe(true)
+    expect(usage[0]!.estimate).toBe(false)
+  })
+
+  it("keeps costStatus as unknown across 2 unknown events in frontend store addUsage fold", () => {
+    const events: EventRow[] = [
+      {
+        id: 1,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "unknown call 1",
+        truncated: false,
+        payload: {
+          tokensIn: 100,
+          tokensOut: 10,
+          costStatus: "unknown",
+          costUsd: 0,
+        },
+      },
+      {
+        id: 2,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "unknown call 2",
+        truncated: false,
+        payload: {
+          tokensIn: 200,
+          tokensOut: 20,
+          costStatus: "unknown",
+          costUsd: 0,
+        },
+      },
+    ]
+
+    const usage = usageByAgent(events)
+    expect(usage).toHaveLength(1)
+    expect(usage[0]!.calls).toBe(2)
+    expect(usage[0]!.costStatus).toBe("unknown")
+    expect(usage[0]!.costUsd).toBe(0)
+    expect(usage[0]!.hasUnknownCost).toBe(true)
+    expect(usage[0]!.estimate).toBe(false)
+  })
+
+  it("handles mixture of estimated + reported calls in both SQL and store fold", () => {
+    const log = new EventLog(":memory:")
+    const task = log.createTask({ request: "test mix", sourceRoot: "/src", model: "mix" })
+
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "call 1 reported",
+      payload: {
+        tokensIn: 100,
+        tokensOut: 10,
+        costStatus: "reported",
+        costUsd: 0.05,
+      },
+    })
+
+    log.append({
+      taskId: task.id,
+      agent: "orchestrator",
+      kind: "model.call",
+      summary: "call 2 estimated",
+      payload: {
+        tokensIn: 200,
+        tokensOut: 20,
+        costStatus: "estimated",
+        costUsd: 0.03,
+        estimate: true,
+      },
+    })
+
+    const usage = log.usage(task.id)
+    expect(usage[0]!.calls).toBe(2)
+    expect(usage[0]!.costStatus).toBe("estimated")
+    expect(usage[0]!.estimate).toBe(true)
+    expect(usage[0]!.hasUnknownCost).toBe(false)
+    expect(usage[0]!.costUsd).toBeCloseTo(0.08, 4)
+    expect(usage[0]!.reportedCostUsd).toBeCloseTo(0.05, 4)
+    expect(usage[0]!.estimatedCostUsd).toBeCloseTo(0.03, 4)
+
+    const events: EventRow[] = [
+      {
+        id: 1,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "c1",
+        truncated: false,
+        payload: { costStatus: "reported", costUsd: 0.05 },
+      },
+      {
+        id: 2,
+        taskId: task.id,
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "c2",
+        truncated: false,
+        payload: { costStatus: "estimated", costUsd: 0.03, estimate: true },
+      },
+    ]
+    const storeUsage = usageByAgent(events)
+    expect(storeUsage[0]!.costStatus).toBe("estimated")
+    expect(storeUsage[0]!.costUsd).toBeCloseTo(0.08, 4)
+    expect(storeUsage[0]!.hasUnknownCost).toBe(false)
+  })
+
+  it("handles mixture of unknown + reported calls and preserves order invariance", () => {
+    // Order 1: reported then unknown
+    const events1: EventRow[] = [
+      {
+        id: 1,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "c1",
+        truncated: false,
+        payload: { costStatus: "reported", costUsd: 0.05 },
+      },
+      {
+        id: 2,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "c2",
+        truncated: false,
+        payload: { costStatus: "unknown", costUsd: 0 },
+      },
+    ]
+    const u1 = usageByAgent(events1)[0]!
+    expect(u1.costStatus).toBe("estimated")
+    expect(u1.estimate).toBe(true)
+    expect(u1.hasUnknownCost).toBe(true)
+    expect(u1.costUsd).toBe(0.05)
+
+    // Order 2: unknown then reported
+    const events2: EventRow[] = [
+      {
+        id: 1,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 1,
+        kind: "model.call",
+        state: "",
+        summary: "c1",
+        truncated: false,
+        payload: { costStatus: "unknown", costUsd: 0 },
+      },
+      {
+        id: 2,
+        taskId: "t",
+        stepId: null,
+        agent: "orchestrator",
+        at: 2,
+        kind: "model.call",
+        state: "",
+        summary: "c2",
+        truncated: false,
+        payload: { costStatus: "reported", costUsd: 0.05 },
+      },
+    ]
+    const u2 = usageByAgent(events2)[0]!
+    expect(u2.costStatus).toBe("estimated")
+    expect(u2.estimate).toBe(true)
+    expect(u2.hasUnknownCost).toBe(true)
+    expect(u2.costUsd).toBe(0.05)
+  })
+})
+
+describe("Delegation result consumer and task persistence (R1)", () => {
+  it("persists exact tokensIn and cacheTokens when promptTokensIncludesCache is true without adding cache twice", () => {
+    const log = new EventLog(":memory:")
+    const task = log.createTask({ request: "test delegation", sourceRoot: "/src", model: "m" })
+
+    // Simulate callback in delegation.ts:
+    const payload = {
+      tokensIn: 1000,
+      cacheTokens: 250,
+      tokensOut: 100,
+      costUsd: 0.05,
+      promptTokensIncludesCache: true,
+    }
+
+    const promptIncludesCache = Boolean(payload.promptTokensIncludesCache)
+    const cacheTokens = typeof payload.cacheTokens === "number" ? payload.cacheTokens : 0
+    const tokensIn = promptIncludesCache ? (payload.tokensIn ?? 0) : (payload.tokensIn ?? 0) + cacheTokens
+
+    log.addUsage(task.id, {
+      tokensIn,
+      cacheTokens,
+      tokensOut: payload.tokensOut ?? 0,
+      specialistCostUsd: payload.costUsd ?? 0,
+    })
+
+    const updated = log.getTask(task.id)
+    expect(updated.tokensIn).toBe(1000) // NOT 1250!
+    expect(updated.cacheTokens).toBe(250) // NOT 0!
+    expect(updated.tokensOut).toBe(100)
+    expect(updated.specialistCostUsd).toBe(0.05)
+  })
+
+  it("preserves legacy Claude Code delegation behavior where promptTokens did not include cache", () => {
+    const log = new EventLog(":memory:")
+    const task = log.createTask({ request: "test claude delegation", sourceRoot: "/src", model: "claude" })
+
+    const payload = {
+      tokensIn: 1000,
+      cacheTokens: 250,
+      tokensOut: 100,
+      costUsd: 0.05,
+      // promptTokensIncludesCache is absent
+    }
+
+    const promptIncludesCache = Boolean((payload as any).promptTokensIncludesCache)
+    const cacheTokens = typeof payload.cacheTokens === "number" ? payload.cacheTokens : 0
+    const tokensIn = promptIncludesCache ? (payload.tokensIn ?? 0) : (payload.tokensIn ?? 0) + cacheTokens
+
+    log.addUsage(task.id, {
+      tokensIn,
+      cacheTokens,
+      tokensOut: payload.tokensOut ?? 0,
+      specialistCostUsd: payload.costUsd ?? 0,
+    })
+
+    const updated = log.getTask(task.id)
+    expect(updated.tokensIn).toBe(1250) // 1000 + 250
+    expect(updated.cacheTokens).toBe(250)
+  })
+})

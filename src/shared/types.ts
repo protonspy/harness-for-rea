@@ -3,6 +3,7 @@ import type { IntegrationSettings } from "./integrations"
 
 import type { ModelProtocol, ProviderId, SpecialistProvider } from "./providers"
 import type { CacheHypothesis, CostStatus, ModelRateSnapshot } from "./pricing"
+export type { CacheHypothesis, CostStatus, ModelRateSnapshot }
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn

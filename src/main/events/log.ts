@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import type { Agent, AgentUsage, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
+import type { Agent, AgentUsage, CostStatus, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 import { getDb } from "../db"
 import { removeTree } from "../sandbox/paths"
 import { redact, redactValue } from "./redact"
@@ -387,11 +387,26 @@ export class EventLog {
 
   /** Each agent's model calls, tokens and cost over the whole task, summed where they are stored (specs/chat-timeline R3.3). */
   usage(taskId: string): AgentUsage[] {
+    type UsageRow = {
+      agent: string
+      calls: number
+      tokens_in: number
+      cache_tokens: number
+      tokens_out: number
+      cost: number
+      reported_cost: number
+      estimated_cost: number
+      reported_calls: number
+      estimated_calls: number
+      unknown_calls: number
+      has_unknown_cost: number
+      estimate: number
+    }
     const rows = getDb()
       .prepare(
         `SELECT agent, COUNT(*) AS calls,
            SUM(
-             CASE 
+             CASE
                WHEN json_extract(payload, '$.promptTokensIncludesCache') = 1 OR kind = 'model.call'
                  THEN COALESCE(json_extract(payload, '$.tokensIn'), 0)
                ELSE COALESCE(json_extract(payload, '$.tokensIn'), 0) + COALESCE(json_extract(payload, '$.cacheTokens'), 0)
@@ -399,9 +414,16 @@ export class EventLog {
            ) AS tokens_in,
            SUM(COALESCE(json_extract(payload, '$.cacheTokens'), 0)) AS cache_tokens,
            SUM(COALESCE(json_extract(payload, '$.tokensOut'), 0)) AS tokens_out,
-           SUM(COALESCE(json_extract(payload, '$.costUsd'), 0)) AS cost,
            SUM(
-             CASE 
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'unknown'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND json_extract(payload, '$.costUsd') IS NULL)
+                 THEN 0
+               ELSE COALESCE(json_extract(payload, '$.costUsd'), 0)
+             END
+           ) AS cost,
+           SUM(
+             CASE
                WHEN json_extract(payload, '$.costStatus') = 'reported'
                  OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 0 AND json_extract(payload, '$.costUsd') IS NOT NULL)
                  THEN COALESCE(json_extract(payload, '$.costUsd'), 0)
@@ -409,13 +431,37 @@ export class EventLog {
              END
            ) AS reported_cost,
            SUM(
-             CASE 
+             CASE
                WHEN json_extract(payload, '$.costStatus') = 'estimated'
                  OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 1)
                  THEN COALESCE(json_extract(payload, '$.costUsd'), 0)
                ELSE 0
              END
            ) AS estimated_cost,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'reported'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 0 AND json_extract(payload, '$.costUsd') IS NOT NULL)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS reported_calls,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'estimated'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 1)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS estimated_calls,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'unknown'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND json_extract(payload, '$.costUsd') IS NULL)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS unknown_calls,
            MAX(
              CASE
                WHEN json_extract(payload, '$.costStatus') = 'unknown'
@@ -428,19 +474,25 @@ export class EventLog {
          FROM events WHERE task_id = ? AND kind IN ('model.call', 'specialist.result')
          GROUP BY agent ORDER BY MIN(id)`,
       )
-      .all(taskId) as Row[]
+      .all(taskId) as UsageRow[]
     return rows.map((r) => {
-      const hasUnknown = Number(r.has_unknown_cost) === 1
-      const isEstimate = Number(r.estimate) === 1
+      const calls = Number(r.calls)
+      const reportedCalls = Number(r.reported_calls ?? 0)
+      const estimatedCalls = Number(r.estimated_calls ?? 0)
+      const unknownCalls = Number(r.unknown_calls ?? 0)
+      const knownCalls = reportedCalls + estimatedCalls
+      const hasUnknown = unknownCalls > 0 || Number(r.has_unknown_cost) === 1
+      const isEstimate = estimatedCalls > 0 || Number(r.estimate) === 1
+      const costStatus: CostStatus = knownCalls === 0 ? "unknown" : estimatedCalls > 0 ? "estimated" : "reported"
       return {
         agent: String(r.agent),
-        calls: Number(r.calls),
+        calls,
         tokensIn: Number(r.tokens_in),
         tokensOut: Number(r.tokens_out),
         cacheTokens: Number(r.cache_tokens),
         costUsd: Number(r.cost),
         estimate: isEstimate,
-        costStatus: hasUnknown && Number(r.calls) === 1 ? "unknown" : isEstimate ? "estimated" : "reported",
+        costStatus,
         reportedCostUsd: Number(r.reported_cost),
         estimatedCostUsd: Number(r.estimated_cost),
         hasUnknownCost: hasUnknown,

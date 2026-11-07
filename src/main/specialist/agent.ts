@@ -388,8 +388,13 @@ export class AgentSpecialist implements Specialist {
           model: this.usage.model || this.o.modelName,
           tokensIn: this.usage.tokensIn,
           tokensOut: this.usage.tokensOut,
-          cacheTokens: 0,
+          cacheTokens: this.usage.cacheTokens,
           costUsd: this.usage.costUsd,
+          costStatus: this.usage.costStatus,
+          estimate: this.usage.estimate,
+          rateSnapshot: this.usage.rateSnapshot,
+          cacheHypothesis: this.usage.cacheHypothesis,
+          promptTokensIncludesCache: true,
         },
       })
       throw failure

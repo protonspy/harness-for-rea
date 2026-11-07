@@ -181,14 +181,16 @@ export function usageOf(output: LlmEndOutput, fallback: string, provider?: Provi
   const cacheTokens = typeof rawCache === "number" && !isNaN(rawCache) ? rawCache : undefined
   const model = respMeta?.model_name ?? respMeta?.model ?? fallback
 
-  const reportedCost =
-    typeof rawTokenUsage?.cost === "number"
-      ? rawTokenUsage.cost
-      : typeof respTokenUsage?.cost === "number"
-        ? respTokenUsage.cost
-        : typeof respMeta?.cost === "number"
-          ? respMeta.cost
-          : undefined
+  const costCandidates: unknown[] = [
+    rawTokenUsage?.cost,
+    rawUsage?.cost,
+    respTokenUsage?.cost,
+    respUsage?.cost,
+    respMeta?.cost,
+    (output.llmOutput as any)?.cost,
+    usageMeta?.cost,
+  ]
+  const reportedCost = costCandidates.find((c): c is number => typeof c === "number" && Number.isFinite(c))
 
   if (typeof reportedCost === "number") {
     return {
