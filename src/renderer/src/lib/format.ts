@@ -7,6 +7,12 @@ export function usd(v: number): string {
   return v < 0.01 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`
 }
 
+/** Formats cost, distinguishing unknown cost ("—") from zero/free ($0.00). */
+export function formatCost(v: number | null | undefined, status?: string): string {
+  if (status === "unknown" || v === null || v === undefined) return "—"
+  return usd(v)
+}
+
 export function tokens(n: number): string {
   if (n < 1000) return String(n)
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`

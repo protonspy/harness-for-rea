@@ -303,8 +303,8 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
                     <td className="px-2 py-1.5 text-right font-mono text-xs">{tokens(u.tokensIn)}</td>
                     <td className="px-2 py-1.5 text-right font-mono text-xs">{tokens(u.tokensOut)}</td>
                     <td className="py-1.5 text-right font-mono text-xs">
-                      {usd(u.costUsd)}
-                      {u.estimate && <span title="Claude Code's estimate against your plan, not a charge"> est.</span>}
+                      {u.costStatus === "unknown" && u.costUsd === 0 ? "—" : usd(u.costUsd)}
+                      {u.estimate && <span title="Estimated cost against catalog rates or plan, not a charge"> est.</span>}
                     </td>
                   </tr>
                 ))}

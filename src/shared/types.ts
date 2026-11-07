@@ -2,6 +2,7 @@ import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
 import type { ModelProtocol, ProviderId, SpecialistProvider } from "./providers"
+import type { CacheHypothesis, CostStatus, ModelRateSnapshot } from "./pricing"
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
@@ -26,6 +27,7 @@ export interface TaskRow {
   updatedAt: number
   tokensIn: number
   tokensOut: number
+  cacheTokens?: number
   costUsd: number
   /** what Claude Code reported as `total_cost_usd`: an estimate against the user's plan, not a charge */
   specialistCostUsd: number
@@ -139,6 +141,10 @@ export interface EventPayload {
   costUsd?: number
   /** the cost is Claude Code's estimate, not an OpenRouter charge */
   estimate?: boolean
+  costStatus?: CostStatus
+  rateSnapshot?: ModelRateSnapshot
+  cacheHypothesis?: CacheHypothesis
+  promptTokensIncludesCache?: boolean
   [key: string]: unknown
 }
 
@@ -180,9 +186,14 @@ export interface AgentUsage {
   calls: number
   tokensIn: number
   tokensOut: number
+  cacheTokens?: number
   costUsd: number
   /** the cost is Claude Code's estimate against the plan, not a charge */
   estimate: boolean
+  costStatus?: CostStatus
+  reportedCostUsd?: number
+  estimatedCostUsd?: number
+  hasUnknownCost?: boolean
 }
 
 export interface TaskHistory {

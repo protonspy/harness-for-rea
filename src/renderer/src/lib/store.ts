@@ -42,14 +42,41 @@ export function foldTasks(list: TaskRow[], p: Push): TaskRow[] {
 /** One event's tokens and cost added to the per-agent usage, when it is a model call or a specialist's result. */
 export function addUsage(usage: AgentUsage[], e: EventRow): AgentUsage[] {
   if (e.kind !== "model.call" && e.kind !== "specialist.result") return usage
-  const cur = usage.find((u) => u.agent === e.agent) ?? { agent: e.agent, calls: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, estimate: false }
+  const cur = usage.find((u) => u.agent === e.agent) ?? {
+    agent: e.agent,
+    calls: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    cacheTokens: 0,
+    costUsd: 0,
+    estimate: false,
+    reportedCostUsd: 0,
+    estimatedCostUsd: 0,
+    hasUnknownCost: false,
+  }
+
+  const isEstimated = e.payload.costStatus === "estimated" || e.payload.estimate === true
+  const isUnknown = e.payload.costStatus === "unknown" || (e.payload.costUsd === undefined && !isEstimated)
+  const isReported = e.payload.costStatus === "reported" || (!isEstimated && !isUnknown && typeof e.payload.costUsd === "number")
+
+  const callCost = typeof e.payload.costUsd === "number" ? e.payload.costUsd : 0
+  const cacheIn = typeof e.payload.cacheTokens === "number" ? e.payload.cacheTokens : 0
+
+  // prompt_tokens includes cache; do not add cacheTokens again if promptTokensIncludesCache or model.call
+  const totalIn = e.payload.promptTokensIncludesCache || e.kind === "model.call" ? (e.payload.tokensIn ?? 0) : (e.payload.tokensIn ?? 0) + cacheIn
+
   const next: AgentUsage = {
     ...cur,
     calls: cur.calls + 1,
-    tokensIn: cur.tokensIn + (e.payload.tokensIn ?? 0) + (e.payload.cacheTokens ?? 0),
+    tokensIn: cur.tokensIn + totalIn,
     tokensOut: cur.tokensOut + (e.payload.tokensOut ?? 0),
-    costUsd: cur.costUsd + (e.payload.costUsd ?? 0),
-    estimate: cur.estimate || e.payload.estimate === true,
+    cacheTokens: (cur.cacheTokens ?? 0) + cacheIn,
+    costUsd: cur.costUsd + callCost,
+    estimate: cur.estimate || isEstimated,
+    costStatus: isUnknown && cur.calls === 0 ? "unknown" : isEstimated ? "estimated" : "reported",
+    reportedCostUsd: (cur.reportedCostUsd ?? 0) + (isReported ? callCost : 0),
+    estimatedCostUsd: (cur.estimatedCostUsd ?? 0) + (isEstimated ? callCost : 0),
+    hasUnknownCost: cur.hasUnknownCost || isUnknown,
   }
   return usage.some((u) => u.agent === e.agent) ? usage.map((u) => (u.agent === e.agent ? next : u)) : [...usage, next]
 }

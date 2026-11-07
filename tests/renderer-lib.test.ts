@@ -103,7 +103,7 @@ describe("usage and files (R2.3, R2.5)", () => {
       event(3, { kind: "specialist.result", agent: "specialist", payload: { tokensIn: 1000, cacheTokens: 200, tokensOut: 300, costUsd: 0.4, estimate: true } }),
       event(4, { kind: "tool.call", payload: { tokensIn: 999 } }),
     ])
-    expect(u).toEqual([
+    expect(u).toMatchObject([
       { agent: "orchestrator", calls: 2, tokensIn: 150, tokensOut: 15, costUsd: 0.03, estimate: false },
       { agent: "specialist", calls: 1, tokensIn: 1200, tokensOut: 300, costUsd: 0.4, estimate: true },
     ])

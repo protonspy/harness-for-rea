@@ -179,7 +179,7 @@ describe("history (R2.4, specs/chat-timeline R2.1, R3.3)", () => {
       payload: { tokensIn: 5, cacheTokens: 7, tokensOut: 3, costUsd: 1.25, estimate: true },
     })
     log.append({ taskId: t.id, agent: "orchestrator", kind: "model.call", summary: "m", payload: { tokensIn: 1, tokensOut: 1 } })
-    expect(log.history(t.id, { limit: 1 }).usage).toEqual([
+    expect(log.history(t.id, { limit: 1 }).usage).toMatchObject([
       { agent: "orchestrator", calls: 2, tokensIn: 11, tokensOut: 3, costUsd: 0.5, estimate: false },
       { agent: "specialist", calls: 1, tokensIn: 12, tokensOut: 3, costUsd: 1.25, estimate: true },
     ])

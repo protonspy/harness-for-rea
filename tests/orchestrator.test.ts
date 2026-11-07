@@ -618,13 +618,13 @@ describe("model and errors (R1.1–R1.4)", () => {
         },
         "m",
       ),
-    ).toEqual({
+    ).toMatchObject({
       tokensIn: 5,
       tokensOut: 2,
       costUsd: 0.1,
       model: "z",
     })
-    expect(usageOf({ generations: [[{ message: { usage_metadata: { input_tokens: 1, output_tokens: 1 } } }]] }, "m")).toEqual({
+    expect(usageOf({ generations: [[{ message: { usage_metadata: { input_tokens: 1, output_tokens: 1 } } }]] }, "m")).toMatchObject({
       tokensIn: 1,
       tokensOut: 1,
       costUsd: 0,

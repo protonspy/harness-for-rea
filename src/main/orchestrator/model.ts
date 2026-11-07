@@ -37,6 +37,7 @@ class ReasoningChatOpenAI extends ChatOpenAI {
   }
 }
 import { ChatOpenRouter } from "@langchain/openrouter"
+import { estimateCostUsd, getModelPricing, getRiverModelPricing, type CacheHypothesis, type CostStatus, type ModelRateSnapshot } from "@shared/pricing"
 import { PRESET_MODEL } from "@shared/defaults"
 import { PROVIDERS, resolveBaseUrl, validateReasoningEffort, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
@@ -63,10 +64,14 @@ export function getChatGPTAuthService(): ChatGPTAuthService | undefined {
 export interface ModelUsage {
   tokensIn: number
   tokensOut: number
-  /** OpenRouter's `usage.cost`, in USD; 0 when the provider did not report one (OpenAI-compatible APIs do not) */
+  cacheTokens?: number
   costUsd: number
-  /** the model that actually answered, which differs from the chosen one after a fallback */
+  costStatus: CostStatus
+  estimate: boolean
   model: string
+  rateSnapshot?: ModelRateSnapshot
+  cacheHypothesis?: CacheHypothesis
+  promptTokensIncludesCache?: boolean
 }
 
 export function fallbackModels(model: string): string[] {
@@ -74,19 +79,156 @@ export function fallbackModels(model: string): string[] {
 }
 
 interface LlmEndOutput {
-  llmOutput?: { tokenUsage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number } }
-  generations?: { message?: { response_metadata?: { model_name?: string }; usage_metadata?: { input_tokens?: number; output_tokens?: number } } }[][]
+  llmOutput?: {
+    tokenUsage?: {
+      prompt_tokens?: number
+      completion_tokens?: number
+      cost?: number
+      prompt_tokens_details?: { cached_tokens?: number }
+      completion_tokens_details?: { reasoning_tokens?: number }
+    }
+    usage?: {
+      prompt_tokens?: number
+      completion_tokens?: number
+      input_tokens?: number
+      output_tokens?: number
+      cost?: number
+      prompt_tokens_details?: { cached_tokens?: number }
+      input_tokens_details?: { cached_tokens?: number }
+      completion_tokens_details?: { reasoning_tokens?: number }
+      output_tokens_details?: { reasoning_tokens?: number }
+    }
+  }
+  generations?: {
+    message?: {
+      response_metadata?: {
+        model_name?: string
+        model?: string
+        cost?: number
+        tokenUsage?: {
+          prompt_tokens?: number
+          completion_tokens?: number
+          cost?: number
+          prompt_tokens_details?: { cached_tokens?: number }
+        }
+        usage?: {
+          prompt_tokens?: number
+          completion_tokens?: number
+          input_tokens?: number
+          output_tokens?: number
+          cost?: number
+          prompt_tokens_details?: { cached_tokens?: number }
+          input_tokens_details?: { cached_tokens?: number }
+        }
+      }
+      usage_metadata?: {
+        input_tokens?: number
+        output_tokens?: number
+        total_tokens?: number
+        input_token_details?: {
+          cache_read?: number
+          cached_tokens?: number
+        }
+        output_token_details?: {
+          reasoning?: number
+          reasoning_tokens?: number
+        }
+      }
+    }
+  }[][]
 }
 
-/** One completed call's usage, from OpenRouter's `usage` object as LangChain passes it on. */
-export function usageOf(output: LlmEndOutput, fallback: string): ModelUsage {
-  const raw = output.llmOutput?.tokenUsage
+/** One completed call's usage, evaluating reported cost or catalog pricing snapshot. */
+export function usageOf(output: LlmEndOutput, fallback: string, provider?: ProviderId): ModelUsage {
+  const rawTokenUsage = output.llmOutput?.tokenUsage
+  const rawUsage = (output.llmOutput as any)?.usage
   const msg = output.generations?.[0]?.[0]?.message
+  const respMeta = (msg as any)?.response_metadata
+  const respTokenUsage = respMeta?.tokenUsage
+  const respUsage = respMeta?.usage
+  const usageMeta = (msg as any)?.usage_metadata
+
+  const tokensIn =
+    rawTokenUsage?.prompt_tokens ??
+    rawUsage?.prompt_tokens ??
+    rawUsage?.input_tokens ??
+    respTokenUsage?.prompt_tokens ??
+    respUsage?.prompt_tokens ??
+    respUsage?.input_tokens ??
+    usageMeta?.input_tokens ??
+    0
+
+  const tokensOut =
+    rawTokenUsage?.completion_tokens ??
+    rawUsage?.completion_tokens ??
+    rawUsage?.output_tokens ??
+    respTokenUsage?.completion_tokens ??
+    respUsage?.completion_tokens ??
+    respUsage?.output_tokens ??
+    usageMeta?.output_tokens ??
+    0
+
+  const rawCache =
+    rawTokenUsage?.prompt_tokens_details?.cached_tokens ??
+    rawUsage?.prompt_tokens_details?.cached_tokens ??
+    rawUsage?.input_tokens_details?.cached_tokens ??
+    respTokenUsage?.prompt_tokens_details?.cached_tokens ??
+    respUsage?.prompt_tokens_details?.cached_tokens ??
+    respUsage?.input_tokens_details?.cached_tokens ??
+    usageMeta?.input_token_details?.cache_read ??
+    usageMeta?.input_token_details?.cached_tokens
+
+  const cacheTokens = typeof rawCache === "number" && !isNaN(rawCache) ? rawCache : undefined
+  const model = respMeta?.model_name ?? respMeta?.model ?? fallback
+
+  const reportedCost =
+    typeof rawTokenUsage?.cost === "number"
+      ? rawTokenUsage.cost
+      : typeof respTokenUsage?.cost === "number"
+        ? respTokenUsage.cost
+        : typeof respMeta?.cost === "number"
+          ? respMeta.cost
+          : undefined
+
+  if (typeof reportedCost === "number") {
+    return {
+      tokensIn,
+      tokensOut,
+      cacheTokens,
+      costUsd: reportedCost,
+      costStatus: "reported",
+      estimate: false,
+      model,
+      promptTokensIncludesCache: true,
+    }
+  }
+
+  const pricing = provider ? getModelPricing(provider, model) : getRiverModelPricing(model)
+  if (pricing) {
+    const est = estimateCostUsd(tokensIn, cacheTokens, tokensOut, pricing)
+    return {
+      tokensIn,
+      tokensOut,
+      cacheTokens,
+      costUsd: est.costUsd,
+      costStatus: "estimated",
+      estimate: true,
+      model,
+      rateSnapshot: est.rateSnapshot,
+      cacheHypothesis: est.cacheHypothesis,
+      promptTokensIncludesCache: true,
+    }
+  }
+
   return {
-    tokensIn: raw?.prompt_tokens ?? msg?.usage_metadata?.input_tokens ?? 0,
-    tokensOut: raw?.completion_tokens ?? msg?.usage_metadata?.output_tokens ?? 0,
-    costUsd: typeof raw?.cost === "number" ? raw.cost : 0,
-    model: msg?.response_metadata?.model_name ?? fallback,
+    tokensIn,
+    tokensOut,
+    cacheTokens,
+    costUsd: 0,
+    costStatus: "unknown",
+    estimate: false,
+    model,
+    promptTokensIncludesCache: true,
   }
 }
 
@@ -175,7 +317,7 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {
-        o.onUsage(usageOf(output as LlmEndOutput, o.model))
+        o.onUsage(usageOf(output as LlmEndOutput, o.model, o.provider))
       },
     },
   ]
@@ -302,7 +444,7 @@ export function makeModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {
-        o.onUsage(usageOf(output as LlmEndOutput, o.model))
+        o.onUsage(usageOf(output as LlmEndOutput, o.model, o.provider))
       },
     },
   ]
