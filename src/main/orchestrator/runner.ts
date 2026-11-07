@@ -257,10 +257,10 @@ export class TaskRunner {
           taskId: task.id,
           agent: "orchestrator",
           kind: "model.call",
-          summary: `${u.model}: ${u.tokensIn} in, ${u.tokensOut} out`,
+          summary: `${u.model}: ${u.tokensIn} in${u.cacheTokens ? ` (${u.cacheTokens} cached)` : ""}, ${u.tokensOut} out`,
           payload: { ...u },
         })
-        log.addUsage(task.id, { tokensIn: u.tokensIn, tokensOut: u.tokensOut, costUsd: u.costUsd })
+        log.addUsage(task.id, { tokensIn: u.tokensIn, tokensOut: u.tokensOut, cacheTokens: u.cacheTokens ?? 0, costUsd: u.costUsd })
       },
     })
     const ctx: ToolContext = {

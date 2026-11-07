@@ -503,8 +503,17 @@ export async function delegate(
         log.append({ taskId: o.taskId, stepId: step.id, agent: "specialist", kind: `specialist.${e.kind}`, summary: e.summary, payload: e.payload })
         // Every turn's result carries what it spent, a failed one's too.
         const u = e.payload
-        if (e.kind === "result")
-          log.addUsage(o.taskId, { tokensIn: (u.tokensIn ?? 0) + (u.cacheTokens ?? 0), tokensOut: u.tokensOut ?? 0, specialistCostUsd: u.costUsd ?? 0 })
+        if (e.kind === "result") {
+          const promptIncludesCache = Boolean(u.promptTokensIncludesCache)
+          const cacheTokens = typeof u.cacheTokens === "number" ? u.cacheTokens : 0
+          const tokensIn = promptIncludesCache ? (u.tokensIn ?? 0) : (u.tokensIn ?? 0) + cacheTokens
+          log.addUsage(o.taskId, {
+            tokensIn,
+            cacheTokens,
+            tokensOut: u.tokensOut ?? 0,
+            specialistCostUsd: u.costUsd ?? 0,
+          })
+        }
       },
     }
     // Claude Code in its container on the plan, or a DeepAgents agent here on a provider's model whose every tool runs in

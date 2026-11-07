@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import type { Agent, AgentUsage, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
+import type { Agent, AgentUsage, CostStatus, EventPayload, EventRow, PatchView, Push, StepKind, StepRow, TaskHistory, TaskRow, TaskState } from "@shared/types"
 import { getDb } from "../db"
 import { removeTree } from "../sandbox/paths"
 import { redact, redactValue } from "./redact"
@@ -52,6 +52,7 @@ export function taskRow(r: Row): TaskRow {
     updatedAt: Number(r.updated_at),
     tokensIn: Number(r.tokens_in),
     tokensOut: Number(r.tokens_out),
+    cacheTokens: r.cache_tokens !== null && r.cache_tokens !== undefined ? Number(r.cache_tokens) : 0,
     costUsd: Number(r.cost_usd),
     specialistCostUsd: Number(r.specialist_cost_usd),
   }
@@ -231,12 +232,12 @@ export class EventLog {
   }
 
   /** Add one call's usage to the task's totals. */
-  addUsage(id: string, u: { tokensIn?: number; tokensOut?: number; costUsd?: number; specialistCostUsd?: number }): TaskRow {
+  addUsage(id: string, u: { tokensIn?: number; tokensOut?: number; cacheTokens?: number; costUsd?: number; specialistCostUsd?: number }): TaskRow {
     getDb()
       .prepare(
-        "UPDATE tasks SET tokens_in = tokens_in + ?, tokens_out = tokens_out + ?, cost_usd = cost_usd + ?, specialist_cost_usd = specialist_cost_usd + ?, updated_at = ? WHERE id = ?",
+        "UPDATE tasks SET tokens_in = tokens_in + ?, tokens_out = tokens_out + ?, cache_tokens = cache_tokens + ?, cost_usd = cost_usd + ?, specialist_cost_usd = specialist_cost_usd + ?, updated_at = ? WHERE id = ?",
       )
-      .run(u.tokensIn ?? 0, u.tokensOut ?? 0, u.costUsd ?? 0, u.specialistCostUsd ?? 0, this.now(), id)
+      .run(u.tokensIn ?? 0, u.tokensOut ?? 0, u.cacheTokens ?? 0, u.costUsd ?? 0, u.specialistCostUsd ?? 0, this.now(), id)
     return this.emitTask(id)
   }
 
@@ -386,25 +387,117 @@ export class EventLog {
 
   /** Each agent's model calls, tokens and cost over the whole task, summed where they are stored (specs/chat-timeline R3.3). */
   usage(taskId: string): AgentUsage[] {
+    type UsageRow = {
+      agent: string
+      calls: number
+      tokens_in: number
+      cache_tokens: number
+      tokens_out: number
+      cost: number
+      reported_cost: number
+      estimated_cost: number
+      reported_calls: number
+      estimated_calls: number
+      unknown_calls: number
+      has_unknown_cost: number
+      estimate: number
+    }
     const rows = getDb()
       .prepare(
         `SELECT agent, COUNT(*) AS calls,
-           SUM(COALESCE(json_extract(payload, '$.tokensIn'), 0) + COALESCE(json_extract(payload, '$.cacheTokens'), 0)) AS tokens_in,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.promptTokensIncludesCache') = 1 OR kind = 'model.call'
+                 THEN COALESCE(json_extract(payload, '$.tokensIn'), 0)
+               ELSE COALESCE(json_extract(payload, '$.tokensIn'), 0) + COALESCE(json_extract(payload, '$.cacheTokens'), 0)
+             END
+           ) AS tokens_in,
+           SUM(COALESCE(json_extract(payload, '$.cacheTokens'), 0)) AS cache_tokens,
            SUM(COALESCE(json_extract(payload, '$.tokensOut'), 0)) AS tokens_out,
-           SUM(COALESCE(json_extract(payload, '$.costUsd'), 0)) AS cost,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'unknown'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND json_extract(payload, '$.costUsd') IS NULL)
+                 THEN 0
+               ELSE COALESCE(json_extract(payload, '$.costUsd'), 0)
+             END
+           ) AS cost,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'reported'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 0 AND json_extract(payload, '$.costUsd') IS NOT NULL)
+                 THEN COALESCE(json_extract(payload, '$.costUsd'), 0)
+               ELSE 0
+             END
+           ) AS reported_cost,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'estimated'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 1)
+                 THEN COALESCE(json_extract(payload, '$.costUsd'), 0)
+               ELSE 0
+             END
+           ) AS estimated_cost,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'reported'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 0 AND json_extract(payload, '$.costUsd') IS NOT NULL)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS reported_calls,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'estimated'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND COALESCE(json_extract(payload, '$.estimate'), 0) = 1)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS estimated_calls,
+           SUM(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'unknown'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND json_extract(payload, '$.costUsd') IS NULL)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS unknown_calls,
+           MAX(
+             CASE
+               WHEN json_extract(payload, '$.costStatus') = 'unknown'
+                 OR (json_extract(payload, '$.costStatus') IS NULL AND json_extract(payload, '$.costUsd') IS NULL)
+                 THEN 1
+               ELSE 0
+             END
+           ) AS has_unknown_cost,
            MAX(COALESCE(json_extract(payload, '$.estimate'), 0)) AS estimate
          FROM events WHERE task_id = ? AND kind IN ('model.call', 'specialist.result')
          GROUP BY agent ORDER BY MIN(id)`,
       )
-      .all(taskId) as Row[]
-    return rows.map((r) => ({
-      agent: String(r.agent),
-      calls: Number(r.calls),
-      tokensIn: Number(r.tokens_in),
-      tokensOut: Number(r.tokens_out),
-      costUsd: Number(r.cost),
-      estimate: Number(r.estimate) === 1,
-    }))
+      .all(taskId) as UsageRow[]
+    return rows.map((r) => {
+      const calls = Number(r.calls)
+      const reportedCalls = Number(r.reported_calls ?? 0)
+      const estimatedCalls = Number(r.estimated_calls ?? 0)
+      const unknownCalls = Number(r.unknown_calls ?? 0)
+      const knownCalls = reportedCalls + estimatedCalls
+      const hasUnknown = unknownCalls > 0 || Number(r.has_unknown_cost) === 1
+      const isEstimate = estimatedCalls > 0 || Number(r.estimate) === 1
+      const costStatus: CostStatus = knownCalls === 0 ? "unknown" : estimatedCalls > 0 ? "estimated" : "reported"
+      return {
+        agent: String(r.agent),
+        calls,
+        tokensIn: Number(r.tokens_in),
+        tokensOut: Number(r.tokens_out),
+        cacheTokens: Number(r.cache_tokens),
+        costUsd: Number(r.cost),
+        estimate: isEstimate,
+        costStatus,
+        reportedCostUsd: Number(r.reported_cost),
+        estimatedCostUsd: Number(r.estimated_cost),
+        hasUnknownCost: hasUnknown,
+      }
+    })
   }
 
   /**

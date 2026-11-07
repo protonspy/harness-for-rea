@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { groupModels, type ProviderId } from "@shared/providers"
+import { getModelPricing, formatModelPricingShort, formatModelPricingDetails } from "@shared/pricing"
 import type { ChatGPTModelOption } from "@shared/types"
 import { Input } from "@/components/ui/input"
 
@@ -103,15 +104,24 @@ function StandardModelPicker({
       >
         {groups.map((g) => (
           <optgroup key={g.label} label={g.label}>
-            {g.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
+            {g.models.map((m) => {
+              const pricing = getModelPricing(provider, m)
+              const label = pricing ? `${m} ${formatModelPricingShort(pricing)}` : m
+              return (
+                <option key={m} value={m}>
+                  {label}
+                </option>
+              )
+            })}
           </optgroup>
         ))}
         <option value={OTHER}>Another model, by name…</option>
       </select>
+      {(() => {
+        const pricing = getModelPricing(provider, value)
+        if (!pricing) return null
+        return <p className="text-xs text-muted-foreground font-mono">{formatModelPricingDetails(pricing)}</p>
+      })()}
       {typing && (
         <Input
           autoFocus

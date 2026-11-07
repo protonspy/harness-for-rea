@@ -283,7 +283,15 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
           <TabsContent value="usage">
             <div className="mb-2 flex items-baseline justify-between text-sm">
               <span className="font-semibold">Total</span>
-              <Mono>{usd(task.costUsd + task.specialistCostUsd)}</Mono>
+              <Mono>
+                {usage.length > 0 && usage.every((u) => u.costStatus === "unknown")
+                  ? "—"
+                  : usage.some((u) => u.hasUnknownCost || u.costStatus === "unknown")
+                    ? `${usd(task.costUsd + task.specialistCostUsd)} (partial)`
+                    : usage.some((u) => u.estimate || u.costStatus === "estimated")
+                      ? `${usd(task.costUsd + task.specialistCostUsd)} est.`
+                      : usd(task.costUsd + task.specialistCostUsd)}
+              </Mono>
             </div>
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground">
@@ -303,8 +311,11 @@ export function TaskView({ id, onOpen, onDeleted }: { id: string; onOpen(id: str
                     <td className="px-2 py-1.5 text-right font-mono text-xs">{tokens(u.tokensIn)}</td>
                     <td className="px-2 py-1.5 text-right font-mono text-xs">{tokens(u.tokensOut)}</td>
                     <td className="py-1.5 text-right font-mono text-xs">
-                      {usd(u.costUsd)}
-                      {u.estimate && <span title="Claude Code's estimate against your plan, not a charge"> est.</span>}
+                      {u.costStatus === "unknown" ? "—" : usd(u.costUsd)}
+                      {u.hasUnknownCost && u.costStatus !== "unknown" && <span title="Partial cost; some calls have unknown pricing"> (partial)</span>}
+                      {u.estimate && u.costStatus !== "unknown" && !u.hasUnknownCost && (
+                        <span title="Estimated cost against catalog rates or plan, not a charge"> est.</span>
+                      )}
                     </td>
                   </tr>
                 ))}
