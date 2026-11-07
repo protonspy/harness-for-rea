@@ -398,12 +398,41 @@ export function createResponsesModel(o: ModelOptions): BaseChatModel {
             }
           }
 
-          // In OpenAI Responses API, tools remain at top-level bodyObj.tools.
-          // Clean null strict fields from tool definitions so strict mode does not fail validation.
-          if (Array.isArray(bodyObj.tools)) {
-            for (const tool of bodyObj.tools) {
+          // SIWC / ChatGPT plan token sharing restrictions: pass tools via additional_tools input item with role: "developer"
+          if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
+            const tools = bodyObj.tools
+            delete bodyObj.tools
+            for (const tool of tools) {
               if (tool && tool.strict === null) {
                 delete tool.strict
+              }
+            }
+            bodyObj.input = bodyObj.input || []
+            const existingIdx = bodyObj.input.findIndex((i: any) => i && i.type === "additional_tools")
+            const additionalToolsItem = {
+              type: "additional_tools",
+              role: "developer" as const,
+              tools,
+            }
+            if (existingIdx >= 0) {
+              bodyObj.input[existingIdx] = additionalToolsItem
+            } else {
+              bodyObj.input.unshift(additionalToolsItem)
+            }
+          }
+
+          // Guarantee any existing additional_tools item carries role: "developer" and sanitized schemas
+          if (Array.isArray(bodyObj.input)) {
+            for (const item of bodyObj.input) {
+              if (item && item.type === "additional_tools") {
+                item.role = "developer"
+                if (Array.isArray(item.tools)) {
+                  for (const tool of item.tools) {
+                    if (tool && tool.strict === null) {
+                      delete tool.strict
+                    }
+                  }
+                }
               }
             }
           }
