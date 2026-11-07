@@ -54,7 +54,7 @@ export function SandboxPanel({ onChange, children }: { onChange?(): void; childr
       </div>
       {!sandbox.docker && (
         <p className="text-sm text-muted-foreground">
-          Start Docker Desktop, then check again. The specialist never runs outside its container. ({sandbox.dockerError})
+          Start Docker Desktop or a compatible Docker Engine (including WSL), then check again. The specialist never runs outside its container. ({sandbox.dockerError})
         </p>
       )}
       <div className="flex items-center gap-3">
@@ -154,14 +154,21 @@ export function ClaudePanel({ onChange, children }: { onChange?(): void; childre
 
 /** The orchestrator's OpenAI-compatible provider — OpenRouter first — its endpoint, its key and its model. */
 export function ModelPanel({
+  settings: propSettings,
+  onSettingsChange,
+  keyRev,
   onChange,
   children,
 }: {
+  settings?: Settings | null
+  onSettingsChange?(s: Settings): void
+  keyRev?: number
   onChange?(): void
   children?: (settings: Settings, save: (p: Partial<Settings>) => Promise<void>) => ReactNode
 }) {
   const api = window.hfr.api
-  const [settings, setSettings] = useState<Settings | null>(null)
+  const [localSettings, setLocalSettings] = useState<Settings | null>(null)
+  const settings = propSettings !== undefined ? propSettings : localSettings
   const [key, setKey] = useState<KeyStatus | null>(null)
   const [models, setModels] = useState<Array<string | ChatGPTModelOption>>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -170,11 +177,13 @@ export function ModelPanel({
   const { error, run } = useRun(onChange)
 
   useEffect(() => {
-    void api.getSettings().then((st) => {
-      setSettings(st)
-      return api.keyStatus(st.provider).then(setKey)
-    })
-  }, [api])
+    if (propSettings === undefined) {
+      void api.getSettings().then((st) => {
+        setLocalSettings(st)
+        return api.keyStatus(st.provider).then(setKey)
+      })
+    }
+  }, [api, propSettings])
 
   // The provider's own model list, read again when the provider, its endpoint or whether a key is set changes.
   const activeProvider = settings?.provider
@@ -185,6 +194,12 @@ export function ModelPanel({
   useEffect(() => {
     currentProviderRef.current = activeProvider
   }, [activeProvider])
+
+  useEffect(() => {
+    if (activeProvider && keyRev !== -1) {
+      void api.keyStatus(activeProvider).then(setKey)
+    }
+  }, [api, activeProvider, keyRev])
 
   const loadModels = useCallback(() => {
     const gen = ++modelGenRef.current
@@ -204,7 +219,8 @@ export function ModelPanel({
               const first = chatgptModels[0]
               const updated = await api.saveSettings({ model: first.slug, expectedProvider: "chatgpt" })
               if (gen !== modelGenRef.current || currentProviderRef.current !== "chatgpt") return
-              setSettings(updated)
+              if (onSettingsChange) onSettingsChange(updated)
+              else setLocalSettings(updated)
               onChange?.()
               if (currentModel) {
                 setModelNotice(`Previous model unavailable on your plan. Selected ${first.displayName} (${first.slug}).`)
@@ -223,11 +239,25 @@ export function ModelPanel({
       )
     }
     return api.listModels(activeProvider).then(
-      (list) => {
+      async (list) => {
         if (gen !== modelGenRef.current || currentProviderRef.current !== activeProvider) return
         setModelsLoading(false)
         setModels(list)
         setModelsNote("")
+        if (activeProvider === "river" && list.length > 0) {
+          const currentModel = settings?.model ?? ""
+          if (currentModel === "deepseek-chat" || !list.includes(currentModel)) {
+            const fallback = list.includes(PROVIDERS.river.defaultModel) ? PROVIDERS.river.defaultModel : (list[0] ?? "")
+            const updated = await api.saveSettings({ model: fallback, expectedProvider: "river" })
+            if (gen !== modelGenRef.current || currentProviderRef.current !== "river") return
+            if (onSettingsChange) onSettingsChange(updated)
+            else setLocalSettings(updated)
+            onChange?.()
+            if (currentModel) {
+              setModelNotice(`Model "${currentModel}" is not in River catalog. Selected "${fallback}".`)
+            }
+          }
+        }
       },
       (e: unknown) => {
         if (gen !== modelGenRef.current || currentProviderRef.current !== activeProvider) return
@@ -237,7 +267,7 @@ export function ModelPanel({
         setModelsNote(`${message(e)} Name the model below; the setup checks it with a one-token test request.`)
       },
     )
-  }, [activeProvider, api, settings?.model, onChange])
+  }, [activeProvider, api, settings?.model, onChange, onSettingsChange])
   useEffect(() => {
     if (!activeProvider || (PROVIDERS[activeProvider].keyRequired && !keySet) || (activeProvider === "custom" && !activeBaseUrl)) return
     let active = true
@@ -251,7 +281,13 @@ export function ModelPanel({
     }
   }, [activeProvider, activeBaseUrl, keySet, loadModels])
 
-  const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
+  const save = (patch: Partial<Settings>) =>
+    run(async () => {
+      const updated = await api.saveSettings(patch)
+      if (onSettingsChange) onSettingsChange(updated)
+      else setLocalSettings(updated)
+      return updated
+    })
   // Switching provider swaps in that provider's own endpoint (main keeps one per provider), model and key; the model
   // name of one is meaningless to another.
   const switchProvider = (id: ProviderId) =>
@@ -262,8 +298,10 @@ export function ModelPanel({
       setModels([])
       setModelNotice("")
       setModelsNote("")
-      const nextModel = id === "chatgpt" ? "" : PROVIDERS[id].defaultModel || settings?.model
-      setSettings(await api.saveSettings({ provider: id, model: nextModel }))
+      const nextModel = id === "chatgpt" || id === "custom" ? "" : PROVIDERS[id].defaultModel || ""
+      const updated = await api.saveSettings({ provider: id, model: nextModel })
+      if (onSettingsChange) onSettingsChange(updated)
+      else setLocalSettings(updated)
       setKey(await api.keyStatus(id))
       onChange?.()
     })
@@ -288,7 +326,15 @@ export function ModelPanel({
             defaultValue={settings.baseUrl}
             key={`${settings.provider}:${settings.baseUrl}`}
             placeholder={provider.baseUrl || "https://host/v1"}
-            onBlur={(e) => e.target.value.trim() !== settings.baseUrl && save({ provider: settings.provider, baseUrl: e.target.value.trim() })}
+            onBlur={(e) => {
+              const val = e.target.value.trim()
+              if (val !== settings.baseUrl) {
+                void save({
+                  provider: settings.provider,
+                  baseUrl: val,
+                })
+              }
+            }}
           />
           {settings.provider === "custom" && !resolveBaseUrl("custom", settings.baseUrl) && <ErrorText>Set a base URL.</ErrorText>}
         </Field>
@@ -450,9 +496,24 @@ export const specialistLabel = (p: SpecialistProvider) => (p === "claude" ? "Cla
   Who the specialist runs on (specs/specialist-providers R1.1): one of the orchestrator's providers with a model of it —
   its key shared with the orchestrator's — or Claude Code on the user's plan, whose sign-in `claude` shows.
 */
-export function SpecialistPanel({ onChange, claude, children }: { onChange?(): void; claude?: ReactNode; children?: ReactNode }) {
+export function SpecialistPanel({
+  settings: propSettings,
+  onSettingsChange,
+  keyRev,
+  onChange,
+  claude,
+  children,
+}: {
+  settings?: Settings | null
+  onSettingsChange?(s: Settings): void
+  keyRev?: number
+  onChange?(): void
+  claude?: ReactNode
+  children?: ReactNode
+}) {
   const api = window.hfr.api
-  const [settings, setSettings] = useState<Settings | null>(null)
+  const [localSettings, setLocalSettings] = useState<Settings | null>(null)
+  const settings = propSettings !== undefined ? propSettings : localSettings
   const [key, setKey] = useState<KeyStatus | null>(null)
   const [models, setModels] = useState<Array<string | ChatGPTModelOption>>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -461,11 +522,15 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
   const { error, run } = useRun(onChange)
   const sp = settings?.specialistProvider
   useEffect(() => {
-    void api.getSettings().then(setSettings)
-  }, [api])
+    if (propSettings === undefined) {
+      void api.getSettings().then(setLocalSettings)
+    }
+  }, [api, propSettings])
   useEffect(() => {
-    if (sp && sp !== "claude") void api.keyStatus(sp).then(setKey)
-  }, [api, sp])
+    if (sp && sp !== "claude" && keyRev !== -1) {
+      void api.keyStatus(sp).then(setKey)
+    }
+  }, [api, sp, keyRev])
   const currentSpecialistModel = settings?.specialistModel ?? ""
   const specialistGenRef = useRef(0)
   const currentSpRef = useRef(sp)
@@ -499,7 +564,8 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
               const first = chatgptModels[0]
               const updated = await api.saveSettings({ specialistModel: first.slug, expectedSpecialistProvider: "chatgpt" })
               if (gen !== specialistGenRef.current || currentSpRef.current !== "chatgpt") return
-              setSettings(updated)
+              if (onSettingsChange) onSettingsChange(updated)
+              else setLocalSettings(updated)
               onChange?.()
               if (currentModel) {
                 setModelNotice(`Previous model unavailable on your plan. Selected ${first.displayName} (${first.slug}).`)
@@ -523,17 +589,31 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
     }
     return api
       .listModels(sp)
-      .then((list) => {
+      .then(async (list) => {
         if (gen !== specialistGenRef.current || currentSpRef.current !== sp) return
         setModelsLoading(false)
         setModels(list)
+        if (sp === "river" && list.length > 0) {
+          const currentModel = currentSpecialistModel
+          if (currentModel === "deepseek-chat" || !list.includes(currentModel)) {
+            const fallback = list.includes(PROVIDERS.river.defaultModel) ? PROVIDERS.river.defaultModel : (list[0] ?? "")
+            const updated = await api.saveSettings({ specialistModel: fallback, expectedSpecialistProvider: "river" })
+            if (gen !== specialistGenRef.current || currentSpRef.current !== "river") return
+            if (onSettingsChange) onSettingsChange(updated)
+            else setLocalSettings(updated)
+            onChange?.()
+            if (currentModel) {
+              setModelNotice(`Model "${currentModel}" is not in River catalog. Selected "${fallback}".`)
+            }
+          }
+        }
       })
       .catch((e: unknown) => {
         if (gen !== specialistGenRef.current || currentSpRef.current !== sp) return
         setModelsLoading(false)
         setModelsNote(message(e))
       })
-  }, [sp, key?.set, api, currentSpecialistModel, onChange])
+  }, [sp, key?.set, api, currentSpecialistModel, onChange, onSettingsChange])
 
   useEffect(() => {
     if (!sp || sp === "claude") return
@@ -548,12 +628,22 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
     }
   }, [sp, loadSpecialistModels])
   if (!settings || !sp) return null
-  const save = (patch: Partial<Settings>) => run(async () => setSettings(await api.saveSettings(patch)))
+  const save = (patch: Partial<Settings>) =>
+    run(async () => {
+      const updated = await api.saveSettings(patch)
+      if (onSettingsChange) onSettingsChange(updated)
+      else setLocalSettings(updated)
+      return updated
+    })
   const choose = (p: SpecialistProvider) =>
     p !== sp &&
     save({
       specialistProvider: p,
-      ...(p === "claude" ? {} : p === "chatgpt" ? { specialistModel: "" } : { specialistModel: PROVIDERS[p].defaultModel || settings.specialistModel }),
+      ...(p === "claude"
+        ? {}
+        : p === "chatgpt" || p === "custom"
+          ? { specialistModel: "" }
+          : { specialistModel: PROVIDERS[p].defaultModel || "" }),
     })
   return (
     <div className="flex flex-col gap-4">
@@ -587,10 +677,29 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
             label={sp === "chatgpt" ? "ChatGPT account / Your ChatGPT plan" : `${PROVIDERS[sp].label} API key, shared with the orchestrator`}
           />
           {PROVIDERS[sp].editableBaseUrl && (
-            <p className="text-xs text-muted-foreground">
-              Uses the base URL set for {PROVIDERS[sp].label} under the orchestrator's model:{" "}
-              {resolveBaseUrl(sp, settings.baseUrls[sp] ?? "") || "none set yet"}.
-            </p>
+            <Field
+              label={`${PROVIDERS[sp].label} base URL`}
+              hint={`Where requests go, without /chat/completions. Shared with the orchestrator. Empty uses ${PROVIDERS[sp].baseUrl || "nothing: set one"}.`}
+            >
+              <Input
+                defaultValue={settings.baseUrls?.[sp] ?? (sp === settings.provider ? settings.baseUrl : "")}
+                key={`${sp}:${settings.baseUrls?.[sp] ?? (sp === settings.provider ? settings.baseUrl : "")}`}
+                placeholder={PROVIDERS[sp].baseUrl || "https://host/v1"}
+                onBlur={(e) => {
+                  const val = e.target.value.trim()
+                  const currentVal = settings.baseUrls?.[sp] ?? (sp === settings.provider ? settings.baseUrl : "")
+                  if (val !== currentVal) {
+                    void save({
+                      specialistBaseUrl: val,
+                      ...(sp === settings.provider ? { baseUrl: val } : {}),
+                    })
+                  }
+                }}
+              />
+              {sp === "custom" && !resolveBaseUrl("custom", settings.baseUrls?.[sp] ?? "") && (
+                <ErrorText>Set a base URL.</ErrorText>
+              )}
+            </Field>
           )}
           <Field
             label="Model"

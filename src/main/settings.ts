@@ -49,6 +49,7 @@ export function getSettings(): Settings {
     ...s,
     baseUrls,
     baseUrl: baseUrls[s.provider] ?? "",
+    specialistBaseUrl: s.specialistProvider !== "claude" ? (baseUrls[s.specialistProvider as ProviderId] ?? "") : undefined,
     orchestratorProtocols,
     specialistProtocols,
     protocols,
@@ -61,7 +62,13 @@ export function saveSettings(patch: Partial<Settings>): Settings {
   const current = getSettings()
   const provider = patch.provider ?? current.provider
   const specialistProvider = patch.specialistProvider ?? current.specialistProvider
-  const baseUrls = { ...current.baseUrls, ...(patch.baseUrl !== undefined ? { [provider]: patch.baseUrl } : {}) }
+  const baseUrls = {
+    ...current.baseUrls,
+    ...(patch.baseUrl !== undefined ? { [provider]: patch.baseUrl } : {}),
+    ...(patch.specialistBaseUrl !== undefined && specialistProvider !== "claude"
+      ? { [specialistProvider as ProviderId]: patch.specialistBaseUrl }
+      : {}),
+  }
 
   const orchestratorProtocols: Partial<Record<ProviderId, ModelProtocol>> = {
     ...current.orchestratorProtocols,
@@ -104,6 +111,7 @@ export function saveSettings(patch: Partial<Settings>): Settings {
     specialistProvider,
     baseUrls,
     baseUrl: baseUrls[provider] ?? "",
+    specialistBaseUrl: specialistProvider !== "claude" ? (baseUrls[specialistProvider as ProviderId] ?? "") : undefined,
     orchestratorProtocols,
     specialistProtocols,
     protocols,

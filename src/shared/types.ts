@@ -217,6 +217,8 @@ export interface Settings {
   provider: ProviderId
   /** the chosen provider's OpenAI-compatible endpoint, used by the providers whose URL can be edited; ignored by OpenRouter */
   baseUrl: string
+  /** the chosen specialist provider's endpoint, when editable */
+  specialistBaseUrl?: string
   /** each provider's own endpoint, so switching provider loses none (specs/orchestrator R1.10); only main writes it */
   baseUrls: Partial<Record<ProviderId, string>>
   model: string

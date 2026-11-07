@@ -1,6 +1,6 @@
 import { ArrowRight, Bot, CheckCircle2, Circle, Container, Loader2, Sparkles } from "lucide-react"
-import { useCallback, useEffect, useState, type ReactNode } from "react"
-import type { Readiness, ReadinessStep } from "@shared/types"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import type { Readiness, ReadinessStep, Settings } from "@shared/types"
 import { ErrorText } from "@/components/common"
 import { ClaudePanel, message, ModelPanel, SandboxPanel, SpecialistPanel } from "@/components/setup/panels"
 import { Badge } from "@/components/ui/badge"
@@ -17,24 +17,50 @@ import { cn } from "@/lib/cn"
 export function SetupView({ onDone, again = false }: { onDone(): void; again?: boolean }) {
   const api = window.hfr.api
   const [r, setR] = useState<Readiness | null>(null)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [keyRev, setKeyRev] = useState(0)
   const [error, setError] = useState("")
-  // A step is "checking" until the first answer comes back.
-  const checking = r === null
+  const [checking, setChecking] = useState(false)
+  const checkSeqRef = useRef(0)
 
-  const check = useCallback(
-    () =>
-      api.readiness().then(setR, (e: unknown) => {
-        setError(message(e))
-      }),
-    [api],
-  )
+  const check = useCallback(() => {
+    const seq = ++checkSeqRef.current
+    return api.readiness().then(
+      (nextR) => {
+        if (seq === checkSeqRef.current) {
+          setR(nextR)
+          setError("")
+          setChecking(false)
+        }
+      },
+      (e: unknown) => {
+        if (seq === checkSeqRef.current) {
+          setError(message(e))
+          setChecking(false)
+        }
+      },
+    )
+  }, [api])
+
+  const triggerCheck = useCallback(() => {
+    setChecking(true)
+    void check()
+  }, [check])
+
+  const onSettingsChange = useCallback((updated: Settings) => {
+    setSettings(updated)
+    setKeyRev((k) => k + 1)
+    triggerCheck()
+  }, [triggerCheck])
+
   useEffect(() => {
+    void api.getSettings().then(setSettings)
     void check()
     // The image build and the sign-in report as they move; each report may change a step.
     return window.hfr.onPush((p) => {
       if (p.type === "sandbox" || p.type === "login") void check()
     })
-  }, [check])
+  }, [api, check])
 
   const finish = async () => {
     setError("")
@@ -63,7 +89,8 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
         icon={<Container size={16} />}
         title="The sandbox"
         step={r?.sandbox}
-        what="Docker Desktop running, and the images with Claude Code, REA, Ghidra and the Android tools."
+        checking={checking}
+        what="Docker Engine (or Docker Desktop, including WSL) running, and the images with Claude Code, REA, Ghidra and the Android tools."
       >
         <SandboxPanel onChange={check} />
       </Step>
@@ -71,26 +98,55 @@ export function SetupView({ onDone, again = false }: { onDone(): void; again?: b
         n={2}
         icon={<Sparkles size={16} />}
         title="Specialist"
-        step={r?.claude}
+        step={
+          r?.claude &&
+          settings?.specialistProvider &&
+          (settings.specialistProvider === "claude"
+            ? !r.claude.provider
+            : r.claude.provider === settings.specialistProvider)
+            ? r.claude
+            : undefined
+        }
+        checking={checking}
         what="The model that does the deep analysis: a provider's, Hopper by default, or Claude Code on your Claude plan."
       >
-        <SpecialistPanel onChange={check} claude={<ClaudePanel onChange={check} />} />
+        <SpecialistPanel
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          keyRev={keyRev}
+          onChange={() => {
+            setKeyRev((k) => k + 1)
+            triggerCheck()
+          }}
+          claude={<ClaudePanel onChange={check} />}
+        />
       </Step>
       <Step
         n={3}
         icon={<Bot size={16} />}
         title="The orchestrator's model"
         step={r?.model}
-        what="An OpenAI-compatible model that plans each task, writes code and briefs the specialist. OpenRouter is the default gateway."
+        checking={checking}
+        what="An OpenAI-compatible model that plans each task, writes code and briefs the specialist. Hopper is the default provider."
       >
-        <ModelPanel onChange={check} />
+        <ModelPanel
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          keyRev={keyRev}
+          onChange={() => {
+            setKeyRev((k) => k + 1)
+            triggerCheck()
+          }}
+        />
       </Step>
 
       <ErrorText>{error}</ErrorText>
       <div className="flex items-center justify-end gap-3">
         {checking && <Loader2 size={14} className="animate-spin text-muted-foreground" />}
-        <span className="text-sm text-muted-foreground">{r?.ready ? "Everything is ready." : "Finish each step to continue."}</span>
-        <Button size="lg" disabled={!r?.ready} onClick={finish}>
+        <span className="text-sm text-muted-foreground">
+          {checking ? "Checking readiness…" : r?.ready ? "Everything is ready." : "Finish each step to continue."}
+        </span>
+        <Button size="lg" disabled={!r?.ready || checking} onClick={finish}>
           {again ? "Done" : "Start using Harness for REA"} <ArrowRight size={15} />
         </Button>
       </div>
@@ -103,6 +159,7 @@ function Step({
   icon,
   title,
   step,
+  checking = false,
   what,
   children,
 }: {
@@ -110,6 +167,7 @@ function Step({
   icon: ReactNode
   title: string
   step?: ReadinessStep
+  checking?: boolean
   what: string
   children: ReactNode
 }) {
@@ -129,8 +187,8 @@ function Step({
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">{icon}</span>
             <h2 className="font-semibold">{title}</h2>
-            <Badge variant={ready ? "ok" : step ? "warn" : "neutral"} className="ml-auto">
-              {ready ? "ready" : step ? "needs you" : "checking"}
+            <Badge variant={ready ? "ok" : checking ? "neutral" : step ? "warn" : "neutral"} className="ml-auto">
+              {ready ? "ready" : checking ? "validating…" : step ? "needs you" : "checking"}
             </Badge>
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">{what}</p>

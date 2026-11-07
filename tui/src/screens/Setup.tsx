@@ -43,7 +43,7 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
         ))
         if (!id) return
         const p = id as SpecialistProvider
-        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" ? "" : PROVIDERS[p].defaultModel || settings?.specialistModel || ""
+        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" || p === "custom" ? "" : PROVIDERS[p].defaultModel || ""
         await app.attempt(
           () =>
             api.saveSettings({
@@ -134,7 +134,7 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     ))
     if (!id) return
     const p = PROVIDERS[id as ProviderId]
-    const nextModel = p.id === "chatgpt" ? "" : p.defaultModel || settings?.model || ""
+    const nextModel = p.id === "chatgpt" || p.id === "custom" ? "" : p.defaultModel || ""
     // Switching provider swaps in its own endpoint (kept per provider), model and key; one provider's model name means nothing to another.
     await app.attempt(() => api.saveSettings({ provider: p.id, model: nextModel }), `Provider: ${p.label}.`)
     if (p.id === "chatgpt") {
@@ -191,8 +191,10 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Set the provider's base URL",
       args: "<url>",
       run: async (url) => {
-        // Named with the provider it is for, so a switch made elsewhere in between never files it under another.
-        await app.attempt(() => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }), "Base URL saved.")
+        await app.attempt(
+          () => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }),
+          "Base URL saved.",
+        )
         refresh()
       },
     },
@@ -302,6 +304,8 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
   ]
 }
 
+let tuiCheckSeq = 0
+
 export function SetupScreen({ then }: { then?: Route }) {
   const app = useApp()
   const { api, theme } = app
@@ -313,7 +317,15 @@ export function SetupScreen({ then }: { then?: Route }) {
 
   const { toast } = app
   const refresh = useCallback(() => {
-    void api.readiness().then(setR, (e: unknown) => toast((e as Error).message, "error"))
+    const seq = ++tuiCheckSeq
+    void api.readiness().then(
+      (nextR) => {
+        if (seq === tuiCheckSeq) setR(nextR)
+      },
+      (e: unknown) => {
+        if (seq === tuiCheckSeq) toast((e as Error).message, "error")
+      },
+    )
     void api.sandboxStatus().then(setSandbox, () => undefined)
     void api.loginStatus().then(setLogin, () => undefined)
     void api.getSettings().then((s) => {

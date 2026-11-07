@@ -118,7 +118,7 @@ export async function readiness(d: ReadinessDeps, o: { run?: Omit<RunChoice, "ba
     ready: s.docker && s.images && !s.building,
     building: s.building,
     reason: !s.docker
-      ? `Docker is not running (${s.dockerError || "no answer"}). Start Docker Desktop.`
+      ? `Docker is not running (${s.dockerError || "no answer"}). Start Docker Desktop or a compatible Docker Engine (including WSL).`
       : s.building
         ? "Preparing the sandbox images…"
         : !s.images

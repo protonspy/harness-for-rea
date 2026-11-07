@@ -61,7 +61,7 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
           <Card>
             <PanelHeader title="Orchestrator model" />
             <div className="p-4">
-              <ModelPanel>
+              <ModelPanel settings={settings} onSettingsChange={setSettings}>
                 {(s, saveModel) => (
                   <Field
                     label="Reasoning effort"
@@ -107,7 +107,7 @@ export function SettingsView({ onSetup }: { onSetup(): void }) {
           <Card>
             <PanelHeader title="Specialist" />
             <div className="p-4">
-              <SpecialistPanel claude={<ClaudePanel />}>
+              <SpecialistPanel settings={settings} onSettingsChange={setSettings} claude={<ClaudePanel />}>
                 <Field
                   label="Effort"
                   hint="For every delegation: Claude Code's --effort on the plan, the reasoning effort on a provider (max as xhigh). Higher effort thinks longer and costs more. Default passes nothing."
