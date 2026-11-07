@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { PROVIDER_IDS, PROVIDERS, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "../../../src/shared/providers"
 import type { KeyStatus, LoginStatus, Readiness, SandboxStatus, Settings } from "../../../src/shared/types"
 import type { Command } from "../app/commands"
@@ -43,7 +43,7 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
         ))
         if (!id) return
         const p = id as SpecialistProvider
-        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" ? "" : PROVIDERS[p].defaultModel || settings?.specialistModel || ""
+        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" || p === "custom" ? "" : PROVIDERS[p].defaultModel || ""
         await app.attempt(
           () =>
             api.saveSettings({
@@ -134,7 +134,7 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     ))
     if (!id) return
     const p = PROVIDERS[id as ProviderId]
-    const nextModel = p.id === "chatgpt" ? "" : p.defaultModel || settings?.model || ""
+    const nextModel = p.id === "chatgpt" || p.id === "custom" ? "" : p.defaultModel || ""
     // Switching provider swaps in its own endpoint (kept per provider), model and key; one provider's model name means nothing to another.
     await app.attempt(() => api.saveSettings({ provider: p.id, model: nextModel }), `Provider: ${p.label}.`)
     if (p.id === "chatgpt") {
@@ -191,7 +191,6 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Set the provider's base URL",
       args: "<url>",
       run: async (url) => {
-        // Named with the provider it is for, so a switch made elsewhere in between never files it under another.
         await app.attempt(() => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }), "Base URL saved.")
         refresh()
       },
@@ -310,25 +309,38 @@ export function SetupScreen({ then }: { then?: Route }) {
   const [login, setLogin] = useState<LoginStatus | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
+  const checkSeqRef = useRef(0)
 
   const { toast } = app
+  const checkReadiness = useCallback(() => {
+    const seq = ++checkSeqRef.current
+    return api.readiness().then(
+      (nextR) => {
+        if (seq === checkSeqRef.current) setR(nextR)
+      },
+      (e: unknown) => {
+        if (seq === checkSeqRef.current) toast((e as Error).message, "error")
+      },
+    )
+  }, [api, toast])
+
   const refresh = useCallback(() => {
-    void api.readiness().then(setR, (e: unknown) => toast((e as Error).message, "error"))
+    void checkReadiness()
     void api.sandboxStatus().then(setSandbox, () => undefined)
     void api.loginStatus().then(setLogin, () => undefined)
     void api.getSettings().then((s) => {
       setSettings(s)
       return api.keyStatus(s.provider).then(setKey)
     })
-  }, [api, toast])
+  }, [api, checkReadiness])
   useEffect(refresh, [refresh])
   usePush((p) => {
     if (p.type === "sandbox") {
       setSandbox(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     } else if (p.type === "login") {
       setLogin(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     }
   })
 
@@ -353,7 +365,9 @@ export function SetupScreen({ then }: { then?: Route }) {
     },
     { name: "cancel-login", title: "Cancel the sign-in", run: () => void app.attempt(() => api.cancelLogin()).then((s) => s && setLogin(s)) },
     { name: "logout", title: "Sign Claude out", run: () => void app.attempt(() => api.logout(), "Signed out.").then((s) => s && setLogin(s)) },
+    // oxlint-disable-next-line react/refs
     ...providerCommands(app, settings, refresh),
+    // oxlint-disable-next-line react/refs
     ...specialistCommands(app, settings, refresh),
     { name: "refresh", title: "Check every step again", run: refresh },
     {

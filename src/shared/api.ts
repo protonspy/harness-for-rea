@@ -60,6 +60,19 @@ const SettingsPatch = z
           return false
         }
       }, "Enter a full http(s) URL"),
+    specialistBaseUrl: z
+      .string()
+      .trim()
+      .max(300)
+      .refine((v) => {
+        if (!v) return true
+        try {
+          const u = new URL(v)
+          return (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password
+        } catch {
+          return false
+        }
+      }, "Enter a full http(s) URL"),
     model: z.union([
       z.literal(""),
       z

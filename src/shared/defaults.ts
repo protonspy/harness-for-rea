@@ -11,6 +11,7 @@ export const HOPPER_MODEL = PROVIDERS.hopper.defaultModel
 export const DEFAULT_SETTINGS: Settings = {
   provider: "hopper",
   baseUrl: "",
+  specialistBaseUrl: "",
   baseUrls: {},
   model: HOPPER_MODEL,
   timeoutMinutes: 20,
