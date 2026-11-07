@@ -179,6 +179,7 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
       input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
       store: false,
       stream: true,
+      max_output_tokens: PROBE_BUDGET_TOKENS,
     }
     if (explicitEffort) {
       reqBody.reasoning = { effort: explicitEffort }
@@ -246,7 +247,12 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
               completed = true
               truncated = true
             }
-          } else if (eventType === "response.reasoning_summary_text.delta" || eventType === "response.output_item.added") {
+          } else if (
+            eventType === "response.reasoning.delta" ||
+            eventType === "response.reasoning_text.delta" ||
+            eventType === "response.reasoning_summary_text.delta" ||
+            (eventType === "response.output_item.added" && (parsed as any).item?.type === "reasoning")
+          ) {
             hasReasoning = true
           } else if (eventType === "response.failed" || eventType === "error") {
             const errObj = parsed.response?.error || parsed.error
@@ -381,16 +387,11 @@ export async function probeModelStructured(o: ProbeOptions): Promise<ProbeResult
     }
   }
 
-  // When choices is empty or unspecified (e.g. standard mocks or non-River endpoints returning 200 OK)
-  if (o.provider !== "river" || choice === undefined) {
+  if (!json) {
     return {
-      ok: true,
-      status: "ready",
-      reason: "",
-      hasReasoning,
-      hasToolCalls,
-      truncated,
-      tokensOut,
+      ok: false,
+      status: "error",
+      reason: `${label} returned invalid JSON or empty response.`,
     }
   }
 
