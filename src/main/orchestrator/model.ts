@@ -3,7 +3,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { ChatOpenAI } from "@langchain/openai"
 import { ChatOpenRouter } from "@langchain/openrouter"
 import { PRESET_MODEL } from "@shared/defaults"
-import { PROVIDERS, resolveBaseUrl, type ProviderId } from "@shared/providers"
+import { PROVIDERS, resolveBaseUrl, type ModelProtocol, type ProviderId } from "@shared/providers"
 import type { OrchestratorEffort } from "@shared/types"
 import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
 
@@ -11,8 +11,8 @@ import { resolveChatGPTAccessToken, type ChatGPTAuthService } from "../chatgpt"
   The orchestrator's chat model (specs/orchestrator R1, adr:0014-add-openai-compatible-orchestrator-providers).
   On OpenRouter: any model the user picked, with the preset as the fallback in OpenRouter's `models`
   routing and provider data collection denied since source code is sent. On any other provider: the
-  OpenAI chat API at the provider's base URL, DeepSeek's being one preset. Each call's usage and cost
-  is handed to `onUsage`.
+  OpenAI chat API at the provider's base URL, DeepSeek's being one preset. Supports explicit protocol
+  selection between Chat Completions and Responses API. Each call's usage and cost is handed to `onUsage`.
 */
 
 let globalChatGPTService: ChatGPTAuthService | undefined
@@ -62,6 +62,7 @@ export interface ModelOptions {
   apiKey: string
   model: string
   effort?: OrchestratorEffort
+  protocol?: ModelProtocol
   onUsage(u: ModelUsage): void
 }
 
@@ -77,7 +78,7 @@ export function resolveApiKey(provider: ProviderId, apiKey: string): string {
   return apiKey
 }
 
-function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+export function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>, label = "Responses"): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder()
   let buffer = ""
   let completed = false
@@ -98,16 +99,17 @@ function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>): Rea
 
           try {
             const parsed = JSON.parse(dataStr)
-            if (parsed.type === "response.completed") {
+            const type = parsed.type || parsed.event
+            if (type === "response.completed") {
               completed = true
-            } else if (parsed.type === "response.failed") {
+            } else if (type === "response.failed" || type === "error") {
               const reason = parsed.response?.error?.message ?? parsed.error?.message ?? "response.failed"
-              terminalError = new Error(`ChatGPT Responses stream failed: ${reason}`)
+              terminalError = new Error(`${label} stream failed: ${reason}`)
               controller.error(terminalError)
               return
-            } else if (parsed.type === "response.incomplete") {
+            } else if (type === "response.incomplete") {
               const reason = parsed.response?.incomplete_details?.reason ?? "response.incomplete"
-              terminalError = new Error(`ChatGPT Responses stream incomplete: ${reason}`)
+              terminalError = new Error(`${label} stream incomplete: ${reason}`)
               controller.error(terminalError)
               return
             }
@@ -126,14 +128,14 @@ function enforceResponsesCompletionStream(body: ReadableStream<Uint8Array>): Rea
           return
         }
         if (!completed) {
-          controller.error(new Error("ChatGPT Responses stream terminated prematurely without response.completed."))
+          controller.error(new Error(`${label} stream terminated prematurely without response.completed.`))
         }
       },
     }),
   )
 }
 
-function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
+export function createResponsesModel(o: ModelOptions): BaseChatModel {
   const callbacks = [
     {
       handleLLMEnd(output: unknown) {
@@ -142,22 +144,26 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
     },
   ]
   const effort = o.effort && o.effort !== "default" ? o.effort : undefined
-  const baseURL = resolveBaseUrl("chatgpt", o.baseUrl ?? "") || "https://api.openai.com/v1"
+  const isChatGPT = o.provider === "chatgpt"
+  const label = isChatGPT ? "ChatGPT Responses" : `${PROVIDERS[o.provider]?.label ?? "River"} Responses`
+  const baseURL = resolveBaseUrl(o.provider, o.baseUrl ?? "") || (isChatGPT ? "https://api.openai.com/v1" : "")
 
   return new ChatOpenAI({
     model: o.model,
-    apiKey: "managed-chatgpt-token",
+    apiKey: isChatGPT ? "managed-chatgpt-token" : o.apiKey || "no-key",
     useResponsesApi: true,
     streaming: true,
     configuration: {
       baseURL,
       defaultHeaders: attributionHeaders(baseURL),
       fetch: async (url, init) => {
-        // Resolve valid access token per request via auth service or session parser
-        const token = await resolveChatGPTAccessToken(o.apiKey, globalChatGPTService)
+        // Resolve valid access token per request via auth service or session parser for ChatGPT
+        const token = isChatGPT ? await resolveChatGPTAccessToken(o.apiKey, globalChatGPTService) : o.apiKey
 
         const headers = new Headers(init?.headers)
-        headers.set("Authorization", `Bearer ${token}`)
+        if (token) {
+          headers.set("Authorization", `Bearer ${token}`)
+        }
         headers.set("Accept", "text/event-stream")
 
         let bodyObj: any = {}
@@ -169,10 +175,11 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
           }
         }
 
+        // River & Responses Contract: send full history, store:false, stream:true
         bodyObj.store = false
         bodyObj.stream = true
 
-        // SIWC parameter restrictions: omit temperature, top_p, and unsupported metadata fields (D1)
+        // Omit unsupported parameters
         delete bodyObj.temperature
         delete bodyObj.top_p
         delete bodyObj.user
@@ -190,24 +197,26 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
         delete bodyObj.truncation
         delete bodyObj.previous_response_id
 
-        // SIWC message restrictions: use developer role instead of system message (D1)
-        if (Array.isArray(bodyObj.input)) {
-          for (const item of bodyObj.input) {
-            if (item && item.type === "message" && item.role === "system") {
-              item.role = "developer"
+        if (isChatGPT) {
+          // SIWC message restrictions: use developer role instead of system message (D1)
+          if (Array.isArray(bodyObj.input)) {
+            for (const item of bodyObj.input) {
+              if (item && item.type === "message" && item.role === "system") {
+                item.role = "developer"
+              }
             }
           }
-        }
 
-        // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
-        if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
-          const tools = bodyObj.tools
-          delete bodyObj.tools
-          bodyObj.input = bodyObj.input || []
-          bodyObj.input.unshift({
-            type: "additional_tools",
-            tools,
-          })
+          // SIWC tools restrictions: pass function/custom tools via additional_tools input item (D1)
+          if (bodyObj.tools && Array.isArray(bodyObj.tools) && bodyObj.tools.length > 0) {
+            const tools = bodyObj.tools
+            delete bodyObj.tools
+            bodyObj.input = bodyObj.input || []
+            bodyObj.input.unshift({
+              type: "additional_tools",
+              tools,
+            })
+          }
         }
 
         const res = await globalThis.fetch(url, {
@@ -217,26 +226,32 @@ function createChatGPTResponsesModel(o: ModelOptions): BaseChatModel {
         })
 
         if (res.ok && res.body) {
-          const wrappedBody = enforceResponsesCompletionStream(res.body)
-          return new Response(wrappedBody, {
-            status: res.status,
-            statusText: res.statusText,
-            headers: res.headers,
-          })
+          const contentType = res.headers.get("content-type") ?? ""
+          if (contentType.includes("text/event-stream")) {
+            const wrappedBody = enforceResponsesCompletionStream(res.body, label)
+            return new Response(wrappedBody, {
+              status: res.status,
+              statusText: res.statusText,
+              headers: res.headers,
+            })
+          }
         }
 
         return res
       },
     },
     streamUsage: true,
-    ...(effort ? { modelKwargs: { reasoning_effort: effort } } : {}),
+    ...(effort ? { modelKwargs: { reasoning_effort: effort, reasoning: { effort } } } : {}),
     callbacks,
   })
 }
 
+export const createChatGPTResponsesModel = createResponsesModel
+
 export function makeModel(o: ModelOptions): BaseChatModel {
-  if (o.provider === "chatgpt") {
-    return createChatGPTResponsesModel(o)
+  const protocol = o.protocol ?? (o.provider === "chatgpt" ? "responses" : "chat_completions")
+  if (o.provider === "chatgpt" || protocol === "responses") {
+    return createResponsesModel(o)
   }
 
   const callbacks = [

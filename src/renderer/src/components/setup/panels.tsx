@@ -324,6 +324,23 @@ export function ModelPanel({
         </p>
         {modelNotice && <p className="mt-1.5 text-xs text-blue-400">{modelNotice}</p>}
       </Field>
+      {provider.supportedProtocols && provider.supportedProtocols.length > 1 && (
+        <Field label="Protocol" hint="Inference protocol used by this provider: Chat Completions or Responses.">
+          <div className="flex gap-2">
+            {provider.supportedProtocols.map((proto) => (
+              <Button
+                key={proto}
+                type="button"
+                size="sm"
+                variant={(settings.orchestratorProtocol ?? provider.defaultProtocol ?? "chat_completions") === proto ? "default" : "outline"}
+                onClick={() => save({ orchestratorProtocol: proto })}
+              >
+                {proto === "responses" ? "Responses" : "Chat Completions"}
+              </Button>
+            ))}
+          </div>
+        </Field>
+      )}
       {children?.(settings, save)}
       <ErrorText>{error}</ErrorText>
     </div>
@@ -601,6 +618,23 @@ export function SpecialistPanel({ onChange, claude, children }: { onChange?(): v
             {modelNotice && <p className="mt-1.5 text-xs text-blue-400">{modelNotice}</p>}
             {modelsNote && models.length === 0 && <p className="mt-1.5 text-xs text-muted-foreground">{modelsNote}</p>}
           </Field>
+          {PROVIDERS[sp]?.supportedProtocols && PROVIDERS[sp].supportedProtocols.length > 1 && (
+            <Field label="Protocol" hint="Inference protocol used by this provider: Chat Completions or Responses.">
+              <div className="flex gap-2">
+                {PROVIDERS[sp].supportedProtocols.map((proto) => (
+                  <Button
+                    key={proto}
+                    type="button"
+                    size="sm"
+                    variant={(settings.specialistProtocol ?? PROVIDERS[sp].defaultProtocol ?? "chat_completions") === proto ? "default" : "outline"}
+                    onClick={() => save({ specialistProtocol: proto })}
+                  >
+                    {proto === "responses" ? "Responses" : "Chat Completions"}
+                  </Button>
+                ))}
+              </div>
+            </Field>
+          )}
         </>
       )}
       {children}

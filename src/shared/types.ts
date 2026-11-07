@@ -1,7 +1,7 @@
 import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
-import type { ProviderId, SpecialistProvider } from "./providers"
+import type { ModelProtocol, ProviderId, SpecialistProvider } from "./providers"
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
@@ -85,6 +85,8 @@ export interface ProjectRow {
   model: string
   orchestratorEffort: OrchestratorEffort
   specialistEffort: SpecialistEffort
+  orchestratorProtocol?: ModelProtocol
+  specialistProtocol?: ModelProtocol
   createdAt: number
   updatedAt: number
   /** the other app running a task of this project, which holds it until its tasks close (specs/shared-data-folder R1.3) */
@@ -223,6 +225,11 @@ export interface Settings {
   setupCompleted: boolean
   /** each MCP integration the user touched, by id; one left out is off, at its defaults (specs/mcp-integrations R1.1) */
   integrations: Record<string, IntegrationSettings>
+  orchestratorProtocol?: ModelProtocol
+  specialistProtocol?: ModelProtocol
+  orchestratorProtocols?: Partial<Record<ProviderId, ModelProtocol>>
+  specialistProtocols?: Partial<Record<ProviderId, ModelProtocol>>
+  protocols?: Partial<Record<ProviderId, ModelProtocol>>
 }
 
 export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const

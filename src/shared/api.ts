@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { AnswerSchema, DecisionSchema } from "./chat"
 import { IntegrationIdSchema, IntegrationSettingsSchema, type IntegrationActionResult, type IntegrationStatus, type IntegrationView } from "./integrations"
-import { PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
+import { MODEL_PROTOCOLS, PROVIDER_IDS, SPECIALIST_PROVIDERS } from "./providers"
 import { GOALS, ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS } from "./types"
 import type {
   AnalysisSummary,
@@ -30,6 +30,7 @@ import type {
 const id = z.string().uuid()
 
 const Provider = z.enum(PROVIDER_IDS)
+const Protocol = z.enum(MODEL_PROTOCOLS)
 
 /** A model's name as a provider lists it: no control characters, which a hostile endpoint's list could carry. */
 const ModelName = z
@@ -71,6 +72,11 @@ const SettingsPatch = z
     specialistProvider: z.enum(SPECIALIST_PROVIDERS),
     // Empty until one is chosen; the readiness check asks for it (specs/specialist-providers R1.3).
     specialistModel: z.union([z.literal(""), ModelName]),
+    orchestratorProtocol: Protocol,
+    specialistProtocol: Protocol,
+    orchestratorProtocols: z.record(Provider, Protocol.optional()),
+    specialistProtocols: z.record(Provider, Protocol.optional()),
+    protocols: z.record(Provider, Protocol.optional()),
     approvalTimeoutMinutes: z.number().int().min(1).max(1440),
     questionTimeoutMinutes: z.number().int().min(1).max(1440),
     // Each integration's whole settings; the main process holds them to the integration the app carries (specs/mcp-integrations R1.5).
@@ -131,6 +137,8 @@ export const API_SCHEMAS = {
         model: z.string().trim().min(1).max(200),
         orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
         specialistEffort: z.enum(SPECIALIST_EFFORTS),
+        orchestratorProtocol: Protocol.optional(),
+        specialistProtocol: Protocol.optional(),
         parentFolder: z.string().trim().min(1).max(1000).nullable().optional(),
       })
       .strict(),
@@ -145,6 +153,8 @@ export const API_SCHEMAS = {
         model: ModelName,
         orchestratorEffort: z.enum(ORCHESTRATOR_EFFORTS),
         specialistEffort: z.enum(SPECIALIST_EFFORTS),
+        orchestratorProtocol: Protocol,
+        specialistProtocol: Protocol,
       })
       .partial()
       .strict(),

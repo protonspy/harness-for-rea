@@ -4,7 +4,7 @@ import { join } from "node:path"
 import type { Handlers } from "@shared/api"
 import { BRIDGE_FILE } from "@shared/cheatengine"
 import { integrationSettings } from "@shared/integrations"
-import { PROVIDERS } from "@shared/providers"
+import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { ChatGPTModelOption, ProjectRow, Push } from "@shared/types"
 import { cheatEngine } from "./cheatengine/integration"
 import { idaPro } from "./idapro/integration"
@@ -24,7 +24,7 @@ import { ProcessRegistry } from "./processes"
 import { listChatGPTModels, listModels, probeModel } from "./orchestrator/models"
 import { TaskRunner } from "./orchestrator/runner"
 import { deleteProject, ProjectStore } from "./projects"
-import { baseUrlFor, blocking, readiness } from "./readiness"
+import { baseUrlFor, blocking, protocolFor, readiness } from "./readiness"
 import { authArgs, dockerExec, preflight, removeLegacy } from "./sandbox/docker"
 import { SandboxRegistry, SpecialistBoxes } from "./sandbox/specialistbox"
 import { dockerExecBuffer, SCRATCH, TaskBox, WORKSPACE } from "./sandbox/taskbox"
@@ -122,7 +122,16 @@ export async function startCore(host: CoreHost): Promise<Core> {
   const unknowns = new UnknownsLedger()
   {
     const s = getSettings()
-    exclusive(() => projects.adopt({ provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort }))
+    exclusive(() =>
+      projects.adopt({
+        provider: s.provider,
+        model: s.model,
+        orchestratorEffort: s.orchestratorEffort,
+        specialistEffort: s.specialistEffort,
+        orchestratorProtocol: protocolFor(s.provider, "orchestrator", s),
+        specialistProtocol: protocolFor(s.specialistProvider === "claude" ? s.provider : (s.specialistProvider as ProviderId), "specialist", s),
+      }),
+    )
   }
 
   const withHolder = (p: ProjectRow): ProjectRow => {
@@ -314,7 +323,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
           run.provider === "chatgpt"
             ? (await handlers.listChatGPTModels()).map((m) => m.slug)
             : listModels({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider) }),
-        probeModel: (run) => probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model }),
+        probeModel: (run) =>
+          probeModel({ provider: run.provider, baseUrl: run.baseUrl, apiKey: readKey(run.provider), model: run.model, protocol: run.protocol }),
         keyHint: (provider) => keyStatus(provider).hint,
       },
       o,
@@ -520,7 +530,15 @@ export async function startCore(host: CoreHost): Promise<Core> {
     // A project is created only once the setup is completed (specs/projects R4.4).
     createProject: async (input) => {
       if (!getSettings().setupCompleted) throw new Error("Finish the setup before creating a project.")
-      return projects.create(input)
+      const s = getSettings()
+      const orchestratorProtocol = input.orchestratorProtocol ?? protocolFor(input.provider, "orchestrator", s)
+      const sp = s.specialistProvider === "claude" ? input.provider : (s.specialistProvider as ProviderId)
+      const specialistProtocol = input.specialistProtocol ?? protocolFor(sp, "specialist", s)
+      return projects.create({
+        ...input,
+        orchestratorProtocol,
+        specialistProtocol,
+      })
     },
     // Refused while a task of it runs; then its tasks, its sandboxes and the folder the app made for it (R3.1, R3.2).
     deleteProject: async (id) => (free(id), await deleteProject({ store: projects, log, runner, sandboxes: registry }, id), true),
@@ -542,7 +560,8 @@ export async function startCore(host: CoreHost): Promise<Core> {
       const project = input.projectId ? projects.get(input.projectId) : null
       if (project && projects.deleting.has(project.id)) throw new Error("The project is being deleted.")
       free(project?.id)
-      const blocked = blocking(await ready({ run: project ? { provider: project.provider, model: project.model } : undefined, list: false }))
+      const run = project ? { provider: project.provider, model: project.model, protocol: project.orchestratorProtocol } : undefined
+      const blocked = blocking(await ready({ run, list: false }))
       if (blocked) throw new Error(blocked)
       return runner.start({ ...input, auto: true })
     },
@@ -569,7 +588,9 @@ export async function startCore(host: CoreHost): Promise<Core> {
       freeTask(id)
       const task = log.getTask(id)
       const project = task.projectId ? projects.get(task.projectId) : null
-      const run = project ? { provider: project.provider, model: project.model } : { provider: getSettings().provider, model: getSettings().model }
+      const run = project
+        ? { provider: project.provider, model: project.model, protocol: project.orchestratorProtocol }
+        : { provider: getSettings().provider, model: getSettings().model, protocol: getSettings().orchestratorProtocol }
       const blocked = blocking(await ready({ run, list: false }))
       if (blocked) throw new Error(blocked)
       return runner.continueTask(id)
