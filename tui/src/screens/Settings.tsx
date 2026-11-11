@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useCallback, useEffect, useState } from "react"
-import { PROVIDERS } from "../../../src/shared/providers"
+import { PROVIDERS, getAvailableEffortsForModel } from "../../../src/shared/providers"
+import { getModelPricing, formatModelPricingShort } from "../../../src/shared/pricing"
 import { ORCHESTRATOR_EFFORTS, SPECIALIST_EFFORTS, type Settings } from "../../../src/shared/types"
 import { useApp, useKeys, useScreen } from "../app/context"
 import { Choice, Field } from "../components/ui"
@@ -76,7 +77,9 @@ export function SettingsScreen() {
   return (
     <box flexDirection="column" gap={1} maxWidth={90}>
       <text fg={theme.foreground}>
-        <span attributes={TextAttributes.BOLD}>{`${PROVIDERS[s.provider].label} · ${s.model}`}</span>
+        <span
+          attributes={TextAttributes.BOLD}
+        >{`${PROVIDERS[s.provider].label} · ${s.model}${getModelPricing(s.provider, s.model) ? " " + formatModelPricingShort(getModelPricing(s.provider, s.model)!) : ""}`}</span>
         <span fg={theme.mutedForeground}>{"   /provider · /model · /key · /base-url in the prompt (Ctrl+T)"}</span>
       </text>
       <text fg={theme.foreground}>
@@ -88,14 +91,14 @@ export function SettingsScreen() {
       <Choice<(typeof ORCHESTRATOR_EFFORTS)[number]>
         label="Orchestrator's effort"
         value={s.orchestratorEffort}
-        options={ORCHESTRATOR_EFFORTS}
+        options={getAvailableEffortsForModel(s.provider, s.model)}
         onChange={(v) => void save({ orchestratorEffort: v }, `Orchestrator's effort: ${v}.`)}
         focused={on("orchestrator")}
       />
       <Choice<(typeof SPECIALIST_EFFORTS)[number]>
         label="Specialist's effort"
         value={s.specialistEffort}
-        options={SPECIALIST_EFFORTS}
+        options={s.specialistProvider === "claude" ? SPECIALIST_EFFORTS : (getAvailableEffortsForModel(s.specialistProvider, s.specialistModel) as any)}
         onChange={(v) => void save({ specialistEffort: v }, `Specialist's effort: ${v}.`)}
         focused={on("specialist")}
       />

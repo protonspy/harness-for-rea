@@ -8,6 +8,7 @@ import { initKey, moveKeys, readKey, useKeyStore, type KeyStore } from "../src/m
 import { closeDb, exclusive, getDb, openDb, SCHEMA_VERSION, SchemaTooNew } from "../src/main/db"
 import { EventLog, eventRow, patchRow, stepRow } from "../src/main/events/log"
 import { keyringStore, type KeyEntry } from "../src/main/keys"
+import { Locks, type Holder } from "../src/main/lock"
 import { ProcessRegistry, STALE_MS } from "../src/main/processes"
 import { BASE_IMAGE, CLAUDE_CODE_VERSION, SPECIALIST_IMAGE, type Exec } from "../src/main/sandbox/docker"
 import { LoginService, SandboxService, type OnceGuard } from "../src/main/status"
@@ -248,6 +249,198 @@ describe("keys (R5.1, R5.2)", () => {
     await store.write("openrouter.key", null)
     expect(await store.read("openrouter.key")).toBeNull()
     expect(keyringStore("x", null).available()).toBe(false)
+  })
+
+  it("chunks large secrets with generational isolation and rollback on failure (D3)", async () => {
+    const entries = new Map<string, number[]>()
+    let failOnChunkName: string | null = null
+
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        if (failOnChunkName && name.includes(failOnChunkName)) {
+          throw new Error(`Simulated write failure on ${name}`)
+        }
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const store = keyringStore("hfr-test", make)
+    const initial4500A = "A".repeat(4500)
+    await store.write("chatgpt.key", initial4500A)
+
+    // Verify manifest points to 3 chunks of generation
+    const rootVal = Buffer.from(entries.get("hfr-test/chatgpt.key")!).toString("utf8")
+    expect(rootVal).toMatch(/^__HFR_CHUNKED__:[a-z0-9]+:3$/)
+    expect(await store.read("chatgpt.key")).toBe(initial4500A)
+
+    // Simulate failure during update: writing 4500 B fails on chunk #1
+    failOnChunkName = "#1"
+    const next4500B = "B".repeat(4500)
+    await expect(store.write("chatgpt.key", next4500B)).rejects.toThrow("Simulated write failure")
+    failOnChunkName = null
+
+    // Crucial D3 invariant: previous credential is preserved intact; failed generation chunks rolled back
+    expect(await store.read("chatgpt.key")).toBe(initial4500A)
+
+    // Reduction in size: write 2200 C (2 chunks)
+    const reduced2200C = "C".repeat(2200)
+    await store.write("chatgpt.key", reduced2200C)
+    expect(await store.read("chatgpt.key")).toBe(reduced2200C)
+
+    // Verify old generation chunks were completely removed
+    const allKeys = Array.from(entries.keys())
+    const chunkKeys = allKeys.filter((k) => k.startsWith("hfr-test/chatgpt.key#"))
+    expect(chunkKeys.length).toBe(2)
+
+    // Logout / write null: all chunks and root must be cleaned
+    await store.write("chatgpt.key", null)
+    expect(await store.read("chatgpt.key")).toBeNull()
+    const remainingKeys = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remainingKeys.length).toBe(0)
+  })
+
+  it("respects byte limits and guarantees Unicode multi-byte integrity across chunk boundaries (D4)", async () => {
+    const entries = new Map<string, number[]>()
+    const maxPlatformBytes = 2560
+
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        if (b.byteLength > maxPlatformBytes) {
+          throw new Error(`Value of 'secret' is longer than the platform limit of ${maxPlatformBytes} chars/bytes`)
+        }
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const store = keyringStore("hfr-test", make)
+
+    // 1500 'é' characters = 3000 UTF-8 bytes (must be chunked; each chunk <= 2000 bytes)
+    const multiByte3000 = "é".repeat(1500)
+    await store.write("chatgpt.key", multiByte3000)
+    expect(await store.read("chatgpt.key")).toBe(multiByte3000)
+
+    // Verify every stored entry is strictly below platform byte limit
+    for (const [, v] of entries.entries()) {
+      expect(v.length).toBeLessThanOrEqual(2000)
+    }
+
+    // Boundary spanning: 1999 ASCII chars + 4-byte emoji 🚀 (U+1F680) + 100 ASCII chars
+    const spanningSecret = "X".repeat(1999) + "🚀" + "Y".repeat(100)
+    await store.write("chatgpt.key", spanningSecret)
+    const retrieved = await store.read("chatgpt.key")
+    expect(retrieved).toBe(spanningSecret)
+    expect(retrieved?.includes("🚀")).toBe(true)
+  })
+
+  it("retries reading across generation rotation when chunks are pruned by a concurrent writer (E1)", async () => {
+    const entries = new Map<string, number[]>()
+    let pauseReadAfterRoot = false
+    const signal = { resume: null as (() => void) | null }
+
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => {
+        if (name === "chatgpt.key" && pauseReadAfterRoot) {
+          pauseReadAfterRoot = false
+          await new Promise<void>((r) => {
+            signal.resume = r
+          })
+        }
+        return entries.get(`${service}/${name}`) ?? null
+      },
+      setSecret: async (b) => void entries.set(`${service}/${name}`, [...b]),
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const storeA = keyringStore("hfr-test", make)
+    const storeB = keyringStore("hfr-test", make)
+
+    const g0Data = "A".repeat(4500)
+    await storeA.write("chatgpt.key", g0Data)
+
+    pauseReadAfterRoot = true
+    const readPromise = storeA.read("chatgpt.key")
+
+    while (!signal.resume) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+
+    const g1Data = "B".repeat(4500)
+    await storeB.write("chatgpt.key", g1Data)
+
+    signal.resume!()
+    const result = await readPromise
+    expect(result).toBe(g1Data)
+  })
+
+  it("coordinates concurrent writers and prevents orphaned generation chunks on logout (E2)", async () => {
+    const entries = new Map<string, number[]>()
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        await new Promise((r) => setTimeout(r, 2))
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => {
+        await new Promise((r) => setTimeout(r, 1))
+        return entries.delete(`${service}/${name}`)
+      },
+    })
+
+    const store1 = keyringStore("hfr-test", make)
+    const store2 = keyringStore("hfr-test", make)
+
+    const initial4500A = "A".repeat(4500)
+    await store1.write("chatgpt.key", initial4500A)
+    expect(await store1.read("chatgpt.key")).toBe(initial4500A)
+
+    const next4500B = "B".repeat(4500)
+    const next4500C = "C".repeat(4500)
+    await Promise.all([store1.write("chatgpt.key", next4500B), store2.write("chatgpt.key", next4500C)])
+
+    const finalVal = await store1.read("chatgpt.key")
+    expect(finalVal === next4500B || finalVal === next4500C).toBe(true)
+
+    await store1.write("chatgpt.key", null)
+
+    const remaining = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remaining).toEqual([])
+    expect(await store1.read("chatgpt.key")).toBeNull()
+  })
+
+  it("coordinates writers across separate process locks with temp lockDir, preserving exclusion (F1)", async () => {
+    const entries = new Map<string, number[]>()
+    const make = (service: string, name: string): KeyEntry => ({
+      getSecret: async () => entries.get(`${service}/${name}`) ?? null,
+      setSecret: async (b) => {
+        await new Promise((r) => setTimeout(r, 5))
+        entries.set(`${service}/${name}`, [...b])
+      },
+      deleteCredential: async () => entries.delete(`${service}/${name}`),
+    })
+
+    const lockDir = tmp()
+    const holderA: Holder = { app: "desktop", pid: 1001, since: 10 }
+    const holderB: Holder = { app: "tui", pid: 2002, since: 20 }
+    const locksA = new Locks(lockDir, holderA, () => true)
+    const locksB = new Locks(lockDir, holderB, () => true)
+
+    const storeA = keyringStore("hfr-test", make, locksA)
+    const storeB = keyringStore("hfr-test", make, locksB)
+
+    const valA = "A".repeat(4500)
+    const valB = "B".repeat(4500)
+    await Promise.all([storeA.write("chatgpt.key", valA), storeB.write("chatgpt.key", valB)])
+
+    const finalVal = await storeA.read("chatgpt.key")
+    expect(finalVal === valA || finalVal === valB).toBe(true)
+
+    await storeA.write("chatgpt.key", null)
+    const remaining = Array.from(entries.keys()).filter((k) => k.startsWith("hfr-test/chatgpt.key"))
+    expect(remaining).toEqual([])
   })
 
   it("moves the keys of a former store into the shared one, keeping one already there, and removes them", async () => {

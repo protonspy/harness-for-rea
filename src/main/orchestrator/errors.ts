@@ -16,7 +16,9 @@ export function friendlyError(e: unknown, provider = "OpenRouter"): Error {
   const msg = String(err?.message ?? e)
   if (status === 401 || /user not found|invalid api key|no auth credentials|unauthorized/i.test(msg))
     return new OrchestratorError(`${provider} rejected the API key. Set a valid key in Settings.`, 401)
-  if (status === 402 || /insufficient credits|payment required/i.test(msg))
+  if (status === 403 || /forbidden|permission denied|access denied/i.test(msg))
+    return new OrchestratorError(`Your ${provider} account does not have access or permissions for this endpoint or model.`, 403)
+  if (status === 402 || /insufficient credits|payment required|credit quota/i.test(msg))
     return new OrchestratorError(`Your ${provider} account is out of credits. Add credits and retry the task.`, 402)
   if (status === 429 || /rate.?limit/i.test(msg))
     return new OrchestratorError(`${provider} is rate-limiting this model. Retry in a minute or pick another model in Settings.`, 429)
@@ -32,5 +34,10 @@ export function friendlyError(e: unknown, provider = "OpenRouter"): Error {
       404,
     )
   if (err?.name === "AbortError" || /abort/i.test(msg)) return new OrchestratorError("Cancelled.")
+  if ((provider.toLowerCase() === "river" || /river/i.test(msg)) && (status === 503 || /inference is temporarily unavailable/i.test(msg)))
+    return new OrchestratorError(
+      "River inference is temporarily unavailable. Retry the task shortly or select another River model in Settings. Service status: https://status.river.ai",
+      503,
+    )
   return e instanceof Error ? e : new Error(msg)
 }

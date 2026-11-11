@@ -145,9 +145,18 @@ describe("the DeepAgents specialist", () => {
     expect(JSON.stringify(requests[1].messages)).toContain("first report")
   })
 
-  it("names the provider when it refuses the key or limits the rate (R2.8)", async () => {
+  it("names the provider when it refuses the key, denies permissions, or limits the rate (R2.8)", async () => {
     script = [{ status: 401 }]
     await expect(specialist().s.send("x")).rejects.toMatchObject({ kind: "auth", message: expect.stringMatching(/^Hopper refused the specialist's API key/) })
+    script = [{ status: 403 }]
+    await expect(specialist().s.send("x")).rejects.toMatchObject({
+      kind: "auth",
+      message: expect.stringMatching(/^Your Hopper account does not have access or permissions for this endpoint or model\./),
+    })
+    expect(classifyAgentFailure(Object.assign(new Error("forbidden"), { status: 403 }), "Hopper")).toMatchObject({
+      kind: "auth",
+      message: expect.stringMatching(/^Your Hopper account does not have access or permissions for this endpoint or model\./),
+    })
     expect(classifyAgentFailure(Object.assign(new Error("Too many"), { status: 429 }), "Hopper")).toMatchObject({
       kind: "limit",
       message: expect.stringMatching(/^Hopper/),

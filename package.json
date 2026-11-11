@@ -57,6 +57,7 @@
     "electron": "45.0.0",
     "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
+    "happy-dom": "^21.0.4",
     "langchain": "^1.5.19",
     "langsmith": "^0.11.1",
     "lucide-react": "1.52.0",

@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { PROVIDER_IDS, PROVIDERS, SPECIALIST_PROVIDERS, type ProviderId, type SpecialistProvider } from "../../../src/shared/providers"
 import type { KeyStatus, LoginStatus, Readiness, SandboxStatus, Settings } from "../../../src/shared/types"
 import type { Command } from "../app/commands"
@@ -43,19 +43,64 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
         ))
         if (!id) return
         const p = id as SpecialistProvider
+        const nextSpecialistModel = p === "claude" ? undefined : p === "chatgpt" || p === "custom" ? "" : PROVIDERS[p].defaultModel || ""
         await app.attempt(
           () =>
-            api.saveSettings({ specialistProvider: p, ...(p === "claude" ? {} : { specialistModel: PROVIDERS[p].defaultModel || settings?.specialistModel }) }),
+            api.saveSettings({
+              specialistProvider: p,
+              ...(nextSpecialistModel !== undefined ? { specialistModel: nextSpecialistModel } : {}),
+            }),
           `The specialist runs on ${specialistLabel(p)}.`,
         )
+        if (p === "chatgpt") {
+          const auth = await api.chatGPTAuthStatus().catch(() => null)
+          if (auth?.connected) {
+            const models = await api.listChatGPTModels().catch(() => null)
+            if (models && models.length > 0) {
+              await api.saveSettings({ specialistModel: models[0].slug, expectedSpecialistProvider: "chatgpt" }).catch(() => null)
+            }
+          }
+        }
         refresh()
       },
     },
     {
       name: "specialist-model",
       title: "Name the specialist's model on its provider",
-      args: "<id>",
-      run: async (model) => {
+      args: "[id]",
+      run: async (arg) => {
+        let model = arg?.trim() ?? ""
+        if (!model) {
+          if (sp === "chatgpt") {
+            const chatgptModels = await app.attempt(() => api.listChatGPTModels())
+            if (!chatgptModels || chatgptModels.length === 0) {
+              return app.toast("No models available for the connected ChatGPT account.", "info")
+            }
+            const id = await app.dialog<string>((done) => (
+              <SelectDialog
+                title={`Specialist models of ${PROVIDERS[sp].label}`}
+                items={chatgptModels.map((m) => ({ id: m.slug, label: `${m.displayName} (${m.slug})` }))}
+                initial={settings?.specialistModel}
+                done={done}
+              />
+            ))
+            if (!id) return
+            model = id
+          } else if (sp !== "claude") {
+            const models = await app.attempt(() => api.listModels(sp))
+            if (!models) return app.toast("No model list here: name the model with /specialist-model <id>.", "info")
+            const id = await app.dialog<string>((done) => (
+              <SelectDialog
+                title={`Specialist models of ${PROVIDERS[sp].label}`}
+                items={models.map((m) => ({ id: m, label: m }))}
+                initial={settings?.specialistModel}
+                done={done}
+              />
+            ))
+            if (!id) return
+            model = id
+          }
+        }
         await app.attempt(() => api.saveSettings({ specialistModel: model.trim() }), `Specialist's model: ${model.trim()}.`)
         refresh()
       },
@@ -66,6 +111,7 @@ export function specialistCommands(app: AppState, settings: Settings | null, ref
       args: "<key>",
       run: async (key) => {
         if (sp === "claude") return app.toast("Claude Code signs in with /login; it takes no key.", "info")
+        if (sp === "chatgpt") return app.toast("ChatGPT uses OAuth token sharing. Use 'chatgpt-login' to connect your account.", "error")
         await app.attempt(() => api.saveKey(key.trim(), sp), "Key saved in the OS keychain.")
         refresh()
       },
@@ -88,20 +134,52 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     ))
     if (!id) return
     const p = PROVIDERS[id as ProviderId]
+    const nextModel = p.id === "chatgpt" || p.id === "custom" ? "" : p.defaultModel || ""
     // Switching provider swaps in its own endpoint (kept per provider), model and key; one provider's model name means nothing to another.
-    await app.attempt(() => api.saveSettings({ provider: p.id, model: p.defaultModel || settings?.model }), `Provider: ${p.label}.`)
+    await app.attempt(() => api.saveSettings({ provider: p.id, model: nextModel }), `Provider: ${p.label}.`)
+    if (p.id === "chatgpt") {
+      const auth = await api.chatGPTAuthStatus().catch(() => null)
+      if (auth?.connected) {
+        const models = await api.listChatGPTModels().catch(() => null)
+        if (models && models.length > 0) {
+          await api.saveSettings({ model: models[0].slug, expectedProvider: "chatgpt" }).catch(() => null)
+        }
+      }
+    }
     refresh()
   }
   const pickModel = async (arg: string) => {
     let model = arg.trim()
     if (!model) {
-      const models = await app.attempt(() => api.listModels())
-      if (!models) return app.toast("No model list here: name the model with /model <id>; the setup checks it with a test request.", "info")
-      const id = await app.dialog<string>((done) => (
-        <SelectDialog title={`Models of ${PROVIDERS[provider].label}`} items={models.map((m) => ({ id: m, label: m }))} initial={settings?.model} done={done} />
-      ))
-      if (!id) return
-      model = id
+      if (provider === "chatgpt") {
+        const chatgptModels = await app.attempt(() => api.listChatGPTModels())
+        if (!chatgptModels || chatgptModels.length === 0) {
+          return app.toast("No models available for the connected ChatGPT account.", "info")
+        }
+        const id = await app.dialog<string>((done) => (
+          <SelectDialog
+            title={`Models of ${PROVIDERS[provider].label}`}
+            items={chatgptModels.map((m) => ({ id: m.slug, label: `${m.displayName} (${m.slug})` }))}
+            initial={settings?.model}
+            done={done}
+          />
+        ))
+        if (!id) return
+        model = id
+      } else {
+        const models = await app.attempt(() => api.listModels(provider))
+        if (!models) return app.toast("No model list here: name the model with /model <id>; the setup checks it with a test request.", "info")
+        const id = await app.dialog<string>((done) => (
+          <SelectDialog
+            title={`Models of ${PROVIDERS[provider].label}`}
+            items={models.map((m) => ({ id: m, label: m }))}
+            initial={settings?.model}
+            done={done}
+          />
+        ))
+        if (!id) return
+        model = id
+      }
     }
     await app.attempt(() => api.saveSettings({ model }), `Model: ${model}.`)
     refresh()
@@ -113,7 +191,6 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Set the provider's base URL",
       args: "<url>",
       run: async (url) => {
-        // Named with the provider it is for, so a switch made elsewhere in between never files it under another.
         await app.attempt(() => api.saveSettings({ ...(settings ? { provider: settings.provider } : {}), baseUrl: url.trim() }), "Base URL saved.")
         refresh()
       },
@@ -123,6 +200,9 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       title: "Save the provider's API key in the OS keychain",
       args: "<key>",
       run: async (key) => {
+        if (provider === "chatgpt") {
+          return app.toast("ChatGPT uses OAuth token sharing. Use 'chatgpt-login' to connect your account.", "error")
+        }
         await app.attempt(() => api.saveKey(key.trim(), provider), "Key saved in the OS keychain.")
         refresh()
       },
@@ -131,7 +211,12 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
       name: "remove-key",
       title: "Remove the provider's API key",
       run: async () => {
-        await app.attempt(() => api.clearKey(provider), "Key removed.")
+        if (provider === "chatgpt") {
+          const s = await app.attempt(() => api.chatGPTLogout(), "ChatGPT account disconnected.")
+          if (s?.warning) app.toast(s.warning, "info")
+        } else {
+          await app.attempt(() => api.clearKey(provider), "Key removed.")
+        }
         refresh()
       },
     },
@@ -161,6 +246,49 @@ export function providerCommands(app: AppState, settings: Settings | null, refre
     },
     { name: "hopper-cancel", title: "Cancel the Hopper sign-in", run: () => void app.attempt(() => api.cancelHopperSignIn(), "Hopper sign-in cancelled.") },
     {
+      name: "chatgpt-login",
+      title: "Connect your ChatGPT account via official OAuth token sharing",
+      run: async () => {
+        app.toast("Opening browser for ChatGPT authorization...", "info")
+        const s = await app.attempt(() => api.startChatGPTAuth(), "ChatGPT account connected.")
+        if (s) refresh()
+      },
+    },
+    {
+      name: "chatgpt-cancel",
+      title: "Cancel ChatGPT authorization",
+      run: () => void app.attempt(() => api.cancelChatGPTAuth(), "ChatGPT authorization cancelled."),
+    },
+    {
+      name: "chatgpt-status",
+      title: "Show current ChatGPT authentication status",
+      run: async () => {
+        const s = await app.attempt(() => api.chatGPTAuthStatus())
+        if (!s) return
+        app.toast(s.connected ? `Connected: ${s.accountEmail || "ChatGPT account"} (${s.planType || "plan"})` : "Not connected to ChatGPT.", "info")
+      },
+    },
+    {
+      name: "chatgpt-models",
+      title: "List available models for the connected ChatGPT account",
+      run: async () => {
+        const models = await app.attempt(() => api.listChatGPTModels())
+        if (!models || models.length === 0) {
+          return app.toast("No models available for the connected ChatGPT account.", "info")
+        }
+        app.toast(`Available models: ${models.map((m) => m.displayName).join(", ")}`, "info")
+      },
+    },
+    {
+      name: "chatgpt-logout",
+      title: "Disconnect and sign out of your ChatGPT account",
+      run: async () => {
+        const s = await app.attempt(() => api.chatGPTLogout(), "ChatGPT account disconnected.")
+        if (s?.warning) app.toast(s.warning, "info")
+        refresh()
+      },
+    },
+    {
       name: "signup",
       title: "Open the provider's account page in your browser",
       run: async () => {
@@ -181,25 +309,38 @@ export function SetupScreen({ then }: { then?: Route }) {
   const [login, setLogin] = useState<LoginStatus | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [key, setKey] = useState<KeyStatus | null>(null)
+  const checkSeqRef = useRef(0)
 
   const { toast } = app
+  const checkReadiness = useCallback(() => {
+    const seq = ++checkSeqRef.current
+    return api.readiness().then(
+      (nextR) => {
+        if (seq === checkSeqRef.current) setR(nextR)
+      },
+      (e: unknown) => {
+        if (seq === checkSeqRef.current) toast((e as Error).message, "error")
+      },
+    )
+  }, [api, toast])
+
   const refresh = useCallback(() => {
-    void api.readiness().then(setR, (e: unknown) => toast((e as Error).message, "error"))
+    void checkReadiness()
     void api.sandboxStatus().then(setSandbox, () => undefined)
     void api.loginStatus().then(setLogin, () => undefined)
     void api.getSettings().then((s) => {
       setSettings(s)
       return api.keyStatus(s.provider).then(setKey)
     })
-  }, [api, toast])
+  }, [api, checkReadiness])
   useEffect(refresh, [refresh])
   usePush((p) => {
     if (p.type === "sandbox") {
       setSandbox(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     } else if (p.type === "login") {
       setLogin(p.status)
-      void api.readiness().then(setR, () => undefined)
+      void checkReadiness()
     }
   })
 
@@ -224,7 +365,9 @@ export function SetupScreen({ then }: { then?: Route }) {
     },
     { name: "cancel-login", title: "Cancel the sign-in", run: () => void app.attempt(() => api.cancelLogin()).then((s) => s && setLogin(s)) },
     { name: "logout", title: "Sign Claude out", run: () => void app.attempt(() => api.logout(), "Signed out.").then((s) => s && setLogin(s)) },
+    // oxlint-disable-next-line react/refs
     ...providerCommands(app, settings, refresh),
+    // oxlint-disable-next-line react/refs
     ...specialistCommands(app, settings, refresh),
     { name: "refresh", title: "Check every step again", run: refresh },
     {

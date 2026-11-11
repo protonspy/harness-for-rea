@@ -144,9 +144,10 @@ describe("TaskBox", () => {
   })
 
   it("stops reading a command whose output passes the cap", async () => {
+    expect(BUFFER_CAP).toBeGreaterThan(OUTPUT_CAP)
+    if (!process.env.HFR_DOCKER) return
     const r = await dockerExecBuffer.call(null, ["--version"])
     expect(r.overflow).toBe(false)
-    expect(BUFFER_CAP).toBeGreaterThan(OUTPUT_CAP)
   })
 
   it("stops, and keeps, the task containers a previous run left running (specs/task-persistence R3.4)", async () => {

@@ -35,6 +35,19 @@ export class LockHeld extends Error {
 export const LOCKS_DIR = "locks"
 
 export const projectLockName = (projectId: string) => `project-${projectId}`
+export const slotLockName = (slot: string) => `keyring-${slot.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+
+/** Default identity for the current process taking a lock. */
+export function defaultHolder(
+  app: AppName = typeof process !== "undefined" && (process.versions as unknown as Record<string, string>)?.electron ? "desktop" : "tui",
+): Holder {
+  const uptimeMs = typeof process !== "undefined" && typeof process.uptime === "function" ? process.uptime() * 1000 : 0
+  return {
+    app,
+    pid: typeof process !== "undefined" ? process.pid : 1,
+    since: Math.round(Date.now() - uptimeMs),
+  }
+}
 
 function read(file: string): Holder | null {
   try {
@@ -55,9 +68,9 @@ export class Locks {
     dataDir: string,
     readonly me: Holder,
     /** whether the process a lock names is still running (R1.4) */
-    private readonly isLive: (h: Holder) => boolean,
+    private readonly isLive: (h: Holder) => boolean = (h) => pidAlive(h.pid),
   ) {
-    this.dir = join(dataDir, LOCKS_DIR)
+    this.dir = dataDir.endsWith(LOCKS_DIR) || dataDir.endsWith(`${LOCKS_DIR}/`) || dataDir.endsWith(`${LOCKS_DIR}\\`) ? dataDir : join(dataDir, LOCKS_DIR)
     mkdirSync(this.dir, { recursive: true })
   }
 
@@ -120,6 +133,50 @@ export class Locks {
       }
     }
     throw new Error(`Could not take the lock ${name}; another app may be taking it.`)
+  }
+
+  /**
+    Asynchronously takes `name` for this process, waiting while another live process holds it up to `timeoutMs`.
+    Throws `LockHeld` when another live process still holds it when the timeout expires.
+    Returns the release function, which only removes the lock if this process still holds it.
+  */
+  async acquire(name: string, timeoutMs = 5000, pollIntervalMs = 25): Promise<() => void> {
+    const file = this.file(name)
+    const release = () => {
+      if (sameProcess(read(file), this.me)) rmSync(file, { force: true })
+    }
+    const start = Date.now()
+
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const fd = openSync(file, "wx")
+        writeSync(fd, JSON.stringify(this.me))
+        closeSync(fd)
+        return release
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+        const h = read(file)
+        if (h && sameProcess(h, this.me)) return release
+        if (h && this.isLive(h)) {
+          await new Promise((r) => setTimeout(r, pollIntervalMs))
+          continue
+        }
+        if (!h && ageOf(file) < UNREADABLE_STALE_MS) {
+          await new Promise((r) => setTimeout(r, pollIntervalMs))
+          continue
+        }
+        if (guarded(file, () => sameProcess(read(file), h) && rmSync(file, { force: true }))) {
+          continue
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs))
+      }
+    }
+
+    const h = read(file)
+    if (h && this.isLive(h)) {
+      throw new LockHeld(h, `Lock ${name} is held by ${APP_LABEL[h.app]} (process ${h.pid}).`)
+    }
+    throw new Error(`Could not take the lock ${name}; timed out after ${timeoutMs}ms.`)
   }
 }
 

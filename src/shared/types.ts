@@ -1,7 +1,9 @@
 import type { IntegrationSettings } from "./integrations"
 /* The records main and renderer share: tasks, their steps and events, patches, settings and status. */
 
-import type { ProviderId, SpecialistProvider } from "./providers"
+import type { ModelProtocol, ProviderId, SpecialistProvider } from "./providers"
+import type { CacheHypothesis, CostStatus, ModelRateSnapshot } from "./pricing"
+export type { CacheHypothesis, CostStatus, ModelRateSnapshot }
 
 /**
   `awaiting-user`: a turn ended and the conversation waits for the user's next message; `stopped`: the user stopped a turn
@@ -26,6 +28,7 @@ export interface TaskRow {
   updatedAt: number
   tokensIn: number
   tokensOut: number
+  cacheTokens?: number
   costUsd: number
   /** what Claude Code reported as `total_cost_usd`: an estimate against the user's plan, not a charge */
   specialistCostUsd: number
@@ -85,6 +88,8 @@ export interface ProjectRow {
   model: string
   orchestratorEffort: OrchestratorEffort
   specialistEffort: SpecialistEffort
+  orchestratorProtocol?: ModelProtocol
+  specialistProtocol?: ModelProtocol
   createdAt: number
   updatedAt: number
   /** the other app running a task of this project, which holds it until its tasks close (specs/shared-data-folder R1.3) */
@@ -137,6 +142,10 @@ export interface EventPayload {
   costUsd?: number
   /** the cost is Claude Code's estimate, not an OpenRouter charge */
   estimate?: boolean
+  costStatus?: CostStatus
+  rateSnapshot?: ModelRateSnapshot
+  cacheHypothesis?: CacheHypothesis
+  promptTokensIncludesCache?: boolean
   [key: string]: unknown
 }
 
@@ -178,9 +187,14 @@ export interface AgentUsage {
   calls: number
   tokensIn: number
   tokensOut: number
+  cacheTokens?: number
   costUsd: number
   /** the cost is Claude Code's estimate against the plan, not a charge */
   estimate: boolean
+  costStatus?: CostStatus
+  reportedCostUsd?: number
+  estimatedCostUsd?: number
+  hasUnknownCost?: boolean
 }
 
 export interface TaskHistory {
@@ -203,6 +217,8 @@ export interface Settings {
   provider: ProviderId
   /** the chosen provider's OpenAI-compatible endpoint, used by the providers whose URL can be edited; ignored by OpenRouter */
   baseUrl: string
+  /** the chosen specialist provider's endpoint, when editable */
+  specialistBaseUrl?: string
   /** each provider's own endpoint, so switching provider loses none (specs/orchestrator R1.10); only main writes it */
   baseUrls: Partial<Record<ProviderId, string>>
   model: string
@@ -223,12 +239,30 @@ export interface Settings {
   setupCompleted: boolean
   /** each MCP integration the user touched, by id; one left out is off, at its defaults (specs/mcp-integrations R1.1) */
   integrations: Record<string, IntegrationSettings>
+  orchestratorProtocol?: ModelProtocol
+  specialistProtocol?: ModelProtocol
+  orchestratorProtocols?: Partial<Record<ProviderId, ModelProtocol>>
+  specialistProtocols?: Partial<Record<ProviderId, ModelProtocol>>
+  protocols?: Partial<Record<ProviderId, ModelProtocol>>
 }
 
-export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh"] as const
+export const ORCHESTRATOR_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type OrchestratorEffort = (typeof ORCHESTRATOR_EFFORTS)[number]
-export const SPECIALIST_EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"] as const
+export const SPECIALIST_EFFORTS = ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type SpecialistEffort = (typeof SPECIALIST_EFFORTS)[number]
+
+export type ProbeStatus = "ready" | "invalid_key" | "forbidden" | "quota_exceeded" | "model_not_found" | "rate_limited" | "truncated" | "unverified" | "error"
+
+export interface ProbeResult {
+  ok: boolean
+  status: ProbeStatus
+  reason: string
+  hasReasoning?: boolean
+  hasToolCalls?: boolean
+  truncated?: boolean
+  tokensOut?: number
+  latencyMs?: number
+}
 
 export interface KeyStatus {
   set: boolean
@@ -298,3 +332,19 @@ export type Push =
   | { type: "patch"; patch: PatchView }
   | { type: "sandbox"; status: SandboxStatus }
   | { type: "login"; status: LoginStatus }
+
+export interface ChatGPTAuthStatus {
+  connected: boolean
+  inProgress?: boolean
+  accountEmail?: string
+  planType?: string
+  expiresAt?: number
+  hasTokenSharingScope: boolean
+  error?: string
+  warning?: string
+}
+
+export interface ChatGPTModelOption {
+  slug: string
+  displayName: string
+}

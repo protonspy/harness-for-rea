@@ -20,7 +20,7 @@ import { PROVIDERS, type ProviderId } from "@shared/providers"
 import type { PatchView, ProjectRow, TaskRow, TaskState } from "@shared/types"
 import { rejectPatch, type DelegationDeps } from "../delegation"
 import { TaskIntegrations } from "../integrations/task"
-import { baseUrlFor } from "../readiness"
+import { baseUrlFor, protocolFor } from "../readiness"
 import { buildAgent, type AgentBackend } from "./agent"
 import { friendlyError } from "./errors"
 import { answerFromPackage, type Answerer, type ModelReply } from "./answer"
@@ -179,7 +179,11 @@ export class TaskRunner {
     if (!dir) throw new Error(`${sourceRoot || "The source"} is not a folder.`)
     const run = this.runWith(project)
     const apiKey = keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const { log } = this.deps
     const task = log.createTask({ request: input.request, sourceRoot, model: run.model, projectId: project?.id ?? null })
     const auto = input.auto === true
@@ -192,7 +196,7 @@ export class TaskRunner {
       kind: "task.started",
       state: "running",
       summary: "Task started",
-      payload: { input: task.request, model: task.model, gated, auto },
+      payload: { input: task.request, model: task.model, gated, auto, protocol: run.orchestratorProtocol },
     })
     this.userMessage(task.id, task.request)
     live.run = this.drive(task.id, { messages: [new HumanMessage(task.request)] }, live.callbacks)
@@ -208,8 +212,22 @@ export class TaskRunner {
   private runWith(project: ProjectRow | null) {
     const s = this.deps.settings()
     return project
-      ? { provider: project.provider, model: project.model, orchestratorEffort: project.orchestratorEffort, specialistEffort: project.specialistEffort }
-      : { provider: s.provider, model: s.model, orchestratorEffort: s.orchestratorEffort, specialistEffort: s.specialistEffort }
+      ? {
+          provider: project.provider,
+          model: project.model,
+          orchestratorEffort: project.orchestratorEffort,
+          specialistEffort: project.specialistEffort,
+          orchestratorProtocol: project.orchestratorProtocol ?? protocolFor(project.provider, "orchestrator", s),
+          specialistProtocol: project.specialistProtocol ?? protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+        }
+      : {
+          provider: s.provider,
+          model: s.model,
+          orchestratorEffort: s.orchestratorEffort,
+          specialistEffort: s.specialistEffort,
+          orchestratorProtocol: protocolFor(s.provider, "orchestrator", s),
+          specialistProtocol: protocolFor(s.specialistProvider as ProviderId, "specialist", s),
+        }
   }
 
   private open(task: TaskRow, auto: boolean, gated: GateableTool[], key?: string): Live {
@@ -218,7 +236,11 @@ export class TaskRunner {
     const project = task.projectId && this.deps.projects ? this.deps.projects.get(task.projectId) : null
     const run = this.runWith(project)
     const apiKey = key ?? keyFor(run.provider, this.deps.apiKey(run.provider))
-    if (apiKey === null) throw new Error(`Set your ${PROVIDERS[run.provider].label} API key in Settings first.`)
+    if (apiKey === null)
+      throw new Error(
+        run.provider === "chatgpt" ? "Connect your ChatGPT account in Settings first." : `Set your ${PROVIDERS[run.provider].label} API key in Settings first.`,
+      )
+    if (run.provider === "chatgpt" && !run.model.trim()) throw new Error("Choose a model from ChatGPT (Codex) in Settings first.")
     const abort = new AbortController()
     // The base URL is the provider's, kept in Settings: a project names the provider, not its endpoint.
     const baseUrl = baseUrlFor(run.provider, settings)
@@ -229,15 +251,16 @@ export class TaskRunner {
       apiKey,
       model: task.model,
       effort: run.orchestratorEffort,
+      protocol: run.orchestratorProtocol,
       onUsage: (u) => {
         log.append({
           taskId: task.id,
           agent: "orchestrator",
           kind: "model.call",
-          summary: `${u.model}: ${u.tokensIn} in, ${u.tokensOut} out`,
+          summary: `${u.model}: ${u.tokensIn} in${u.cacheTokens ? ` (${u.cacheTokens} cached)` : ""}, ${u.tokensOut} out`,
           payload: { ...u },
         })
-        log.addUsage(task.id, { tokensIn: u.tokensIn, tokensOut: u.tokensOut, costUsd: u.costUsd })
+        log.addUsage(task.id, { tokensIn: u.tokensIn, tokensOut: u.tokensOut, cacheTokens: u.cacheTokens ?? 0, costUsd: u.costUsd })
       },
     })
     const ctx: ToolContext = {
@@ -250,6 +273,7 @@ export class TaskRunner {
       refusal: (stepId, message) => this.refusal(task.id, stepId, message),
       projectId: task.projectId,
       specialistEffort: run.specialistEffort,
+      specialistProtocol: run.specialistProtocol,
     }
     ctx.auto = auto
     const integ = this.deps.integrations
@@ -266,7 +290,19 @@ export class TaskRunner {
       })
     // A task closed a moment ago is still stopping its containers: bring them up only once they stopped.
     const ready = (this.disposing.get(task.id) ?? Promise.resolve())
-      .then(() => this.deps.workspace(task))
+      .then(async () => {
+        if (run.provider === "chatgpt") {
+          const modelToUse = task.model || run.model
+          if (this.deps.listChatGPTModels) {
+            const available = await this.deps.listChatGPTModels()
+            const match = available.some((opt) => (typeof opt === "string" ? opt === modelToUse : opt.slug === modelToUse))
+            if (!match) {
+              throw new Error(`The model "${modelToUse}" is not available for the connected ChatGPT account. Choose a model from the account's catalog.`)
+            }
+          }
+        }
+        return this.deps.workspace(task)
+      })
       .then(async (ws) => {
         // The integration tools the orchestrator has, and what a delegation can target, as Settings has them now (R5.1).
         const [own, targetable] = await Promise.all([ctx.integrations?.orchestratorTools() ?? [], ctx.integrations?.targetable() ?? []])

@@ -1,7 +1,18 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { stub } from "./electron-stub"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { stub, safeStorage } from "./electron-stub"
 import { closeDb, getDb, getSetting, openDb, setSetting } from "../src/main/db"
-import { clearKey, CredentialError, initKey, keyStatus, onKey, readKey, saveKey, useKeyStore } from "../src/main/credentials"
+import {
+  clearKey,
+  CredentialError,
+  initKey,
+  keyStatus,
+  onKey,
+  readKey,
+  refreshKeyAvailability,
+  saveKey,
+  useKeyStore,
+  type KeyStore,
+} from "../src/main/credentials"
 import { electronKeyStore } from "../src/main/keys-electron"
 import { isAppPage, makeDispatcher } from "../src/main/ipc"
 import { contentSecurityPolicy } from "../src/main/csp"
@@ -171,8 +182,13 @@ describe("credentials (R3.1–R3.3)", () => {
   })
   afterAll(() => closeDb())
   beforeEach(async () => {
+    useKeyStore(electronKeyStore())
     stub.encryption = true
     await clearKey()
+  })
+  afterEach(async () => {
+    useKeyStore(electronKeyStore())
+    stub.encryption = true
   })
 
   it("stores the key only encrypted and reads it back after a restart", async () => {
@@ -232,5 +248,272 @@ describe("credentials (R3.1–R3.3)", () => {
     stub.encryption = false
     await initKey()
     expect(readKey()).toBeNull()
+  })
+
+  it("uses safeStorage.isAsyncEncryptionAvailable when present and avoids deprecated sync call", async () => {
+    const origSync = safeStorage.isEncryptionAvailable
+    const origAsync = safeStorage.isAsyncEncryptionAvailable
+    const syncSpy = vi.fn(() => true)
+    const asyncSpy = vi.fn(async () => true)
+    safeStorage.isEncryptionAvailable = syncSpy
+    safeStorage.isAsyncEncryptionAvailable = asyncSpy
+
+    try {
+      const store = electronKeyStore()
+      const avail = await store.available()
+      expect(avail).toBe(true)
+      expect(asyncSpy).toHaveBeenCalledTimes(1)
+      expect(syncSpy).not.toHaveBeenCalled()
+    } finally {
+      safeStorage.isEncryptionAvailable = origSync
+      safeStorage.isAsyncEncryptionAvailable = origAsync
+    }
+  })
+
+  it("falls back to safeStorage.isEncryptionAvailable if async method is unavailable", async () => {
+    const origSync = safeStorage.isEncryptionAvailable
+    const origAsync = safeStorage.isAsyncEncryptionAvailable
+    const syncSpy = vi.fn(() => true)
+    safeStorage.isEncryptionAvailable = syncSpy
+    // @ts-expect-error test fallback when isAsyncEncryptionAvailable is undefined
+    delete safeStorage.isAsyncEncryptionAvailable
+
+    try {
+      const store = electronKeyStore()
+      const avail = await store.available()
+      expect(avail).toBe(true)
+      expect(syncSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      safeStorage.isEncryptionAvailable = origSync
+      safeStorage.isAsyncEncryptionAvailable = origAsync
+    }
+  })
+
+  it("transitions availability from false to true on explicit refresh", async () => {
+    let availState = false
+    const asyncStore: KeyStore = {
+      available: () => Promise.resolve(availState),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    expect(keyStatus().encryption).toBe(false)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
+
+    availState = true
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("transitions availability from true to false on explicit refresh", async () => {
+    let availState = true
+    const asyncStore: KeyStore = {
+      available: () => Promise.resolve(availState),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    availState = false
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
+  })
+
+  it("handles key store available() rejection safely without unhandledRejection", async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (err: unknown) => unhandled.push(err)
+    process.on("unhandledRejection", onUnhandled)
+
+    try {
+      const rejectingStore: KeyStore = {
+        available: () => Promise.reject(new Error("keychain daemon unavailable")),
+        read: async () => null,
+        write: async () => {},
+      }
+      useKeyStore(rejectingStore)
+      const res = await refreshKeyAvailability()
+      expect(res).toBe(false)
+      expect(keyStatus().encryption).toBe(false)
+      // Multiple keyStatus calls must not trigger unhandled promises or throw
+      expect(keyStatus().encryption).toBe(false)
+      expect(keyStatus().encryption).toBe(false)
+      expect(unhandled).toHaveLength(0)
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+    }
+  })
+
+  it("does not start unobserved calls on async store when keyStatus is queried", async () => {
+    let probeCount = 0
+    const asyncStore: KeyStore = {
+      available: () => {
+        probeCount++
+        return Promise.resolve(true)
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(asyncStore)
+    await refreshKeyAvailability()
+    const baseline = probeCount
+
+    // Repeated synchronous status queries
+    keyStatus()
+    keyStatus("openrouter")
+    keyStatus("deepseek")
+    expect(probeCount).toBe(baseline)
+  })
+
+  it("resets availability safely when changing the key store", async () => {
+    const storeA: KeyStore = {
+      available: () => Promise.resolve(true),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeA)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    const storeB: KeyStore = {
+      available: () => Promise.resolve(false),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeB)
+    expect(keyStatus().encryption).toBe(false)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(false)
+  })
+
+  it("shares concurrent in-flight availability probes without redundant available() calls", async () => {
+    let callCount = 0
+    let resolveProbe!: (v: boolean) => void
+    const asyncStore: KeyStore = {
+      available: () => {
+        callCount++
+        return new Promise((r) => {
+          resolveProbe = r
+        })
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+
+    useKeyStore(asyncStore)
+    expect(callCount).toBe(0)
+
+    const probe1 = refreshKeyAvailability()
+    const probe2 = refreshKeyAvailability()
+    const probe3 = refreshKeyAvailability()
+    expect(callCount).toBe(1)
+
+    resolveProbe(true)
+    const [r1, r2, r3] = await Promise.all([probe1, probe2, probe3])
+    expect(r1).toBe(true)
+    expect(r2).toBe(true)
+    expect(r3).toBe(true)
+    expect(callCount).toBe(1)
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("prevents out-of-order probe resolutions from overwriting newer availability state", async () => {
+    let resolveProbeA!: (v: boolean) => void
+    let rejectProbeA!: (err: unknown) => void
+
+    const storeA: KeyStore = {
+      available: () =>
+        new Promise((resolve, reject) => {
+          resolveProbeA = resolve
+          rejectProbeA = reject
+        }),
+      read: async () => null,
+      write: async () => {},
+    }
+
+    // Start probe A on storeA
+    useKeyStore(storeA)
+    const pendingA = refreshKeyAvailability()
+
+    // Store switch or new cycle creates generation 2 with storeB
+    const storeB: KeyStore = {
+      available: () => Promise.resolve(true),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeB)
+    const resB = await refreshKeyAvailability()
+    expect(resB).toBe(true)
+    expect(keyStatus().encryption).toBe(true)
+
+    // Probe A finishes later with false: it must NOT overwrite storeB's newer status
+    resolveProbeA(false)
+    await pendingA
+    expect(keyStatus().encryption).toBe(true)
+
+    // Similarly, obsolete probe rejection must not flip newer status or throw
+    const storeC: KeyStore = {
+      available: () =>
+        new Promise((_, reject) => {
+          rejectProbeA = reject
+        }),
+      read: async () => null,
+      write: async () => {},
+    }
+    useKeyStore(storeC)
+    const pendingC = refreshKeyAvailability()
+
+    useKeyStore(storeB)
+    await refreshKeyAvailability()
+    expect(keyStatus().encryption).toBe(true)
+
+    rejectProbeA(new Error("delayed probe failure"))
+    await pendingC.catch(() => {})
+    expect(keyStatus().encryption).toBe(true)
+  })
+
+  it("ensures useKeyStore does not invoke available() and invalidates older generation on re-install", async () => {
+    let callCount = 0
+    let resolveProbe1!: (v: boolean) => void
+
+    const store: KeyStore = {
+      available: () => {
+        callCount++
+        if (callCount === 1) {
+          return new Promise((r) => {
+            resolveProbe1 = r
+          })
+        }
+        return Promise.resolve(true)
+      },
+      read: async () => null,
+      write: async () => {},
+    }
+
+    // Installing the store does not trigger probing
+    useKeyStore(store)
+    expect(callCount).toBe(0)
+    expect(keyStatus().encryption).toBe(false)
+
+    // Probe 1 is started
+    const probe1 = refreshKeyAvailability()
+    expect(callCount).toBe(1)
+
+    // Re-installing the store advances generation and resets state
+    useKeyStore(store)
+    expect(keyStatus().encryption).toBe(false)
+
+    // Probe 2 runs under new generation and resolves to true
+    const res2 = await refreshKeyAvailability()
+    expect(res2).toBe(true)
+    expect(callCount).toBe(2)
+    expect(keyStatus().encryption).toBe(true)
+
+    // Older Probe 1 finishes late with false: must NOT overwrite newer generation's true
+    resolveProbe1(false)
+    await probe1
+    expect(keyStatus().encryption).toBe(true)
   })
 })

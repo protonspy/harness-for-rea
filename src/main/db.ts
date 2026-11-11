@@ -174,6 +174,19 @@ const MIGRATIONS: string[] = [
   CREATE INDEX steps_updated ON steps(updated_at);
   CREATE INDEX projects_updated ON projects(updated_at);
   `,
+  // Explicit protocol selection for each role and task: Chat Completions or Responses.
+  `
+  ALTER TABLE projects ADD COLUMN orchestrator_protocol TEXT DEFAULT 'chat_completions';
+  ALTER TABLE projects ADD COLUMN specialist_protocol TEXT DEFAULT 'chat_completions';
+  `,
+  // Cache token tracking and rates snapshot on tasks (specs/river-pricing, issue #6).
+  `
+  ALTER TABLE tasks ADD COLUMN cache_tokens INTEGER NOT NULL DEFAULT 0;
+  UPDATE tasks SET cache_tokens = COALESCE(
+    (SELECT SUM(COALESCE(json_extract(payload, '$.cacheTokens'), 0)) FROM events WHERE events.task_id = tasks.id),
+    0
+  );
+  `,
 ]
 
 /** The schema this app knows. */

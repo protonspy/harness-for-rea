@@ -1,14 +1,8 @@
 import { TextAttributes } from "@opentui/core"
 import { useEffect, useState } from "react"
-import {
-  GOALS,
-  ORCHESTRATOR_EFFORTS,
-  SPECIALIST_EFFORTS,
-  type Goal,
-  type OrchestratorEffort,
-  type SpecialistEffort,
-  type TargetInfo,
-} from "../../../src/shared/types"
+import { GOALS, SPECIALIST_EFFORTS, type Goal, type OrchestratorEffort, type SpecialistEffort, type TargetInfo } from "../../../src/shared/types"
+import { getAvailableEffortsForModel } from "../../../src/shared/providers"
+import { getModelPricing, formatModelPricingShort } from "../../../src/shared/pricing"
 import { goalCard, nameFrom } from "../../../src/renderer/src/lib/projects"
 import { useApp, useKeys, useScreen } from "../app/context"
 import { InputDialog, SelectDialog } from "../components/dialogs"
@@ -79,7 +73,17 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
   const pickModel = async () => {
     const models = await app.attempt(() => api.listModels())
     if (!models?.length) return
-    const id = await app.dialog<string>((done) => <SelectDialog title="Model" items={models.map((m) => ({ id: m, label: m }))} initial={model} done={done} />)
+    const id = await app.dialog<string>((done) => (
+      <SelectDialog
+        title="Model"
+        items={models.map((m) => {
+          const pricing = getModelPricing(provider, m)
+          return { id: m, label: pricing ? `${m} ${formatModelPricingShort(pricing)}` : m }
+        })}
+        initial={model}
+        done={done}
+      />
+    ))
     if (id) setModel(id)
   }
 
@@ -211,7 +215,7 @@ export function NewProjectScreen({ target: initial, confirm }: { target?: string
       <Choice<OrchestratorEffort>
         label="Orchestrator's effort"
         value={orch}
-        options={ORCHESTRATOR_EFFORTS}
+        options={getAvailableEffortsForModel(provider as any, model)}
         onChange={setOrch}
         focused={field("orchestrator")}
       />
